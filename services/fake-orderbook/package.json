@@ -1,0 +1,14 @@
+{
+  "name": "fake-orderbook",
+  "version": "1.0.0",
+  "description": "MEXC-compatible orderbook service that tracks fake oracle price for DEVNET testing",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

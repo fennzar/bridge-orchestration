@@ -1,0 +1,100 @@
+# ===========================================
+# Production (skeleton)
+# ===========================================
+# Real Zephyr mainnet node, no fake services, app containers + Caddy.
+#
+# TODO: Complete when ready for production deployment.
+
+services:
+  # Override Zephyr nodes for mainnet (no --devnet, no --fixed-difficulty)
+  zephyr-node1:
+    image: zephyr-mainnet
+    command:
+      - "--data-dir=/data"
+      - "--p2p-bind-port=18080"
+      - "--rpc-bind-port=18081"
+      - "--zmq-rpc-bind-port=18082"
+      - "--rpc-bind-ip=0.0.0.0"
+      - "--confirm-external-bind"
+      - "--non-interactive"
+      - "--log-level=1"
+
+  # No node2 needed in production (connects to real network)
+  # No fake-oracle or fake-orderbook
+  # No gov/miner/test wallets -- only bridge wallet
+
+  wallet-bridge:
+    image: zephyr-mainnet
+    environment:
+      ZEPHYR_MODE: wallet
+    command:
+      - "--rpc-bind-port=17777"
+      - "--rpc-bind-ip=0.0.0.0"
+      - "--disable-rpc-login"
+      - "--wallet-dir=/wallets"
+      - "--daemon-address=zephyr-node1:18081"
+      - "--trusted-daemon"
+      - "--log-level=1"
+    volumes:
+      - zephyr-wallets:/wallets
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+  # App containers (same as testnet)
+  bridge-web:
+    image: zephyr-bridge-web
+    env_file: ../env/.env.prod
+    environment:
+      PORT: "7050"
+    networks:
+      - zephyr-net
+
+  bridge-api:
+    image: zephyr-bridge-api
+    env_file: ../env/.env.prod
+    environment:
+      PORT: "7051"
+    networks:
+      - zephyr-net
+
+  bridge-watchers:
+    image: zephyr-bridge-watchers
+    env_file: ../env/.env.prod
+    networks:
+      - zephyr-net
+
+  # Engine can be deployed on separate server
+  engine-web:
+    image: zephyr-engine-web
+    profiles: ["engine", "full"]
+    env_file: ../env/.env.prod
+    environment:
+      PORT: "7000"
+    networks:
+      - zephyr-net
+
+  engine-watchers:
+    image: zephyr-engine-watchers
+    profiles: ["engine", "full"]
+    env_file: ../env/.env.prod
+    networks:
+      - zephyr-net
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - zephyr-net
+
+volumes:
+  caddy-data:
+  caddy-config:

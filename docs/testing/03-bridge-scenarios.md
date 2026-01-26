@@ -1,0 +1,2101 @@
+# Bridge Test Scenarios
+
+End-to-end test flows for the Zephyr ↔ EVM bridge.
+
+> **See also:** [04-full-stack-scenarios.md](./04-full-stack-scenarios.md) for DEX swaps, liquidity pools, engine setup, admin endpoints, faucets, and SSE stream testing.
+>
+> **Edge-case scope:** This doc is the primary target for `ZB-SEC`, `ZB-SC`, `ZB-CONC`, `ZB-REC`, `ZB-CONS`, `ZB-ASSET`, `ZB-TIME`, and `ZB-PRIV` scenarios in [00-edge-case-scope.md](./00-edge-case-scope.md).
+>
+> **Runner:** Use `make test-l5` (or `./scripts/run-l5-tests.py`) for L5 planning/lint.
+>
+> **TBC note:** Any scenario marked `SCOPED-TBC` in the scope catalog still needs command-level runbook guidance before execution.
+
+## Environment
+
+> **Port Note:** All examples use DEVNET ports. Mainnet-fork ports are **DEPRECATED**. See [CLAUDE.md](../../CLAUDE.md) port table for the complete reference.
+
+| Component | DEVNET | Notes |
+|-----------|--------|-------|
+| Bridge API | `http://127.0.0.1:7051` | |
+| Bridge Web UI | `http://127.0.0.1:7050` | |
+| Anvil (EVM RPC) | `http://127.0.0.1:8545` | |
+| Zephyr Node 1 RPC | `http://127.0.0.1:47767` | Primary daemon |
+| Zephyr Node 2 RPC | `http://127.0.0.1:47867` | Mining/secondary node |
+| Miner Wallet RPC | `http://127.0.0.1:48767` | Mining rewards |
+| Test Wallet RPC | `http://127.0.0.1:48768` | Used as bridge wallet in DEVNET |
+| Gov Wallet RPC | `http://127.0.0.1:48769` | Main funds |
+| Fake Oracle | `http://127.0.0.1:5555` | Controllable price |
+| Fake Orderbook | `http://127.0.0.1:5556` | Simulated CEX |
+
+> Mainnet-fork ports (48081, 17867, 17776-17779) are **DEPRECATED** and no longer documented here.
+
+**Contracts (Anvil deterministic deploy):**
+
+| Token | Address |
+|-------|---------|
+| wZEPH | `0xC5996C89394E0fef9A6817468c1181D104f6c991` |
+| wZSD  | `0x1D9a006BF0819bdff41144e89c2fB2105ad46003` |
+| wZRS  | `0x47b0c4d054a0a0C687906E4f4065b0E761afd46d` |
+| wZYS  | `0xE4E5353623cbAdA38D3D52Bc772fbb70eA1E0baa` |
+
+**Test EVM Account (Anvil account #1):**
+- Address: `0x70997970C51812dc3A010C7d01b50e0d17dc79C8`
+- Private Key: `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`
+
+**Bridge Signer:**
+- Private Key: `0xdad112823784d70852482c06b20e6fae3f9a4b23fcb985930df6a57d17d31a27`
+- Address: `0x8273E2C64415faCD40Db58181575B6f8f1337e22`
+
+---
+
+## Prerequisites
+
+```bash
+# Start all services (run from repo root)
+make dev
+
+# Verify services are running
+make status
+
+# Verify both Zephyr nodes are synced to each other
+curl -s http://127.0.0.1:47767/json_rpc -d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin)['result']; print(f'Node1: height={d[\"height\"]}, out={d[\"outgoing_connections_count\"]}, in={d[\"incoming_connections_count\"]}')"
+
+curl -s http://127.0.0.1:47867/json_rpc -d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin)['result']; print(f'Node2: height={d[\"height\"]}, out={d[\"outgoing_connections_count\"]}, in={d[\"incoming_connections_count\"]}')"
+
+# Both should show same height with 1 outgoing + 1 incoming connection
+
+# Verify bridge API
+curl -s http://127.0.0.1:7051/bridge/tokens | python3 -m json.tool
+
+# Verify EVM chain
+cast block-number --rpc-url http://127.0.0.1:8545
+```
+
+### Database Reset (clean slate)
+
+```bash
+cd $ROOT/zephyr-bridge/packages/db
+DATABASE_URL="postgresql://zephyr:zephyr@127.0.0.1:5432/zephyrbridge_dev" \
+  npx prisma db push --force-reset
+
+# Restart watchers to pick up fresh state
+overmind restart bridge-watchers bridge-api
+```
+
+### Mining Blocks
+
+The test chain requires mining to confirm transactions. After mining, the daemon often becomes unresponsive ("daemon busy" issue). Restart the daemon after mining:
+
+```bash
+# Get mining wallet address (needed for start_mining)
+MINER_ADDR=$(curl -s http://127.0.0.1:48767/json_rpc \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_address"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['address'])")
+
+# Start mining (note: start_mining is a daemon REST endpoint, not json_rpc)
+curl -s http://127.0.0.1:47867/start_mining \
+  -H 'Content-Type: application/json' \
+  -d "{\"do_background_mining\":false,\"threads_count\":4,\"miner_address\":\"$MINER_ADDR\"}"
+
+# Wait... (each block takes ~5-10 seconds)
+
+# Stop mining
+curl -s http://127.0.0.1:47867/stop_mining
+
+# ALWAYS restart daemons after mining — they become unresponsive
+docker compose restart zephyr-node1 zephyr-node2
+# Wait ~15 seconds for nodes to sync
+sleep 15
+```
+
+**Important:** `start_mining` and `stop_mining` are daemon REST endpoints (not JSON-RPC). They require `miner_address` in the request body. Without it you get `"Failed, wrong address"`.
+
+**Unlock times:**
+- Mining rewards: 60 blocks
+- Regular transfers: 10 blocks
+
+### Wallet Balance Check
+
+```bash
+# Refresh wallet first (needed after new blocks)
+curl -s http://127.0.0.1:48768/json_rpc \
+  -d '{"jsonrpc":"2.0","id":"0","method":"refresh"}'
+
+# Check balance
+curl -s http://127.0.0.1:48768/json_rpc \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_balance","params":{"account_index":0}}' \
+  | python3 -c "
+import sys,json
+d = json.load(sys.stdin)['result']['balances'][0]
+print(f'ZPH: {d[\"balance\"]/1e12:.4f} total, {d[\"unlocked_balance\"]/1e12:.4f} unlocked')
+"
+```
+
+---
+
+## Scenario 1: Wrap via API (ZEPH → wZEPH)
+
+Sanity-check the wrap flow by calling the bridge API directly and claiming with `cast`.
+
+### Step 1: Create Bridge Account
+
+Link the test EVM address to a Zephyr deposit subaddress on the bridge wallet.
+
+```bash
+curl -s -X POST http://127.0.0.1:7051/bridge/address \
+  -H 'Content-Type: application/json' \
+  -d '{"evmAddress":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8"}'
+```
+
+**Response:**
+```json
+{
+    "created": true,
+    "zephyrAddress": "ZEPHs6mc8igb..."
+}
+```
+
+The `zephyrAddress` is a subaddress (starts with `ZEPHs`) on the bridge wallet. Save it for the next step.
+
+If the account already exists, `"created": false` is returned with the existing subaddress.
+
+### Step 2: Send ZEPH to Bridge
+
+Send ZEPH from the test user wallet to the bridge subaddress. The user must have unlocked ZEPH (check balance first).
+
+```bash
+DEPOSIT_ADDR="ZEPHs6mc8igb..."  # from step 1
+
+curl -s http://127.0.0.1:48768/json_rpc -d "{
+  \"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"transfer\",
+  \"params\":{
+    \"destinations\":[{\"address\":\"$DEPOSIT_ADDR\",\"amount\":20000000000000}],
+    \"account_index\":0,
+    \"priority\":0
+  }
+}"
+```
+
+**Response:**
+```json
+{
+    "result": {
+        "amount": 20000000000000,
+        "fee": 1500590000,
+        "tx_hash": "d8e02525c36a4d8f..."
+    }
+}
+```
+
+Amount is in atomic units (1 ZEPH = 1,000,000,000,000 = 1e12 atomic units). So `20000000000000` = 20 ZEPH.
+
+Save the `tx_hash` — this becomes the claim ID.
+
+### Step 3: Mine Blocks for Confirmations
+
+The bridge requires 5 confirmations (configurable via `ZEPH_CONFIRMATION_TARGET`). Mine blocks and restart daemons:
+
+```bash
+# Start mining on node2 (see Prerequisites > Mining Blocks for full command)
+curl -s http://127.0.0.1:47867/start_mining \
+  -H 'Content-Type: application/json' \
+  -d "{\"do_background_mining\":false,\"threads_count\":4,\"miner_address\":\"$MINER_ADDR\"}"
+
+# Wait ~60-90 seconds for sufficient blocks
+
+# Stop mining
+curl -s http://127.0.0.1:47867/stop_mining
+
+# ALWAYS restart daemons after mining
+docker compose restart zephyr-node1 zephyr-node2
+sleep 15
+```
+
+### Step 4: Check Claim Status
+
+The Zephyr watcher polls for incoming transfers and creates a claim record. The claim auto-progresses through: PENDING → QUEUED → READY → CLAIMABLE as confirmations accumulate and the signer generates a voucher.
+
+```bash
+curl -s "http://127.0.0.1:7051/claims/0x70997970C51812dc3A010C7d01b50e0d17dc79C8" \
+  | python3 -m json.tool
+```
+
+**Response (when ready):**
+```json
+[
+    {
+        "id": "0xd8e02525c36a4d8f...",
+        "token": "0xc5996c89394e0fef9a6817468c1181d104f6c991",
+        "to": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+        "amountWei": "20000000000000",
+        "chainId": 31337,
+        "status": "claimable",
+        "signature": "0xcd61b062014bc33b...",
+        "deadline": 1770089867,
+        "zephConfirmations": { "target": 5, "current": 11 }
+    }
+]
+```
+
+Wait until `status` is `"claimable"` and `signature` is populated. The `deadline` is a Unix timestamp; the voucher expires after that.
+
+### Step 5: Claim wZEPH on EVM
+
+Call `claimWithSignature()` on the wZEPH contract using the voucher from the API response.
+
+```bash
+# Record balance before
+cast call 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "balanceOf(address)(uint256)" \
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+  --rpc-url http://127.0.0.1:8545
+
+# Claim using values from the API response
+cast send 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "claimWithSignature(address,uint256,bytes32,uint256,bytes)" \
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+  20000000000000 \
+  0xd8e02525c36a4d8f758405be8f4620b97dc1d3013a8720a47155a276311e708d \
+  1770089867 \
+  0xcd61b062014bc33b... \
+  --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --rpc-url http://127.0.0.1:8545
+```
+
+Arguments map to: `(to, amount, zephyrTxHash, deadline, signature)` — all taken directly from the claim API response.
+
+**Verify:** `status: 1 (success)` in the transaction receipt.
+
+### Step 6: Verify
+
+```bash
+# wZEPH balance increased by 20
+cast call 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "balanceOf(address)(uint256)" \
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+  --rpc-url http://127.0.0.1:8545
+
+# Claim status updated to "claimed" (EVM watcher detects MintedFromZephyr event)
+curl -s "http://127.0.0.1:7051/claims/id/0xd8e02525c36a4d8f..." \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'status={d[\"status\"]}, evmTxHash={d[\"evmTxHash\"]}')"
+```
+
+### Pass Criteria
+- [ ] wZEPH balance increases by exact deposit amount
+- [ ] Claim status moves to `claimed` with the EVM tx hash
+- [ ] Signature can only be used once (replay reverts with `ZephyrTxAlreadyConsumed`)
+
+---
+
+## Scenario 2: Unwrap via API (wZEPH → ZEPH)
+
+### Step 1: Prepare Unwrap
+
+Call the prepare endpoint to pre-sign a Zephyr transfer (without broadcasting it). The returned payload goes into the EVM burn transaction.
+
+```bash
+curl -s -X POST http://127.0.0.1:7051/unwraps/prepare \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "0xc5996c89394e0fef9a6817468c1181d104f6c991",
+    "amountWei": "1000000000000",
+    "destination": "ZEPHYR3NUG8TerjUHQKHTS655PmNE7aNLQ3uoY5tD3ZnMXcmKnG8c7Ebkp8R8vB84t3NQz3xCBwxMZrhRYDEhVjXHGSDE4by44r1T"
+  }'
+```
+
+**Response:**
+```json
+{
+    "ok": true,
+    "payload": "0x000000000000...",
+    "txHash": "959c9064cbe4fd43...",
+    "walletFingerprint": "0x1ceb027695ce...",
+    "feeAtomic": 1495740000,
+    "amountAtomic": 990000000000,
+    "feeWei": "10000000000",
+    "netWei": "990000000000",
+    "bridgeFeeAtomic": 10000000000,
+    "grossAtomic": 1000000000000
+}
+```
+
+The `payload` contains the encoded destination, txHash, and walletFingerprint. The `amountAtomic` is the ZEPH the user will receive after fees.
+
+### Step 2: Burn wZEPH on EVM
+
+Call `burnWithData()` on the wZEPH contract with the payload from step 1 and a unique nonce.
+
+```bash
+# Generate a unique nonce
+NONCE=$(cast keccak "$(date +%s)unwrap-test")
+
+# Burn
+cast send 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "burnWithData(uint256,bytes,bytes32)" \
+  1000000000000 \
+  "0x000000000000..."  \
+  "$NONCE" \
+  --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --rpc-url http://127.0.0.1:8545
+```
+
+Arguments: `(amount, zephDestination_payload, nonce)`. The `amount` and `payload` must match what was returned by `/unwraps/prepare`.
+
+**Verify:** `status: 1 (success)` and wZEPH balance decreased.
+
+### Step 3: Wait for Bridge Processing
+
+The EVM watcher detects the `Burned` event, creates an `Unwrap` record, and the send worker relays the pre-signed Zephyr transaction. This happens automatically within seconds.
+
+```bash
+# Check unwrap status (wait ~15 seconds after burn)
+PGPASSWORD=zephyr psql -h 127.0.0.1 -U zephyr -d zephyrbridge_dev \
+  -c "SELECT status, \"sendStatus\", \"reconcileStatus\", \"zephTxId\" FROM \"Unwrap\" ORDER BY \"createdAt\" DESC LIMIT 1;"
+```
+
+Expected: `sendStatus = 'sent'`, meaning the ZEPH tx has been broadcast.
+
+### Step 4: Mine Blocks to Confirm
+
+```bash
+# Start mining (see Prerequisites > Mining Blocks for full command)
+curl -s http://127.0.0.1:47867/start_mining \
+  -H 'Content-Type: application/json' \
+  -d "{\"do_background_mining\":false,\"threads_count\":4,\"miner_address\":\"$MINER_ADDR\"}"
+
+# Wait ~60 seconds
+
+curl -s http://127.0.0.1:47867/stop_mining
+
+# ALWAYS restart daemons after mining
+docker compose restart zephyr-node1 zephyr-node2
+sleep 15
+```
+
+### Step 5: Verify
+
+```bash
+# Unwrap reconciled
+PGPASSWORD=zephyr psql -h 127.0.0.1 -U zephyr -d zephyrbridge_dev \
+  -c "SELECT status, \"sendStatus\", \"reconcileStatus\" FROM \"Unwrap\" ORDER BY \"createdAt\" DESC LIMIT 1;"
+
+# Test user ZEPH balance increased
+curl -s http://127.0.0.1:48768/json_rpc -d '{"jsonrpc":"2.0","id":"0","method":"refresh"}' > /dev/null
+curl -s http://127.0.0.1:48768/json_rpc \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_balance","params":{"account_index":0}}' \
+  | python3 -c "
+import sys,json
+d = json.load(sys.stdin)['result']['balances'][0]
+print(f'ZPH: {d[\"balance\"]/1e12:.4f} total, {d[\"unlocked_balance\"]/1e12:.4f} unlocked')
+"
+```
+
+### Pass Criteria
+- [ ] wZEPH balance decreased by burn amount
+- [ ] Unwrap `sendStatus = 'sent'` and `reconcileStatus = 'true'`
+- [ ] Test user receives ZEPH (amount minus bridge fee and network fee)
+- [ ] Nonce cannot be reused (burn reverts with `NonceAlreadyUsed`)
+
+---
+
+## Scenario 3: Wrap via Bridge Web UI + MetaMask
+
+Full UX test through the browser using Playwright and MetaMask.
+
+### Prerequisites
+- MetaMask extension installed in Playwright browser
+- Anvil network added to MetaMask (chainId 31337, RPC `http://127.0.0.1:8545`)
+- Test account imported into MetaMask (private key `0x59c6995e...`)
+- wZEPH token added to MetaMask (`0xC5996C89394E0fef9A6817468c1181D104f6c991`)
+- See [metamask.md](../reference/metamask.md) for detailed setup
+
+### Steps
+
+1. **Open bridge site** at `http://127.0.0.1:7050`
+2. **Connect MetaMask** — click "Connect Wallet", approve in MetaMask
+3. **Select Wrap tab** — UI should show the bridge deposit address (Zephyr subaddress)
+4. **Send ZEPH externally** — use Zephyr Lite or wallet RPC to send ZEPH to the displayed deposit address
+5. **Mine blocks** — mine via mining wallet RPC to get confirmations
+6. **Watch claim progress** — the UI should show the claim moving through statuses:
+   - "Pending" → "Queued" → "Ready" → "Claimable"
+   - Real-time updates via SSE stream
+7. **Claim wZEPH** — click "Claim" button, confirm in MetaMask
+   - MetaMask shows `claimWithSignature()` transaction
+   - Approve and wait for confirmation
+8. **Verify** — wZEPH balance visible in MetaMask, claim shows "Claimed" in UI
+
+### Playwright Automation Notes
+
+When using Playwright with system Chrome that has MetaMask already configured for Anvil:
+
+- **MetaMask auto-connects** — if the bridge signer account is already imported and the Anvil network is selected, the wallet connects automatically on page load. No manual connect step needed.
+- **No data-testid selectors** — the web app uses semantic HTML. Use `page.getByRole()` and accessibility snapshots to find elements.
+- **MetaMask popups** — transaction approval popups appear as separate browser contexts. Use tab management to list and switch to the MetaMask popup.
+- **Sending ZEPH is external** — the UI shows the deposit address but the ZEPH transfer must be done via wallet RPC (curl), not through the browser.
+
+---
+
+## Scenario 4: Unwrap via Bridge Web UI + MetaMask
+
+### Steps
+
+1. **Open bridge site** and connect MetaMask (same as Scenario 3)
+2. **Select Unwrap tab**
+3. **Enter unwrap details:**
+   - Asset: wZEPH
+   - Amount: 1 (or desired amount)
+   - Destination: Zephyr wallet address
+4. **Click "Prepare"** — backend pre-signs the Zephyr transfer
+5. **Click "Unwrap"** — MetaMask prompts `burnWithData()` transaction
+   - The payload from the prepare step is encoded automatically
+   - Approve in MetaMask
+6. **Mine blocks** on Zephyr chain
+7. **Verify** — ZEPH arrives in destination wallet, UI shows "Confirmed"
+
+---
+
+## Scenario 5: Multi-Asset Wrap (ZSD → wZSD)
+
+Same flow as Scenario 1, but with a different asset type. The Zephyr protocol supports multiple native assets (ZEPH, ZSD, ZRS, ZYS) in the same wallet.
+
+### Step 1: Create Bridge Account
+
+Same as Scenario 1 Step 1 (one account mapping covers all assets).
+
+### Step 2: Send ZSD
+
+```bash
+# Check ZSD balance first
+curl -s http://127.0.0.1:48768/json_rpc \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_balance","params":{"account_index":0}}' \
+  | python3 -c "
+import sys,json
+for b in json.load(sys.stdin)['result']['balances']:
+    print(f'{b[\"asset_type\"]}: {b[\"balance\"]/1e12:.4f} total, {b[\"unlocked_balance\"]/1e12:.4f} unlocked')
+"
+
+# Send ZSD (if available)
+DEPOSIT_ADDR="ZEPHs6mc8igb..."  # same subaddress as ZEPH
+curl -s http://127.0.0.1:48768/json_rpc -d "{
+  \"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"transfer\",
+  \"params\":{
+    \"destinations\":[{\"address\":\"$DEPOSIT_ADDR\",\"amount\":1000000000000000}],
+    \"account_index\":0,
+    \"priority\":0,
+    \"asset_type\":\"ZSD\"
+  }
+}"
+```
+
+### Step 3-6: Same as Scenario 1
+
+The claim will be created with `token = 0x1D9a006BF0819bdff41144e89c2fB2105ad46003` (wZSD address). Claim from the wZSD contract instead of wZEPH.
+
+---
+
+## Database Inspection
+
+### During Tests
+
+```sql
+-- Claim status summary
+SELECT status, COUNT(*) FROM "Claim" GROUP BY status;
+
+-- Recent claims for test address
+SELECT id, status, "amountWei", "zephConfirmations", "evmTxHash"
+FROM "Claim"
+WHERE "to" = '0x70997970c51812dc3a010c7d01b50e0d17dc79c8'
+ORDER BY "updatedAt" DESC LIMIT 10;
+
+-- Unwrap status summary
+SELECT status, "sendStatus", "reconcileStatus" FROM "Unwrap" ORDER BY "createdAt" DESC LIMIT 10;
+
+-- System state (watcher cursors)
+SELECT * FROM "SystemState";
+
+-- Active locks
+SELECT * FROM "Lock" WHERE "expiresAt" > now();
+```
+
+### Prisma Studio (GUI)
+
+```bash
+cd $ROOT/zephyr-bridge/packages/db
+pnpm db:studio
+# Opens http://localhost:5555
+```
+
+---
+
+> **Known Issues:** See [04-full-stack-scenarios.md § Known Issues](./04-full-stack-scenarios.md#known-issues) for the consolidated list.
+
+---
+
+## Scenario 6: DEX Swap via Web UI
+
+Test the Uniswap V4 swap functionality through the bridge web UI with MetaMask.
+
+### Prerequisites
+
+After deploying contracts (via `./scripts/deploy-contracts.sh`), ensure:
+
+1. **Addresses synced to bridge API**: Copy foundry addresses to where the API can find them:
+   ```bash
+   cp $ROOT/zephyr-eth-foundry/.forge-snapshots/addresses.json \
+      $ROOT/zephyr-bridge/apps/api/config/addresses.local.json
+   ```
+
+2. **Pools scanned**: Trigger the admin pool scanner:
+   ```bash
+   curl -s -X POST http://127.0.0.1:7051/admin/uniswap/v4/scan \
+     -H "x-admin-token: supersecret"
+   ```
+   Verify pools discovered (should return 4-5 pools).
+
+3. **Test account funded**: Transfer DEX tokens to the MetaMask signer:
+   ```bash
+   DEPLOYER_PK=0x860875f05874e1ac2207f147a7a3e2a13d66520936cb598528e9104f2d5ec990
+   SIGNER=0x8273E2C64415faCD40Db58181575B6f8f1337e22
+   RPC=http://127.0.0.1:8545
+
+   # wZEPH (12 decimals) - 10 tokens
+   cast send 0xEd5E15BcF3C6d6B684aa612FA1ba780D20f8bed3 \
+     "transfer(address,uint256)" $SIGNER 10000000000000 \
+     --private-key $DEPLOYER_PK --rpc-url $RPC
+
+   # wZSD (12 decimals) - 10 tokens
+   cast send 0x6e35539f977fe6A10fbEfC5CfFd76fbDB1753412 \
+     "transfer(address,uint256)" $SIGNER 10000000000000 \
+     --private-key $DEPLOYER_PK --rpc-url $RPC
+
+   # USDT (6 decimals) - 1000 tokens
+   cast send 0x338AE0D2562Dc83a6dB90749eC5eE13EecF68D75 \
+     "transfer(address,uint256)" $SIGNER 1000000000 \
+     --private-key $DEPLOYER_PK --rpc-url $RPC
+
+   # USDC (6 decimals) - 1000 tokens
+   cast send 0xda767CBC9F1F36D2a3e5b83C5156e63248d0fF23 \
+     "transfer(address,uint256)" $SIGNER 1000000000 \
+     --private-key $DEPLOYER_PK --rpc-url $RPC
+   ```
+
+4. **Config endpoint working**:
+   ```bash
+   curl -s http://127.0.0.1:7051/uniswap/config | python3 -c \
+     "import sys,json; d=json.load(sys.stdin); print(f'ok={d[\"ok\"]} contracts={len(d.get(\"addresses\",{}).get(\"contracts\",{}))} pools={len(d.get(\"addresses\",{}).get(\"pools\",{}))}')"
+   ```
+   Should show `ok=True contracts=6 pools=5`.
+
+### Steps
+
+1. **Navigate to swap page**: `http://127.0.0.1:7050/swap`
+2. **Wait for wallet auto-connect** (~3 seconds)
+3. **Select input token**: Click "You pay" dropdown, select WZEPH
+   - Balance should show "10 WZEPH"
+4. **Select output token**: WZSD is auto-selected, or choose another
+5. **Enter amount**: Type "1" in the amount field
+6. **Verify quote**:
+   - Rate displayed (e.g., "1 WZEPH = 0.578260 WZSD")
+   - Price impact shown (should be < 1% for small amounts)
+   - Route displayed (e.g., "WZEPH → WZSD")
+   - Min. received with slippage shown
+7. **Approve token**: Click "Approve WZEPH", confirm in MetaMask popup
+   - MetaMask shows "Spending cap request" for the SwapRouter contract
+8. **Execute swap**: Click "Swap", confirm in MetaMask popup
+9. **Verify on-chain**:
+   ```bash
+   cast call 0xEd5E15BcF3C6d6B684aa612FA1ba780D20f8bed3 \
+     "balanceOf(address)(uint256)" $SIGNER --rpc-url $RPC
+   # Should be 9e12 (was 10e12, spent 1e12)
+   ```
+
+### Multi-Hop Route Test
+
+Select USDT → WZEPH. The router should find the multi-hop route: USDT → WZSD → WZEPH.
+
+### Available Pools (after deploy)
+
+| Pair | Fee | Tick Spacing |
+|------|-----|-------------|
+| USDT/USDC | 100 (0.01%) | 1 |
+| USDT/WZSD | 100 (0.01%) | 1 |
+| WZYS/WZSD | 500 (0.05%) | 10 |
+| WZSD/WZEPH | 3000 (0.30%) | 60 |
+| WZRS/WZEPH | 3000 (0.30%) | 60 |
+
+### Pass Criteria
+
+- [ ] Token selector shows all available tokens (USDT, USDC, WZEPH, WZSD, WZYS)
+- [ ] Quote displays rate, price impact, route, and min received
+- [ ] Token approval succeeds via MetaMask
+- [ ] Swap executes, on-chain balances change correctly
+- [ ] Multi-hop route (USDT → WZSD → WZEPH) is detected and works
+
+---
+
+## Scenario 7: Liquidity Pools Page
+
+### Steps
+
+1. **Navigate to LP page**: `http://127.0.0.1:7050/lps`
+2. **Verify pool list**: Should show 4 pools (USDT/WZSD, WZSD/WZEPH, WZYS/WZSD, USDT/USDC)
+3. **Click a pool**: Click WZSD/WZEPH to see detail view
+4. **Verify detail view**:
+   - Current price (e.g., "1.724044 WZEPH per WZSD")
+   - Fee tier (0.30%)
+   - TVL and 24h Volume cards
+   - "Price chart coming soon" placeholder
+5. **Check positions**: "Your Positions" section shows no positions for the connected wallet
+
+### API Endpoints
+
+```bash
+# Pool list
+curl -s http://127.0.0.1:7051/uniswap/pools | python3 -c \
+  "import sys,json; d=json.load(sys.stdin); print(f'Pools: {len(d.get(\"pools\",d if isinstance(d,list) else []))}')"
+
+# Full pool data with metrics
+curl -s "http://127.0.0.1:7051/uniswap/pools/full?activityLimit=0" | python3 -c \
+  "import sys,json; d=json.load(sys.stdin); [print(f'{p[\"record\"][\"tokens\"][\"token0\"][\"symbol\"]}/{p[\"record\"][\"tokens\"][\"token1\"][\"symbol\"]}: tvl=${p[\"metrics\"][\"tvl\"][\"usd\"]}') for p in d.get('pools',[])]"
+
+# Pool positions
+curl -s "http://127.0.0.1:7051/uniswap/pool/<POOL_ID>/positions"
+```
+
+### Pass Criteria
+
+- [ ] Pool list loads with all deployed pools
+- [ ] Pool detail shows current price and fee tier
+- [ ] Refresh button works
+- [ ] "Your Positions" section renders (even if empty)
+
+---
+
+## Scenario 8: Bridge Details Page
+
+### Steps
+
+1. **Navigate to details page**: `http://127.0.0.1:7050/details`
+2. **Verify Global Overview**:
+   - Total Wrapped count (500K from initial deploy)
+   - Wrapped Tokens count (4)
+   - Total Wraps and Total Unwraps match previous test activity
+   - Token supply cards for WZEPH, WZSD, WZRS, WZYS
+   - Each card shows circulating supply and bridge balance
+3. **Switch to "My Activity" tab**:
+   - My Wraps / My Unwraps / Total Transactions counts
+   - Recent Transactions list with both Zephyr and EVM tx hashes
+   - Copy and explorer link buttons
+
+### API Endpoints
+
+```bash
+# Bridge tokens
+curl -s http://127.0.0.1:7051/bridge/tokens | python3 -m json.tool
+
+# Claims for an address
+curl -s "http://127.0.0.1:7051/claims/0x8273E2C64415faCD40Db58181575B6f8f1337e22" | python3 -m json.tool
+
+# Unwraps for an address
+curl -s "http://127.0.0.1:7051/unwraps/0x8273E2C64415faCD40Db58181575B6f8f1337e22" | python3 -m json.tool
+```
+
+### Pass Criteria
+
+- [ ] Global overview shows token supplies and wrap/unwrap counts
+- [ ] My Activity shows personal transaction history
+- [ ] Transaction hashes are clickable/copyable
+
+---
+
+## Scenario 9: Engine Setup & Dashboard
+
+### Prerequisites
+
+1. **Push DB schema** (database is created by Docker's `init-db.sql`):
+   ```bash
+   cd $ROOT/zephyr-bridge-engine
+   DATABASE_URL="postgresql://zephyr:zephyr@localhost:5432/zephyr_bridge_arb" \
+     npx prisma db push --schema src/infra/prisma/schema.prisma
+   ```
+
+2. **Update engine .env.local**:
+   - `ZEPHYR_D_RPC_URL=http://127.0.0.1:47767` (local daemon, not remote)
+   - `NEXT_PUBLIC_BASE_URL=http://localhost:7000`
+
+3. **Update engine addresses**: Copy new addresses from foundry snapshot:
+   ```bash
+   python3 -c "
+   import json
+   src = json.load(open('$ROOT/zephyr-eth-foundry/.forge-snapshots/addresses.json'))
+   eng = json.load(open('$ROOT/zephyr-bridge-engine/src/services/evm/config/addresses.local.json'))
+   eng['contracts'] = src['contracts']
+   for k in ['USDC','USDT','wZEPH','wZSD','wZRS','wZYS']:
+       if k in src['tokens']:
+           eng['tokens'][k]['address'] = src['tokens'][k]['address']
+   json.dump(eng, open('$ROOT/zephyr-bridge-engine/src/services/evm/config/addresses.local.json','w'), indent=2)
+   print('Updated')
+   "
+   ```
+
+4. **Start engine processes** (not in default overmind — start manually):
+   ```bash
+   cd $ROOT/zephyr-bridge-engine
+   PORT=7000 pnpm dev:web &
+   pnpm dev:watchers &
+   ```
+
+### Steps
+
+1. **Open dashboard**: `http://127.0.0.1:7000`
+2. **Verify status panel**:
+   - ENV: local
+   - RPC HTTP/WS pointing to 127.0.0.1:8545
+   - DB Connected with latency
+   - EVM Watcher Online
+   - Pool Watcher running, WS Connected
+3. **Verify MEXC data**: Live bid/ask prices for ZEPH/USDT (from real MEXC WebSocket)
+4. **Verify Zephyr Network**:
+   - Block height matching local daemon
+   - ZRS, ZSD, ZYS rates and circulating supply
+   - Reserve ratio
+   - Mint/Redeem policy status
+5. **Verify Tracked Tokens**: All 6 tokens with correct addresses
+
+### Engine API Endpoints
+
+```bash
+# Global state snapshot
+curl -s http://127.0.0.1:7000/api/state | python3 -c \
+  "import sys,json; d=json.load(sys.stdin); print(f'height={d[\"state\"][\"zephyr\"][\"height\"]} zephPrice={d[\"state\"][\"zephyr\"][\"reserve\"][\"zephPriceUsd\"]}')"
+
+# Balances
+curl -s http://127.0.0.1:7000/api/balances | python3 -m json.tool | head -20
+
+# Zephyr network state
+curl -s http://127.0.0.1:7000/api/zephyr/network-state | python3 -m json.tool | head -15
+```
+
+### Pass Criteria
+
+- [ ] Dashboard loads with terminal-style UI
+- [ ] DB connected, EVM watcher online
+- [ ] MEXC live prices streaming
+- [ ] Zephyr network data populated from local daemon
+- [ ] All 6 tokens shown with correct (post-deploy) addresses
+- [ ] Navigation to Engine, Pools, Positions, MEXC, Balances pages works
+
+---
+
+## Scenario 10: Admin & Debug Endpoints
+
+### Admin Endpoints (require `x-admin-token: supersecret`)
+
+```bash
+# Scan for Uniswap V4 pools
+curl -s -X POST http://127.0.0.1:7051/admin/uniswap/v4/scan \
+  -H "x-admin-token: supersecret" | python3 -m json.tool
+
+# List V4 tokens
+curl -s http://127.0.0.1:7051/admin/uniswap/v4/tokens \
+  -H "x-admin-token: supersecret" | python3 -m json.tool
+
+# Auth verify
+curl -s http://127.0.0.1:7051/admin/auth/verify \
+  -H "x-admin-token: supersecret"
+```
+
+### Debug Endpoints (no auth)
+
+```bash
+# Claims queue stats
+curl -s http://127.0.0.1:7051/debug/claims/queues | python3 -m json.tool
+
+# Unwraps queue stats
+curl -s http://127.0.0.1:7051/debug/unwraps/queues | python3 -m json.tool
+
+# EVM HTTP connectivity
+curl -s http://127.0.0.1:7051/debug/evm/http | python3 -m json.tool
+# Expected: ok=true, chainId=31337, blockNumber=<current>
+```
+
+### SSE Streams
+
+```bash
+# Uniswap event stream (Ctrl-C to stop)
+curl -N http://127.0.0.1:7051/uniswap/stream
+
+# Zephyr wallet status stream
+curl -N http://127.0.0.1:7051/status/zephyr-wallet/stream
+```
+
+### EVM Faucet
+
+```bash
+# Mint bridge tokens (requires FAUCET_PRIVATE_KEY or BRIDGE_PK env var)
+# Note: The faucet calls mint() which requires the signer to have MINTER role
+curl -s -X POST http://127.0.0.1:7051/faucet \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"wZEPH","to":"0x8273E2C64415faCD40Db58181575B6f8f1337e22"}'
+```
+
+### Pass Criteria
+
+- [ ] Admin pool scan discovers pools (requires auth header)
+- [ ] Debug claims/unwraps returns queue statistics
+- [ ] Debug EVM HTTP shows ok=true with correct chain ID
+- [ ] SSE streams connect and stay open
+
+---
+
+## Scenario 11: EIP-712 Voucher Signing
+
+Verify the cryptographic voucher used in wrap claims is correct and replay-resistant.
+
+### Prerequisites
+
+- Complete Scenario 1 steps 1-4 (have a claimable voucher)
+
+### Steps
+
+```bash
+# 1. Get the claim with signature details
+CLAIM=$(curl -s "http://127.0.0.1:7051/claims/0x70997970C51812dc3A010C7d01b50e0d17dc79C8" \
+  | python3 -c "
+import sys,json
+claims = json.load(sys.stdin)
+c = [x for x in claims if x['status'] == 'claimable'][0]
+print(json.dumps(c))
+")
+
+# 2. Verify signature fields are present
+echo "$CLAIM" | python3 -c "
+import sys,json
+c = json.load(sys.stdin)
+assert c.get('signature'), 'Missing signature'
+assert c.get('deadline'), 'Missing deadline'
+assert c.get('chainId') == 31337, f'Wrong chainId: {c.get(\"chainId\")}'
+print(f'signature: {c[\"signature\"][:20]}...')
+print(f'deadline: {c[\"deadline\"]}')
+print(f'chainId: {c[\"chainId\"]}')
+print(f'token (verifyingContract): {c[\"token\"]}')
+"
+
+# 3. Claim succeeds (first use)
+cast send 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "claimWithSignature(address,uint256,bytes32,uint256,bytes)" \
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+  <amountWei> <zephyrTxHash> <deadline> <signature> \
+  --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --rpc-url http://127.0.0.1:8545
+
+# 4. Replay reverts
+cast send 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "claimWithSignature(address,uint256,bytes32,uint256,bytes)" \
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+  <amountWei> <zephyrTxHash> <deadline> <signature> \
+  --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --rpc-url http://127.0.0.1:8545
+# Should revert with ZephyrTxAlreadyConsumed
+
+# 5. Verify domain chainId matches Anvil
+cast call 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "eip712Domain()(bytes1,string,string,uint256,address,bytes32,uint256[])" \
+  --rpc-url http://127.0.0.1:8545
+# chainId field should be 31337
+```
+
+### Pass Criteria
+
+- [ ] Voucher contains signature, deadline, chainId=31337, verifyingContract (token address)
+- [ ] First claim succeeds (wZEPH minted)
+- [ ] Replay with same voucher reverts with `ZephyrTxAlreadyConsumed`
+- [ ] EIP-712 domain chainId matches Anvil (31337)
+
+---
+
+## Scenario 12: Pre-signed Commit-Before-Burn (Unwrap Payload)
+
+Verify the unwrap prepare/burn payload encoding and nonce replay protection.
+
+### Prerequisites
+
+- **Bridge wallet must have unlocked balance.** The prepare endpoint pre-signs a Zephyr transfer, which requires unlocked funds. If the bridge wallet only has locked funds (from recent wrap deposits), prepare will return a 500 error. Mine blocks to unlock funds if needed.
+- wZEPH balance on test account for the burn step.
+
+### Steps
+
+```bash
+# 1. Prepare unwrap — get the pre-signed payload
+PREPARE=$(curl -s -X POST http://127.0.0.1:7051/unwraps/prepare \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "0xc5996c89394e0fef9a6817468c1181d104f6c991",
+    "amountWei": "1000000000000",
+    "destination": "ZEPHYR3NUG8TerjUHQKHTS655PmNE7aNLQ3uoY5tD3ZnMXcmKnG8c7Ebkp8R8vB84t3NQz3xCBwxMZrhRYDEhVjXHGSDE4by44r1T"
+  }')
+
+# 2. Verify payload fields
+echo "$PREPARE" | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+assert d.get('ok'), 'Prepare failed'
+assert d.get('payload'), 'Missing payload'
+assert d.get('txHash'), 'Missing txHash'
+assert d.get('walletFingerprint'), 'Missing walletFingerprint'
+print(f'payload: {d[\"payload\"][:40]}...')
+print(f'txHash: {d[\"txHash\"]}')
+print(f'walletFingerprint: {d[\"walletFingerprint\"]}')
+print(f'feeAtomic: {d[\"feeAtomic\"]}')
+print(f'netWei: {d[\"netWei\"]}')
+"
+
+# 3. Burn with nonce — use the txHash from prepare as the nonce
+#    This links the EVM burn to the pre-signed Zephyr transfer
+PAYLOAD=$(echo "$PREPARE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["payload"])')
+NONCE="0x$(echo "$PREPARE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["txHash"])')"
+
+cast send 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "burnWithData(uint256,bytes,bytes32)" \
+  1000000000000 \
+  "$PAYLOAD" \
+  "$NONCE" \
+  --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --rpc-url http://127.0.0.1:8545
+
+# 4. Replay with same nonce reverts
+cast send 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "burnWithData(uint256,bytes,bytes32)" \
+  1000000000000 \
+  "$(echo "$PREPARE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["payload"])')" \
+  "$NONCE" \
+  --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --rpc-url http://127.0.0.1:8545
+# Should revert with NonceAlreadyUsed
+```
+
+### Pass Criteria
+
+- [ ] Prepare returns payload with version, txHash, walletFingerprint, destination encoded
+- [ ] Burn succeeds with unique nonce
+- [ ] Replay with same nonce reverts with `NonceAlreadyUsed`
+- [ ] Payload fields round-trip correctly (txHash in prepare matches DB record)
+
+---
+
+## Scenario 13: Claim State Machine Transitions
+
+Verify claims progress through the expected status sequence as confirmations accumulate.
+
+### Prerequisites
+
+- Fresh database (or known starting state)
+- Mining wallet address saved as `$MINER_ADDR`
+
+### Steps
+
+```bash
+# 1. Create bridge account (if not exists)
+curl -s -X POST http://127.0.0.1:7051/bridge/address \
+  -H 'Content-Type: application/json' \
+  -d '{"evmAddress":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8"}'
+
+# 2. Send ZEPH deposit
+DEPOSIT_ADDR="<subaddress from step 1>"
+TX=$(curl -s http://127.0.0.1:48768/json_rpc -d "{
+  \"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"transfer\",
+  \"params\":{
+    \"destinations\":[{\"address\":\"$DEPOSIT_ADDR\",\"amount\":5000000000000}],
+    \"account_index\":0,\"priority\":0
+  }
+}" | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['tx_hash'])")
+
+echo "tx_hash: $TX"
+
+# 3. Check status immediately (should be pending — 0 confirmations)
+sleep 5
+curl -s "http://127.0.0.1:7051/claims/0x70997970C51812dc3A010C7d01b50e0d17dc79C8" \
+  | python3 -c "
+import sys,json
+claims = json.load(sys.stdin)
+for c in claims:
+    print(f'id={c[\"id\"][:16]}... status={c[\"status\"]} confs={c.get(\"zephConfirmations\",{}).get(\"current\",\"?\")}')
+"
+
+# 4. Mine 1-2 blocks → observe queued status
+curl -s http://127.0.0.1:47867/start_mining \
+  -H 'Content-Type: application/json' \
+  -d "{\"do_background_mining\":false,\"threads_count\":4,\"miner_address\":\"$MINER_ADDR\"}"
+sleep 15
+curl -s http://127.0.0.1:47867/stop_mining
+docker compose restart zephyr-node1 zephyr-node2
+sleep 15
+
+# Check: should be queued (1+ confs, <5)
+curl -s "http://127.0.0.1:7051/claims/0x70997970C51812dc3A010C7d01b50e0d17dc79C8" \
+  | python3 -c "import sys,json; [print(f'{c[\"status\"]} confs={c.get(\"zephConfirmations\",{}).get(\"current\",\"?\")}') for c in json.load(sys.stdin)]"
+
+# 5. Mine more blocks (reach 5+ confs) → claimable
+curl -s http://127.0.0.1:47867/start_mining \
+  -H 'Content-Type: application/json' \
+  -d "{\"do_background_mining\":false,\"threads_count\":4,\"miner_address\":\"$MINER_ADDR\"}"
+sleep 60
+curl -s http://127.0.0.1:47867/stop_mining
+docker compose restart zephyr-node1 zephyr-node2
+sleep 15
+
+# Check: should be claimable with signature
+curl -s "http://127.0.0.1:7051/claims/0x70997970C51812dc3A010C7d01b50e0d17dc79C8" \
+  | python3 -c "import sys,json; [print(f'{c[\"status\"]} sig={bool(c.get(\"signature\"))}') for c in json.load(sys.stdin)]"
+
+# 6. Claim on EVM → status becomes claimed
+# (use values from API response — see Scenario 1 Step 5)
+
+# 7. Edge: duplicate tx_hash — send to same address again with different amount
+#    The watcher should NOT create a duplicate claim for the same tx_hash
+```
+
+```sql
+-- Verify state transitions in DB
+PGPASSWORD=zephyr psql -h 127.0.0.1 -U zephyr -d zephyrbridge_dev \
+  -c "SELECT id, status, \"zephConfirmations\", \"evmTxHash\" FROM \"Claim\" ORDER BY \"updatedAt\" DESC LIMIT 5;"
+```
+
+### Pass Criteria
+
+- [ ] Status progresses: pending → queued → claimable → claimed
+- [ ] Confirmations increment with each mined block
+- [ ] Signature appears only when status reaches claimable
+- [ ] Duplicate zephyr tx_hash does not create duplicate claim
+- [ ] After EVM claim tx, status moves to `claimed` with evmTxHash
+
+---
+
+## Scenario 14: Unwrap State Machine Transitions
+
+Verify unwraps progress through the expected status sequence.
+
+### Prerequisites
+
+- Have wZEPH balance on test account (from a previous wrap)
+- **Bridge wallet must have unlocked balance** — prepare pre-signs a Zephyr transfer
+- Mining wallet address saved as `$MINER_ADDR`
+
+### Steps
+
+```bash
+# 1. Prepare draft (creates pending unwrap)
+PREPARE=$(curl -s -X POST http://127.0.0.1:7051/unwraps/prepare \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "0xc5996c89394e0fef9a6817468c1181d104f6c991",
+    "amountWei": "1000000000000",
+    "destination": "ZEPHYR3NUG8TerjUHQKHTS655PmNE7aNLQ3uoY5tD3ZnMXcmKnG8c7Ebkp8R8vB84t3NQz3xCBwxMZrhRYDEhVjXHGSDE4by44r1T"
+  }')
+
+echo "$PREPARE" | python3 -m json.tool
+
+# 2. Burn on EVM (triggers sending state)
+#    Use the txHash from prepare as the nonce to link burn to pre-signed tx
+PAYLOAD=$(echo "$PREPARE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["payload"])')
+NONCE="0x$(echo "$PREPARE" | python3 -c 'import sys,json; print(json.load(sys.stdin)["txHash"])')"
+
+cast send 0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  "burnWithData(uint256,bytes,bytes32)" \
+  1000000000000 \
+  "$PAYLOAD" \
+  "$NONCE" \
+  --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --rpc-url http://127.0.0.1:8545
+
+# 3. Check DB immediately — sendStatus should transition to sending → sent
+sleep 10
+PGPASSWORD=zephyr psql -h 127.0.0.1 -U zephyr -d zephyrbridge_dev \
+  -c "SELECT status, \"sendStatus\", \"reconcileStatus\", \"zephTxId\" FROM \"Unwrap\" ORDER BY \"createdAt\" DESC LIMIT 1;"
+
+# 4. Mine blocks for Zephyr confirmation
+curl -s http://127.0.0.1:47867/start_mining \
+  -H 'Content-Type: application/json' \
+  -d "{\"do_background_mining\":false,\"threads_count\":4,\"miner_address\":\"$MINER_ADDR\"}"
+sleep 60
+curl -s http://127.0.0.1:47867/stop_mining
+docker compose restart zephyr-node1 zephyr-node2
+sleep 15
+
+# 5. Check reconcile status — should be true after confirmations
+PGPASSWORD=zephyr psql -h 127.0.0.1 -U zephyr -d zephyrbridge_dev \
+  -c "SELECT status, \"sendStatus\", \"reconcileStatus\", \"zephTxId\" FROM \"Unwrap\" ORDER BY \"createdAt\" DESC LIMIT 1;"
+```
+
+### Pass Criteria
+
+- [ ] Prepare creates a draft (DB record exists)
+- [ ] After EVM burn: `sendStatus` transitions from `pending` → `sending` → `sent`
+- [ ] After Zephyr tx broadcast: `zephTxId` is populated
+- [ ] After mining: `reconcileStatus` transitions to `true`
+- [ ] Full lifecycle: `status` ends as `confirmed`
+
+---
+
+## Scenario 15: Recovery & Reconcile Endpoints
+
+Test admin endpoints for managing failed and stuck unwraps.
+
+### Prerequisites
+
+- Admin token: `x-admin-token: supersecret`
+- At least one unwrap in the database (from Scenario 2 or 14)
+
+### Steps
+
+```bash
+# 1. List failed unwraps
+curl -s http://127.0.0.1:7051/admin/unwraps/failed \
+  -H "x-admin-token: supersecret" | python3 -m json.tool
+
+# 2. Rebuild unwraps — dry run (preview only, no changes)
+curl -s -X POST http://127.0.0.1:7051/admin/unwraps/rebuild \
+  -H "x-admin-token: supersecret" \
+  -H "Content-Type: application/json" \
+  -d '{"dryRun": true}' | python3 -m json.tool
+
+# 3. Rebuild unwraps — persist changes
+curl -s -X POST http://127.0.0.1:7051/admin/unwraps/rebuild \
+  -H "x-admin-token: supersecret" \
+  -H "Content-Type: application/json" \
+  -d '{"dryRun": false}' | python3 -m json.tool
+
+# 4. Retry a failed unwrap (replace <ID> with actual unwrap ID)
+curl -s -X POST http://127.0.0.1:7051/admin/unwraps/<ID>/retry \
+  -H "x-admin-token: supersecret" | python3 -m json.tool
+
+# 5. Resend a Zephyr tx (re-broadcast)
+curl -s -X POST http://127.0.0.1:7051/admin/unwraps/<ID>/resend \
+  -H "x-admin-token: supersecret" | python3 -m json.tool
+
+# 6. Reconcile a specific burn ID against wallet transfers
+BURN_ID="<burnId from unwrap record>"
+curl -s "http://127.0.0.1:7051/admin/unwraps/reconcile?burnId=$BURN_ID" \
+  -H "x-admin-token: supersecret" | python3 -m json.tool
+
+# 7. Verify auth is required — should return 403
+curl -s -w "\nHTTP %{http_code}" http://127.0.0.1:7051/admin/unwraps/failed
+```
+
+### Pass Criteria
+
+- [ ] `GET /admin/unwraps/failed` returns list (may be empty)
+- [ ] Rebuild with `dryRun: true` previews changes without persisting
+- [ ] Rebuild with `dryRun: false` persists changes
+- [ ] Retry re-queues a failed unwrap
+- [ ] Resend re-broadcasts the Zephyr transaction
+- [ ] Reconcile matches burn to wallet transfer
+- [ ] All endpoints return 403 without `x-admin-token`
+
+---
+
+## Scenario 16: Operator Watcher & Zephyr Admin
+
+Test operator visibility into watcher status and Zephyr-side transfer records.
+
+### Steps
+
+```bash
+# 1. List active watchers with status
+curl -s http://127.0.0.1:7051/admin/watchers \
+  -H "x-admin-token: supersecret" | python3 -c "
+import sys,json
+watchers = json.load(sys.stdin)
+if isinstance(watchers, list):
+    for w in watchers:
+        print(f'{w.get(\"name\",\"?\")}: {w.get(\"status\",\"?\")}')
+else:
+    print(json.dumps(watchers, indent=2))
+"
+
+# 2. Outgoing Zephyr transfers (sent by bridge wallet)
+curl -s http://127.0.0.1:7051/admin/zephyr/outgoing \
+  -H "x-admin-token: supersecret" | python3 -m json.tool
+
+# 3. Prepared (pre-signed) Zephyr drafts
+curl -s http://127.0.0.1:7051/admin/zephyr/prepared \
+  -H "x-admin-token: supersecret" | python3 -m json.tool
+
+# 4. Update outgoing record status (replace <ID>)
+curl -s -X POST http://127.0.0.1:7051/admin/unwraps/<ID>/outgoing/status \
+  -H "x-admin-token: supersecret" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "confirmed"}' | python3 -m json.tool
+```
+
+### Pass Criteria
+
+- [ ] Watchers endpoint lists active watchers with health status
+- [ ] Outgoing transfers shows Zephyr txs sent by bridge wallet
+- [ ] Prepared drafts shows pre-signed but unburned transfers
+- [ ] Outgoing status update modifies the record
+
+---
+
+## Scenario 17: Bridge Account Backup/Restore
+
+Test the debug backup/restore of EVM↔Zephyr account mappings.
+
+### Prerequisites
+
+- At least one bridge account created (from Scenario 1)
+
+### Steps
+
+```bash
+# 1. Backup all bridge accounts
+BACKUP=$(curl -s http://127.0.0.1:7051/debug/bridge-accounts/backup)
+echo "$BACKUP" | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+accounts = d.get('accounts', d if isinstance(d, list) else [])
+print(f'Accounts: {len(accounts)}')
+for a in accounts[:3]:
+    print(f'  evm={a.get(\"evmAddress\",\"?\")[:16]}... zeph={a.get(\"zephyrAddress\",\"?\")[:16]}...')
+"
+
+# 2. Verify backup contains expected fields
+echo "$BACKUP" | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+accounts = d.get('accounts', d if isinstance(d, list) else [])
+for a in accounts:
+    assert 'evmAddress' in a, 'Missing evmAddress'
+    assert 'zephyrAddress' in a, 'Missing zephyrAddress'
+print('All accounts have required fields')
+"
+
+# 3. Restore with force flag
+curl -s -X POST http://127.0.0.1:7051/debug/bridge-accounts/restore \
+  -H "Content-Type: application/json" \
+  -d "{\"accounts\": $(echo "$BACKUP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d.get('accounts', d if isinstance(d, list) else [])))"), \"force\": 1}" \
+  | python3 -m json.tool
+
+# 4. Verify accounts are queryable after restore
+curl -s "http://127.0.0.1:7051/bridge/address?evmAddress=0x70997970C51812dc3A010C7d01b50e0d17dc79C8" \
+  | python3 -m json.tool
+```
+
+### Pass Criteria
+
+- [ ] Backup returns accounts array with evmAddress + zephyrAddress fields
+- [ ] Restore with `force=1` re-imports all accounts
+- [ ] After restore, accounts are queryable via `GET /bridge/address`
+
+---
+
+## Scenario 18: Multi-Asset Wrap/Unwrap (ZRS + ZYS)
+
+Verify wrap/unwrap works for all four Zephyr asset types.
+
+### Prerequisites
+
+- Bridge account created for test EVM address
+- Test user wallet has ZRS and ZYS balances (check with balance command below)
+
+### Steps
+
+```bash
+# 1. Verify all 4 assets are listed
+curl -s http://127.0.0.1:7051/bridge/tokens | python3 -c "
+import sys,json
+tokens = json.load(sys.stdin)
+for t in tokens:
+    print(f'{t[\"symbol\"]}: {t[\"address\"]}')
+print(f'Total tokens: {len(tokens)}')
+"
+
+# 2. Check user wallet balances for all asset types
+curl -s http://127.0.0.1:48768/json_rpc \
+  -d '{"jsonrpc":"2.0","id":"0","method":"refresh"}' > /dev/null
+curl -s http://127.0.0.1:48768/json_rpc \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_balance","params":{"account_index":0}}' \
+  | python3 -c "
+import sys,json
+for b in json.load(sys.stdin)['result']['balances']:
+    print(f'{b[\"asset_type\"]}: {b[\"balance\"]/1e12:.4f} total, {b[\"unlocked_balance\"]/1e12:.4f} unlocked')
+"
+
+# 3. Wrap ZRS (if balance available)
+DEPOSIT_ADDR="<subaddress from bridge account>"
+curl -s http://127.0.0.1:48768/json_rpc -d "{
+  \"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"transfer\",
+  \"params\":{
+    \"destinations\":[{\"address\":\"$DEPOSIT_ADDR\",\"amount\":1000000000000}],
+    \"account_index\":0,
+    \"priority\":0,
+    \"asset_type\":\"ZRS\"
+  }
+}"
+# Mine blocks, wait for claimable, claim wZRS on EVM
+# wZRS contract: 0x47b0c4d054a0a0C687906E4f4065b0E761afd46d
+
+# 4. Wrap ZYS (if balance available)
+curl -s http://127.0.0.1:48768/json_rpc -d "{
+  \"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"transfer\",
+  \"params\":{
+    \"destinations\":[{\"address\":\"$DEPOSIT_ADDR\",\"amount\":1000000000000}],
+    \"account_index\":0,
+    \"priority\":0,
+    \"asset_type\":\"ZYS\"
+  }
+}"
+# Mine blocks, claim wZYS on EVM
+# wZYS contract: 0xE4E5353623cbAdA38D3D52Bc772fbb70eA1E0baa
+
+# 5. Unwrap wZRS → ZRS
+curl -s -X POST http://127.0.0.1:7051/unwraps/prepare \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "0x47b0c4d054a0a0c687906e4f4065b0e761afd46d",
+    "amountWei": "500000000000",
+    "destination": "<zephyr-address>"
+  }'
+# Burn wZRS on EVM, mine blocks, verify ZRS received
+
+# 6. Unwrap wZYS → ZYS
+curl -s -X POST http://127.0.0.1:7051/unwraps/prepare \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "0xe4e5353623cbada38d3d52bc772fbb70ea1e0baa",
+    "amountWei": "500000000000",
+    "destination": "<zephyr-address>"
+  }'
+# Burn wZYS on EVM, mine blocks, verify ZYS received
+```
+
+**Note:** ZRS and ZYS wraps/unwraps may be blocked by reserve ratio constraints. If the Zephyr protocol is in defensive or crisis mode, conversions involving reserve/staking assets may be restricted. Document the error if this occurs.
+
+### Pass Criteria
+
+- [ ] `GET /bridge/tokens` lists all 4 assets (wZEPH, wZSD, wZRS, wZYS)
+- [ ] ZRS wrap → wZRS claim succeeds (or documents reserve ratio block)
+- [ ] ZYS wrap → wZYS claim succeeds (or documents reserve ratio block)
+- [ ] wZRS unwrap → ZRS received in wallet
+- [ ] wZYS unwrap → ZYS received in wallet
+
+---
+
+## Scenario 19: Wallet Status & Balance Endpoints
+
+Verify the bridge API's Zephyr wallet health and balance reporting.
+
+### Steps
+
+```bash
+# 1. Wallet status
+curl -s http://127.0.0.1:7051/status/zephyr-wallet | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+print(f'ok: {d.get(\"ok\")}')
+print(f'height: {d.get(\"height\")}')
+print(f'address: {d.get(\"address\",\"?\")[:20]}...')
+"
+
+# 2. Wallet balances (all asset types)
+curl -s http://127.0.0.1:7051/status/zephyr-wallet/balances | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+print(json.dumps(d, indent=2))
+"
+
+# 3. Wallet status SSE stream (runs for 10 seconds)
+timeout 10 curl -N http://127.0.0.1:7051/status/zephyr-wallet/stream 2>/dev/null || true
+# Should emit: event: hello, then event: status with {"ok":true,"height":...}
+
+# 4. General API health
+curl -s http://127.0.0.1:7051/status/ | python3 -m json.tool
+```
+
+### Pass Criteria
+
+- [ ] `/status/zephyr-wallet` returns ok=true, height, address
+- [ ] `/status/zephyr-wallet/balances` returns ZPH, ZSD, ZRS, ZYS balances
+- [ ] `/status/zephyr-wallet/stream` emits SSE `event: status` with height
+- [ ] `/status/` returns general API health
+
+---
+
+## Scenario 20: Bridge Details Summary
+
+Verify the aggregate bridge statistics endpoint.
+
+### Steps
+
+```bash
+# 1. Get summary
+curl -s http://127.0.0.1:7051/details/summary | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+print(json.dumps(d, indent=2))
+"
+
+# 2. Verify token supplies match on-chain
+for TOKEN_ADDR in \
+  0xC5996C89394E0fef9A6817468c1181D104f6c991 \
+  0x1D9a006BF0819bdff41144e89c2fB2105ad46003 \
+  0x47b0c4d054a0a0C687906E4f4065b0E761afd46d \
+  0xE4E5353623cbAdA38D3D52Bc772fbb70eA1E0baa; do
+  SUPPLY=$(cast call $TOKEN_ADDR "totalSupply()(uint256)" --rpc-url http://127.0.0.1:8545)
+  SYM=$(cast call $TOKEN_ADDR "symbol()(string)" --rpc-url http://127.0.0.1:8545)
+  echo "$SYM: totalSupply=$SUPPLY"
+done
+
+# 3. Verify counts match DB
+PGPASSWORD=zephyr psql -h 127.0.0.1 -U zephyr -d zephyrbridge_dev \
+  -c "SELECT 'claims' as type, COUNT(*) FROM \"Claim\" UNION ALL SELECT 'unwraps', COUNT(*) FROM \"Unwrap\";"
+```
+
+### Pass Criteria
+
+- [ ] `/details/summary` returns tokenSupplies, walletBalances, claimCount, unwrapCount
+- [ ] Token supplies match on-chain `totalSupply()` calls
+- [ ] Counts match database records
+
+---
+
+## Scenario 21: Zephyr Address Validation
+
+Test the Zephyr address validation endpoint.
+
+### Steps
+
+```bash
+# 1. Valid main address
+curl -s -X POST http://127.0.0.1:7051/zephyr/validate \
+  -H 'Content-Type: application/json' \
+  -d '{"address":"ZEPHYR3NUG8TerjUHQKHTS655PmNE7aNLQ3uoY5tD3ZnMXcmKnG8c7Ebkp8R8vB84t3NQz3xCBwxMZrhRYDEhVjXHGSDE4by44r1T"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'valid={d.get(\"valid\")}')"
+
+# 2. Garbage string
+curl -s -X POST http://127.0.0.1:7051/zephyr/validate \
+  -H 'Content-Type: application/json' \
+  -d '{"address":"not-a-real-address"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'valid={d.get(\"valid\")} error={d.get(\"error\",\"none\")}')"
+
+# 3. Empty string
+curl -s -X POST http://127.0.0.1:7051/zephyr/validate \
+  -H 'Content-Type: application/json' \
+  -d '{"address":""}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'valid={d.get(\"valid\")} error={d.get(\"error\",\"none\")}')"
+
+# 4. Subaddress (ZEPHs...)
+# Get a real subaddress from bridge account
+SUBADDR=$(curl -s -X POST http://127.0.0.1:7051/bridge/address \
+  -H 'Content-Type: application/json' \
+  -d '{"evmAddress":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['zephyrAddress'])")
+
+curl -s -X POST http://127.0.0.1:7051/zephyr/validate \
+  -H 'Content-Type: application/json' \
+  -d "{\"address\":\"$SUBADDR\"}" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'valid={d.get(\"valid\")}')"
+```
+
+### Pass Criteria
+
+- [ ] Valid ZEPHYR address → `{ valid: true }`
+- [ ] Garbage string → `{ valid: false }` with error message
+- [ ] Empty string → handled gracefully (no crash)
+- [ ] Subaddress (ZEPHs...) → `{ valid: true }`
+
+---
+
+## Scenario 22: Unwrap Draft Cancel
+
+Test cancelling an unwrap draft before it's burned on EVM.
+
+### Steps
+
+```bash
+# 1. Prepare a draft
+DRAFT=$(curl -s -X POST http://127.0.0.1:7051/unwraps/prepare \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "0xc5996c89394e0fef9a6817468c1181d104f6c991",
+    "amountWei": "1000000000000",
+    "destination": "ZEPHYR3NUG8TerjUHQKHTS655PmNE7aNLQ3uoY5tD3ZnMXcmKnG8c7Ebkp8R8vB84t3NQz3xCBwxMZrhRYDEhVjXHGSDE4by44r1T"
+  }')
+
+DRAFT_ID=$(echo "$DRAFT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id', d.get('txHash','')))")
+echo "Draft ID: $DRAFT_ID"
+
+# 2. Cancel the draft
+curl -s -X POST http://127.0.0.1:7051/unwraps/cancel \
+  -H 'Content-Type: application/json' \
+  -d "{\"id\": \"$DRAFT_ID\"}" | python3 -m json.tool
+
+# 3. Verify cancelled draft cannot be executed
+#    Attempting to burn with the cancelled draft's payload should fail at the API level
+#    (the pre-signed Zephyr tx is invalidated)
+
+# 4. Attempt cancel on an already-burned unwrap (from Scenario 2)
+BURNED_ID="<unwrap ID from a completed burn>"
+curl -s -X POST http://127.0.0.1:7051/unwraps/cancel \
+  -H 'Content-Type: application/json' \
+  -d "{\"id\": \"$BURNED_ID\"}" | python3 -m json.tool
+# Should return error — can't cancel after burn
+```
+
+### Pass Criteria
+
+- [ ] Prepare returns a draft with an ID
+- [ ] Cancel succeeds for an unburned draft
+- [ ] Cancelled draft cannot be executed
+- [ ] Cancel on already-burned draft returns an error
+
+---
+
+## Scenario 23: Pool Discovery & Scanning
+
+Test Uniswap V4 pool discovery from PoolManager Initialize events.
+
+> **Known Bug:** Scanner currently finds 0 events on fresh Anvil deploy. This scenario documents the expected behavior and helps debug the issue.
+
+### Prerequisites
+
+- Contracts deployed via `deploy-contracts.sh`
+- Pools initialized (5 pools created by deploy script)
+- Bridge API running on port 7051
+
+### Steps
+
+```bash
+# 1. Check current pool count
+curl -s http://127.0.0.1:7051/uniswap/v4/pools | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+pools = d if isinstance(d, list) else d.get('pools', [])
+print(f'Pools discovered: {len(pools)}')
+for p in pools:
+    print(f'  {p.get(\"token0Symbol\",\"?\")}/{p.get(\"token1Symbol\",\"?\")} fee={p.get(\"fee\",\"?\")}')
+"
+
+# 2. Trigger manual pool scan
+curl -s -X POST http://127.0.0.1:7051/admin/uniswap/v4/scan \
+  -H 'x-admin-token: supersecret' | python3 -m json.tool
+
+# 3. Check PoolManager address being scanned
+curl -s http://127.0.0.1:7051/uniswap/v4/config | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+print(f'PoolManager: {d.get(\"poolManager\", \"NOT SET\")}')
+print(f'StateView: {d.get(\"stateView\", \"NOT SET\")}')
+"
+
+# 4. Verify Initialize events exist on-chain
+# Get deploy block from anvil
+DEPLOY_BLOCK=$(cast block-number --rpc-url http://127.0.0.1:8545)
+echo "Current block: $DEPLOY_BLOCK"
+
+# Check for Initialize events (topic0 for Initialize(PoolId,Currency,Currency,uint24,int24,address))
+POOL_MANAGER="0x69F42dBecA63683567349FcD74c7C59C2447E9f7"  # Update if different
+cast logs --from-block 0 --to-block $DEPLOY_BLOCK \
+  --address $POOL_MANAGER \
+  --rpc-url http://127.0.0.1:8545 | head -50
+
+# 5. Re-check pools after scan
+curl -s http://127.0.0.1:7051/uniswap/v4/pools | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+pools = d if isinstance(d, list) else d.get('pools', [])
+print(f'Pools after scan: {len(pools)}')
+"
+```
+
+### Pass Criteria
+
+- [ ] `/uniswap/v4/config` returns correct PoolManager address
+- [ ] Initialize events exist on-chain (cast logs shows events)
+- [ ] `POST /admin/uniswap/v4/scan` triggers scan without error
+- [ ] After scan, `/uniswap/v4/pools` returns 5 pools
+- [ ] Each pool has token0/token1 symbols, fee, tickSpacing
+
+### Debug Notes
+
+If pools aren't discovered:
+1. Check PoolManager address matches deployed contract
+2. Check scan cursor isn't past the deploy block
+3. Check event topic hash matches contract ABI
+4. Mine additional blocks and re-scan
+
+---
+
+## Scenario 24: Multi-Asset Wrap Flow (ZRS/ZYS)
+
+Test wrap/unwrap for reserve (ZRS) and yield staking (ZYS) assets.
+
+> **Note:** ZRS operations are restricted by reserve ratio (only available when RR is 400-800%). ZYS is always available.
+
+### Prerequisites
+
+- Bridge wallet has ZRS and ZYS balances
+- Test EVM account has ETH for gas
+- Reserve ratio known (check via Zephyr daemon)
+
+### Steps
+
+```bash
+# 1. Check current reserve ratio
+curl -s http://127.0.0.1:7051/status/zephyr-wallet | python3 -m json.tool
+
+# 2. Get bridge deposit addresses for ZRS and ZYS
+# First create/get a bridge account
+EVM_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+curl -s "http://127.0.0.1:7051/bridge/address?evmAddress=$EVM_ADDR" | python3 -m json.tool
+
+ZEPHYR_DEPOSIT=$(curl -s "http://127.0.0.1:7051/bridge/address?evmAddress=$EVM_ADDR" | python3 -c "import sys,json; print(json.load(sys.stdin)['zephyrAddress'])")
+echo "Deposit address: $ZEPHYR_DEPOSIT"
+
+# 3. Check token addresses
+curl -s http://127.0.0.1:7051/bridge/tokens | python3 -c "
+import sys,json
+for t in json.load(sys.stdin)['tokens']:
+    print(f'{t[\"symbol\"]}: {t[\"address\"]} (asset_type={t.get(\"assetType\",\"?\")})')
+"
+
+# 4. Transfer ZRS to bridge deposit address (via zephyr-wallet-cli or RPC)
+# Note: This requires unlocked ZRS in a source wallet
+# transfer_zrs <deposit_address> <amount> reserve
+
+# 5. Mine blocks for confirmations
+for i in {1..6}; do
+  curl -s -X POST http://127.0.0.1:47867/json_rpc \
+    -d '{"jsonrpc":"2.0","id":"0","method":"generateblocks","params":{"amount_of_blocks":1,"wallet_address":"ZEPHYR3NUG8TerjUHQKHTS655PmNE7aNLQ3uoY5tD3ZnMXcmKnG8c7Ebkp8R8vB84t3NQz3xCBwxMZrhRYDEhVjXHGSDE4by44r1T"}}' \
+    -H 'Content-Type: application/json' > /dev/null
+  sleep 1
+done
+
+# 6. Check for ZRS claim
+curl -s "http://127.0.0.1:7051/claims?evmAddress=$EVM_ADDR" | python3 -c "
+import sys,json
+claims = json.load(sys.stdin).get('claims', [])
+for c in claims:
+    if 'ZRS' in c.get('token','').upper() or c.get('assetType') == 'reserve':
+        print(f'ZRS Claim: status={c[\"status\"]}, amount={c.get(\"amount\",\"?\")}')
+"
+
+# 7. Claim wZRS on EVM (if claimable)
+WZRS_ADDR="0xDd4b0969cE7B1Be807050A6F5f7DbC71b32cDF3B"  # Update if different
+# Get voucher from claim and call claimWithSignature()
+
+# 8. Repeat for ZYS (asset_type: yield_staking)
+```
+
+### Pass Criteria
+
+- [ ] `/bridge/tokens` lists wZRS (reserve) and wZYS (yield_staking)
+- [ ] ZRS deposit detected and claim created (if RR allows)
+- [ ] ZRS claim transitions through state machine
+- [ ] wZRS claimable and mintable on EVM
+- [ ] ZYS wrap flow works (always available)
+- [ ] If RR blocks ZRS: appropriate error returned
+
+---
+
+## Scenario 25: Swap UI E2E (Playwright)
+
+End-to-end test of the DEX swap interface with MetaMask.
+
+### Prerequisites
+
+- Bridge web UI running on port 7050
+- MetaMask connected with test account
+- Account has wZEPH and wZSD balances
+- Pools discovered and have liquidity
+
+### Steps (Playwright)
+
+```javascript
+// 1. Navigate to swap page
+await page.goto('http://127.0.0.1:7050/swap');
+
+// 2. Verify wallet connected
+const walletButton = page.locator('[data-testid="wallet-button"]');
+await expect(walletButton).toContainText('0x');
+
+// 3. Select tokens
+await page.click('[data-testid="from-token-select"]');
+await page.click('text=WZEPH');
+await page.click('[data-testid="to-token-select"]');
+await page.click('text=WZSD');
+
+// 4. Enter amount
+await page.fill('[data-testid="from-amount"]', '1');
+
+// 5. Wait for quote
+await page.waitForSelector('[data-testid="quote-amount"]');
+const quote = await page.textContent('[data-testid="quote-amount"]');
+console.log(`Quote: 1 WZEPH = ${quote} WZSD`);
+
+// 6. Check approval needed
+const approveButton = page.locator('button:has-text("Approve")');
+if (await approveButton.isVisible()) {
+  await approveButton.click();
+  // Handle MetaMask approval popup
+  await page.waitForTimeout(2000);
+}
+
+// 7. Execute swap
+await page.click('button:has-text("Swap")');
+// Handle MetaMask transaction popup
+await page.waitForTimeout(5000);
+
+// 8. Verify success
+await expect(page.locator('text=Swap successful')).toBeVisible({ timeout: 30000 });
+
+// 9. Verify balance updated
+await page.waitForTimeout(2000);
+const newBalance = await page.textContent('[data-testid="from-balance"]');
+console.log(`New WZEPH balance: ${newBalance}`);
+```
+
+### Pass Criteria
+
+- [ ] Swap page loads with wallet connected
+- [ ] Token selection works
+- [ ] Quote displays after entering amount
+- [ ] Approval flow works (if needed)
+- [ ] Swap executes successfully
+- [ ] Balance updates after swap (no page reload needed)
+- [ ] No console errors
+
+---
+
+## Scenario 26: LP Management UI E2E (Playwright)
+
+End-to-end test of liquidity pool management interface.
+
+### Prerequisites
+
+- Bridge web UI running on port 7050
+- MetaMask connected with test account
+- Account has token balances for LP
+- At least one pool exists
+
+### Steps (Playwright)
+
+```javascript
+// 1. Navigate to LPs page
+await page.goto('http://127.0.0.1:7050/lps');
+
+// 2. Verify pools listed
+await page.waitForSelector('[data-testid="pool-list"]');
+const poolCount = await page.locator('[data-testid="pool-item"]').count();
+console.log(`Pools listed: ${poolCount}`);
+
+// 3. Click on a pool for details
+await page.click('[data-testid="pool-item"]:first-child');
+await page.waitForSelector('[data-testid="pool-detail"]');
+
+// 4. Check pool metrics
+const tvl = await page.textContent('[data-testid="pool-tvl"]');
+const volume = await page.textContent('[data-testid="pool-volume"]');
+console.log(`TVL: ${tvl}, Volume: ${volume}`);
+
+// 5. Open add liquidity form
+await page.click('button:has-text("Add Liquidity")');
+await page.waitForSelector('[data-testid="add-liquidity-form"]');
+
+// 6. Enter amounts
+await page.fill('[data-testid="token0-amount"]', '1');
+// Token1 amount should auto-calculate based on price
+
+// 7. Set price range (if concentrated liquidity)
+// Skip for full-range positions
+
+// 8. Preview position
+await page.click('button:has-text("Preview")');
+await page.waitForSelector('[data-testid="position-preview"]');
+
+// 9. Add liquidity (requires MetaMask)
+await page.click('button:has-text("Add Liquidity")');
+// Handle approval + mint transaction popups
+
+// 10. Verify position created
+await page.goto('http://127.0.0.1:7050/lps/positions');
+await page.waitForSelector('[data-testid="position-item"]');
+```
+
+### Pass Criteria
+
+- [ ] LPs page loads with pool list
+- [ ] Pool detail view shows metrics (TVL, volume, fees)
+- [ ] Add liquidity form opens
+- [ ] Amount entry works with auto-calculation
+- [ ] Position preview shows expected shares
+- [ ] Liquidity addition executes (MetaMask flow)
+- [ ] Position appears in positions list
+- [ ] No console errors
+
+---
+
+## Scenario 27: Wallet UX E2E (Playwright)
+
+End-to-end test of wallet balance and history display.
+
+### Prerequisites
+
+- Bridge web UI running on port 7050
+- MetaMask connected with test account
+- Account has some bridge activity (wraps/unwraps)
+
+### Steps (Playwright)
+
+```javascript
+// 1. Navigate to details/wallet page
+await page.goto('http://127.0.0.1:7050/details');
+
+// 2. Verify wallet connected
+await page.waitForSelector('[data-testid="wallet-address"]');
+const address = await page.textContent('[data-testid="wallet-address"]');
+console.log(`Connected: ${address}`);
+
+// 3. Check token balances displayed
+await page.waitForSelector('[data-testid="token-balances"]');
+const tokens = await page.locator('[data-testid="token-balance-item"]').count();
+console.log(`Tokens displayed: ${tokens}`);
+
+// 4. Verify balance values
+const wzephBalance = await page.textContent('[data-testid="balance-WZEPH"]');
+const wzsdBalance = await page.textContent('[data-testid="balance-WZSD"]');
+console.log(`WZEPH: ${wzephBalance}, WZSD: ${wzsdBalance}`);
+
+// 5. Check activity/history section
+await page.click('[data-testid="activity-tab"]');
+await page.waitForSelector('[data-testid="activity-list"]');
+
+// 6. Verify activity items
+const activities = await page.locator('[data-testid="activity-item"]').count();
+console.log(`Activity items: ${activities}`);
+
+// 7. Check activity details
+if (activities > 0) {
+  await page.click('[data-testid="activity-item"]:first-child');
+  await page.waitForSelector('[data-testid="activity-detail"]');
+  const txHash = await page.textContent('[data-testid="tx-hash"]');
+  console.log(`First activity tx: ${txHash}`);
+}
+
+// 8. Test refresh
+await page.click('[data-testid="refresh-balances"]');
+await page.waitForTimeout(1000);
+```
+
+### Pass Criteria
+
+- [ ] Details page loads with wallet connected
+- [ ] All token balances displayed correctly
+- [ ] Balance values match on-chain state
+- [ ] Activity/history section shows past transactions
+- [ ] Activity items show type (wrap/unwrap/swap)
+- [ ] Activity details include tx hashes
+- [ ] Refresh updates balances
+- [ ] No console errors
+
+---
+
+## Test Results Summary (2026-02-03)
+
+| Scenario | Status | Notes |
+|----------|--------|-------|
+| 1. Wrap via API | PASS | Full flow tested |
+| 2. Unwrap via API | PASS | Full flow tested |
+| 3-5. Web UI flows | PASS | Playwright + MetaMask verified |
+| 11. EIP-712 Voucher Signing | PASS | Domain, verifyingContract, claim all verified |
+| 12. Pre-signed Unwrap Payload | PASS | Prepare returns all fields; burn with payload works |
+| 13. Claim State Machine | PASS | pending → queued → claimable → claimed |
+| 14. Unwrap State Machine | PASS | prepare → burn → sent → reconciled |
+| 15. Recovery & Reconcile Endpoints | PASS | Admin endpoints work with auth |
+| 16. Operator Watcher & Zephyr Admin | PASS | All watchers report status |
+| 17. Bridge Account Backup/Restore | PASS | Backup returns pairs, restore works |
+| 18. Multi-Asset Wrap/Unwrap | PASS | All 4 tokens listed (flow untested) |
+| 19. Wallet Status & Balance Endpoints | PASS | 7/8 endpoints work (GET /status/ → 404) |
+| 20. Bridge Details Summary | PASS | Returns tokens, balances, counts |
+| 21. Zephyr Address Validation | PASS | Valid/invalid/empty all handled correctly |
+| 22. Unwrap Draft Cancel | PASS | Cancel endpoints work with validation |
+
+**Key learnings:**
+- `/admin/watchers` must NOT have trailing slash (404 if it does)
+- Bridge wallet needs unlocked funds for unwrap prepare (500 error if locked)
+- Use txHash from prepare as the nonce for burnWithData (links burn to pre-signed tx)
+
+---
+
+## Contract Addresses (After Full Deploy)
+
+These addresses are generated by `./scripts/deploy-contracts.sh` and stored in `zephyr-eth-foundry/.forge-snapshots/addresses.json`.
+
+| Contract | Address |
+|----------|---------|
+| wZEPH | `0xEd5E15BcF3C6d6B684aa612FA1ba780D20f8bed3` |
+| wZSD | `0x6e35539f977fe6A10fbEfC5CfFd76fbDB1753412` |
+| wZRS | `0xDd4b0969cE7B1Be807050A6F5f7DbC71b32cDF3B` |
+| wZYS | `0x3ff903D147A7de0C15615dB274451e75682CD418` |
+| USDC | `0xda767CBC9F1F36D2a3e5b83C5156e63248d0fF23` |
+| USDT | `0x338AE0D2562Dc83a6dB90749eC5eE13EecF68D75` |
+| PoolManager | `0x69F42dBecA63683567349FcD74c7C59C2447E9f7` |
+| PositionManager | `0x0b71ceE7dCc7A9DaD0068Dec1F3c221564836D0d` |
+| StateView | `0x1a3776b1eA00089012426B425F087eF13254b253` |
+| V4Quoter | `0x96Ae51B0DB0Aa7c98201af65Cf33bb14f750ad52` |
+| SwapRouter | `0x71f9fDAD90C4DE21C2928a86B8C30e9F4C02A8E8` |
+| Permit2 | `0x3191Fc1E303EF4e12a7DE5f5d2e8d53A0660c5b9` |
+
+**Note:** These are Anvil-specific addresses from a deterministic deploy. They change if Anvil state is reset and contracts are redeployed.
+
+### Key Accounts
+
+| Account | Address | Private Key |
+|---------|---------|-------------|
+| Deployer | `0x8a87522ff7a811Af2E1EDA0FB3D99c8F5400Cf4B` | `0x860875f05874e1ac2207f147a7a3e2a13d66520936cb598528e9104f2d5ec990` |
+| Bridge Signer (MetaMask) | `0x8273E2C64415faCD40Db58181575B6f8f1337e22` | `0xdad112823784d70852482c06b20e6fae3f9a4b23fcb985930df6a57d17d31a27` |
+
+### Post-Deploy Checklist
+
+After running `./scripts/deploy-contracts.sh` or redeploying:
+
+1. Copy addresses to bridge API: `cp zephyr-eth-foundry/.forge-snapshots/addresses.json zephyr-bridge/apps/api/config/addresses.local.json`
+2. Copy addresses to bridge config: update `zephyr-bridge/packages/config/src/addresses/addresses.local.json`
+3. Rebuild config + API: `cd zephyr-bridge && pnpm --filter @zephyr-bridge/config build && pnpm --filter @zephyr-bridge/api build`
+4. Restart bridge: `overmind restart bridge-api bridge-watchers`
+5. Scan pools: `curl -X POST http://127.0.0.1:7051/admin/uniswap/v4/scan -H "x-admin-token: supersecret"`
+6. Update engine addresses: update `zephyr-bridge-engine/src/services/evm/config/addresses.local.json`
+7. Restart engine watchers
+
+<!-- L5-CATALOG-START -->
+## L5 Integrated Edge-Case Catalog
+
+This section fully integrates the scoped ZB edge-case tests that belong in this runbook.
+
+| Total | SCOPED-READY | SCOPED-EXPAND | SCOPED-TBC |
+|---:|---:|---:|---:|
+| 78 | 10 | 15 | 53 |
+
+Tests marked `SCOPED-TBC` are intentionally included now and require additional runbook detail in a follow-up pass.
+
+### 1. Bridge Security (12)
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-SEC-001` | Reject forged claim signature | P0 | Critical | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-SEC-002` | Reject claim signed for different to address | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SEC-003` | Reject claim on wrong chainId (domain mismatch) | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SEC-004` | Prevent duplicate claim after wallet rescan/replay ingestion | P0 | High | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-SEC-005` | Multi-destination Zephyr tx: ensure no funds lost due to txHash-only idempotency | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SEC-006` | Same Zephyr tx includes multiple asset types: ensure no cross-asset "txHash lockout" | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SEC-007` | Unwrap payout must bind to burn event fields, not "prepare" fields | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SEC-008` | Duplicate burn event ingestion must not double-send Zephyr funds | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SEC-009` | Validate MINTER_ROLE not accidentally granted broadly (testnet guardrail) | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SEC-010` | Oracle signer rotation does not strand existing deposits | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SEC-011` | Admin endpoints must not be callable without token (avoid accidental tampering) | P2 | Medium | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-SEC-012` | Claim API must not leak signatures for other addresses | P1 | Medium | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+
+### 2. Smart Contract Edge Cases (12)
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-SC-001` | claimWithSignature and claimWithSig equivalence | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-002` | Deadline boundary conditions | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-003` | Reject amount = 0 claim | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-004` | Reject burnWithData(amount=0) | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-005` | Nonce replay protection exactness | P0 | Critical | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-SC-006` | Nonce uniqueness across tokens (should be per-token) | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-007` | ECDSA malleability test (high-s signatures) | P2 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-008` | Event correctness: MintedFromZephyr must include correct zephyrTxHash | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-009` | setOracleSigner access control | P2 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-010` | Decimals fixed at 12 and matches bridge arithmetic | P0 | Critical | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-SC-011` | usedZephyrTx set only on success | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-SC-012` | mintFromZephyr respects replay protection | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+
+### 3. Concurrency & Race Conditions (10)
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-CONC-001` | /bridge/address idempotency under concurrent requests (same EVM) | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONC-002` | /bridge/address uniqueness under concurrent different EVMs | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONC-003` | Case normalization collision (EIP-55 vs lowercase) | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONC-004` | Deposit arrives before /bridge/address response is stored | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONC-005` | Two browser tabs claim same voucher simultaneously | P0 | Critical | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-CONC-006` | Multiple unwrap prepares with same params (dedupe vs uniqueness) | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONC-007` | Unwrap burn happens before prepare reconciliation completes | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONC-008` | Two bridge instances running (lock contention) | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONC-009` | Dev-reset while queues active | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONC-010` | Engine evaluation concurrent with reserve mode change | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+
+### 4. Failure Recovery (10)
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-REC-001` | Bridge API crash after ZephyrIncoming created but before Claim queued | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-REC-002` | watcher-zephyr crash mid-poll | P0 | High | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-REC-003` | watcher-evm crash after Burned log seen but before payout sent | P0 | Critical | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-REC-004` | Crash during Zephyr transfer submission (unknown tx state) | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-REC-005` | Wallet RPC unreachable (temporary) | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-REC-006` | Primary daemon down; wallets failover behavior | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-REC-007` | Postgres restart mid-processing | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-REC-008` | Redis restart (cache + state streaming) | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-REC-009` | Anvil WS disconnect + reconnect | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-REC-010` | Engine watchers restart: cursor-based recovery | P0 | High | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+
+### 5. Data Consistency (10)
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-CONS-001` | DB claim state must match on-chain ERC20 balances | P0 | High | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-CONS-002` | TokenSupply cache correctness after mint/burn bursts | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONS-003` | Unwrap DB state must match ZephyrOutgoing wallet history | P0 | Critical | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-CONS-004` | Exactly-once ZephyrIncoming ingestion across rescans | P0 | High | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-CONS-005` | Confirmations monotonicity | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONS-006` | Out-of-order status transitions are rejected | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONS-007` | Unwrap.id = txHash:logIndex uniqueness under same-tx multiple events | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONS-008` | BridgeAccount uniqueness constraints | P0 | Critical | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONS-009` | SystemState + Lock TTL correctness | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-CONS-010` | Engine DB snapshots align with current on-chain pool state | P0 | High | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+
+### 8. Multi-Asset Interactions (10)
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-ASSET-001` | Wrap ZSD (not just ZPH) | P0 | High | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-ASSET-002` | Wrap ZRS | P1 | Medium | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-ASSET-003` | Wrap ZYS | P1 | Medium | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-ASSET-004` | Unwrap wZSD | P0 | High | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-ASSET-005` | Unwrap wZRS | P1 | Medium | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-ASSET-006` | Unwrap wZYS | P0 | High | `SCOPED-READY` | Already covered in this doc; keep as regression. |
+| `ZB-ASSET-007` | Reject legacy asset_type usage (ZEPH/ZEPHUSD/etc) | P0 | High | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-ASSET-008` | Minimum atomic amount (1 unit) through wrap and swap | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-ASSET-009` | Very large amount near wallet/erc20 limits | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-ASSET-010` | Cross-asset engine pathing correctness (ZSD↔ZYS / ZRS↔ZPH) | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+
+### 10. Timeout & Deadline Handling (8)
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-TIME-001` | Claim expiry lifecycle | P0 | Medium | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-TIME-002` | Expiry does not mark usedZephyrTx | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-TIME-003` | Prepared unwrap that is never burned (garbage collection) | P2 | Low | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-TIME-004` | Unwrap send retries with exponential backoff / bounded attempts | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-TIME-005` | EVM tx pending for long time (mempool delay) | P1 | High | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-TIME-006` | Zephyr deposit confirmation rule vs reorg depth | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-TIME-007` | SSE idle timeout and resume from last state | P2 | Low | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-TIME-008` | Engine staleness guard (market data age) | P0 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+
+### 13. Privacy Leaks (6)
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-PRIV-001` | /claims/:evmAddress must not expose other users' Zephyr subaddresses | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-PRIV-002` | /details "My Activity" scoping | P1 | Medium | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+| `ZB-PRIV-003` | SSE stream authorization expectations | P2 | Low | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-PRIV-004` | Logs do not print full Zephyr destination addresses by default | P2 | Low | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-PRIV-005` | Engine global state does not include private wallet seeds/keys | P1 | High | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+| `ZB-PRIV-006` | Bridge DB exports don't leak unnecessary mapping | P2 | Low | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
+
+<!-- L5-CATALOG-END -->

@@ -1,0 +1,34 @@
+{
+  "_comment": "Zephyr wallet addresses - update after creating wallets",
+  "_deprecated_note": "The mining/bridge/exchange/testuser entries below use mainnet-fork ports (17776-17779). In DEVNET mode, wallets run in Docker Compose with different ports (gov=48769, miner=48767, test=48768).",
+  "mining": {
+    "name": "localmining",
+    "address": "",
+    "port": 17776,
+    "purpose": "DEPRECATED (mainnet-fork) - Generates test ZEPH via mining"
+  },
+  "bridge": {
+    "name": "localbridge",
+    "address": "",
+    "port": 17777,
+    "purpose": "DEPRECATED (mainnet-fork) - Bridge operator wallet"
+  },
+  "exchange": {
+    "name": "localexchange",
+    "address": "",
+    "port": 17778,
+    "purpose": "DEPRECATED (mainnet-fork) - Simulates CEX wallet for engine testing"
+  },
+  "testuser": {
+    "name": "localtestuser",
+    "address": "",
+    "port": 17779,
+    "purpose": "DEPRECATED (mainnet-fork) - Test user for wrap/unwrap flow testing"
+  },
+  "sepolia_bridge": {
+    "name": "sepoliabridge",
+    "address": "",
+    "port": 17780,
+    "purpose": "Bridge wallet for Sepolia environment"
+  }
+}

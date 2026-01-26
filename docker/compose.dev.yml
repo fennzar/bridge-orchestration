@@ -1,0 +1,124 @@
+# ===========================================
+# Dev Overrides
+# ===========================================
+# Adds: Anvil, port exposure, devnet-init container.
+# Apps run natively via Overmind (Procfile.dev).
+#
+# Usage:
+#   docker compose -f docker/compose.base.yml -f docker/compose.dev.yml up -d
+#   docker compose -f docker/compose.base.yml -f docker/compose.dev.yml --profile init up devnet-init
+
+services:
+  # ===========================================
+  # Anvil - Local EVM chain
+  # ===========================================
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: zephyr-anvil
+    ports:
+      - "8545:8545"
+    entrypoint: ["anvil"]
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--chain-id"
+      - "31337"
+      - "--accounts"
+      - "20"
+      - "--balance"
+      - "10000"
+      - "--mnemonic"
+      - "${EVM_DEV_MNEMONIC:-test test test test test test test test test test test junk}"
+      - "--state"
+      - "/data/anvil-state.json"
+    volumes:
+      - anvil-data:/data
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # Port Exposure (dev only)
+  # ===========================================
+  redis:
+    ports:
+      - "6380:6379"
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  # Oracle shares node1's network namespace, so oracle port is exposed via node1
+  zephyr-node1:
+    ports:
+      - "47767:47767"
+      - "5555:5555"
+
+  zephyr-node2:
+    ports:
+      - "47867:47867"
+
+  wallet-gov:
+    ports:
+      - "48769:48769"
+
+  wallet-miner:
+    ports:
+      - "48767:48767"
+
+  wallet-test:
+    ports:
+      - "48768:48768"
+
+  wallet-bridge:
+    ports:
+      - "48770:48770"
+
+  fake-orderbook:
+    ports:
+      - "5556:5556"
+
+  # ===========================================
+  # DEVNET Init (profile: init)
+  # ===========================================
+  devnet-init:
+    image: zephyr-devnet-init
+    container_name: zephyr-devnet-init
+    profiles:
+      - init
+    environment:
+      NODE1_RPC: "http://zephyr-node1:47767"
+      NODE2_RPC: "http://zephyr-node2:47867"
+      GOV_WALLET_RPC: "http://wallet-gov:48769"
+      MINER_WALLET_RPC: "http://wallet-miner:48767"
+      TEST_WALLET_RPC: "http://wallet-test:48768"
+      BRIDGE_WALLET_RPC: "http://wallet-bridge:48770"
+      ORACLE_URL: "http://zephyr-node1:5555"
+      CHECKPOINT_FILE: "/checkpoint/height"
+    volumes:
+      - zephyr-checkpoint:/checkpoint
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+      zephyr-node2:
+        condition: service_healthy
+      fake-oracle:
+        condition: service_healthy
+      wallet-gov:
+        condition: service_started
+      wallet-miner:
+        condition: service_started
+      wallet-test:
+        condition: service_started
+      wallet-bridge:
+        condition: service_started
+    networks:
+      - zephyr-net
+
+volumes:
+  anvil-data:

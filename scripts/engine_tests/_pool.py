@@ -221,7 +221,7 @@ def set_rr_mode(mode: str) -> bool:
     return ok
 
 
-DEVNET_BASELINE_PRICE = 1.50  # Default oracle price for devnet
+DEVNET_BASELINE_PRICE = 2.00  # Default oracle price for devnet
 
 
 @contextmanager
@@ -249,7 +249,7 @@ def rr_mode(mode: str) -> Generator[bool, None, None]:
 class EngineCleanupContext:
     """Like CleanupContext but mines blocks after restoring oracle price."""
 
-    def __init__(self, price_usd: float = 1.50, spread_bps: int = 50):
+    def __init__(self, price_usd: float = 2.00, spread_bps: int = 50):
         self.price_usd = price_usd
         self.spread_bps = spread_bps
 

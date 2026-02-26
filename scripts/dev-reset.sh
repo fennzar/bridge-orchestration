@@ -173,13 +173,62 @@ else
     "$ZEPHYR_CLI" mine stop 2>/dev/null || true
     sleep 1
 
+    # Close all wallets before pop (they hold LMDB locks on shared ringdb)
+    log_info "Closing wallets..."
+    for w in gov miner test bridge engine cex; do
+        "$ZEPHYR_CLI" wallet close "$w" 2>/dev/null || true
+    done
+
     log_info "Popping blocks on both nodes..."
     "$ZEPHYR_CLI" pop "$BLOCKS_TO_POP" --all
     sleep 3
 
+    # Clear the shared ringdb — after pop_blocks, the ring database references
+    # output indices that no longer exist, causing transactions to be rejected
+    # by the daemon with "Known ring does not include the spent output: N".
+    log_info "Clearing shared ring database..."
+    $DC_DEV exec -T wallet-gov sh -c 'rm -f /data/ringdb/data.mdb /data/ringdb/lock.mdb' 2>/dev/null || true
+
+    # Restart node1 to force resync with node2 after pop_blocks.
+    # Without this, node1 stays synchronized=False indefinitely in devnet,
+    # which blocks all wallet transfer operations ("daemon is busy").
+    log_info "Restarting node1 to resync..."
+    $DC_DEV restart zephyr-node1 2>/dev/null
+    sleep 5
+    for i in $(seq 1 20); do
+        if curl -sf http://127.0.0.1:47767/json_rpc \
+            -d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' 2>/dev/null | \
+            python3 -c "import sys,json; assert json.load(sys.stdin)['result']['synchronized']" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+
+    # Re-open wallets (node1 restart drops wallet connections)
+    "$SCRIPT_DIR/open-wallets.sh"
+
     log_info "Rescanning wallets..."
     "$ZEPHYR_CLI" rescan all
     sleep 2
+
+    # Flush tx pool to clear any stale/stuck transactions from previous session.
+    log_info "Flushing transaction pool..."
+    curl -sf http://127.0.0.1:47767/json_rpc \
+        -d '{"jsonrpc":"2.0","id":"0","method":"flush_txpool","params":{}}' >/dev/null 2>&1 || true
+
+    # Mine warm-up blocks so wallets have fresh outputs for ring member selection.
+    # After clearing the ringdb and rescanning, the wallets need new on-chain outputs
+    # to build valid ring signatures. Without this, the daemon rejects transactions
+    # with "transaction was rejected by daemon" (error -4).
+    log_info "Mining warm-up blocks..."
+    "$ZEPHYR_CLI" mine start --threads 2
+    sleep 10
+    "$ZEPHYR_CLI" mine stop 2>/dev/null || true
+    sleep 1
+
+    # Refresh wallets to pick up the warm-up block outputs
+    "$ZEPHYR_CLI" rescan all 2>/dev/null || true
+    sleep 3
 fi
 
 # Restart mining (skip for --hard: dev-setup will handle mining)
@@ -196,7 +245,17 @@ log_success "Zephyr chain reset to height $CHECKPOINT"
 # Phase 3: Anvil reset
 # ===========================================
 log_info "Resetting Anvil..."
-$DC_DEV exec -T anvil rm -f /data/anvil-state.json 2>/dev/null || true
+
+if [ "$HARD_RESET" = true ]; then
+    # Hard reset: wipe Anvil completely (dev-setup will redeploy)
+    rm -f "$ORCH_DIR/config/addresses.json"
+    rm -f "$ORCH_DIR/deployed-addresses.json"
+    rm -f "$ORCH_DIR/snapshots/anvil/post-setup.hex"
+    log_info "Removed config/addresses.json + Anvil snapshot"
+    $DC_DEV exec -T wallet-gov sh -c 'cp /checkpoint/init-height /checkpoint/height' 2>/dev/null || true
+fi
+
+# Restart Anvil (always restart to clear in-memory state)
 $DC_DEV restart anvil
 
 log_info "Waiting for Anvil..."
@@ -213,11 +272,29 @@ if ! cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
     exit 1
 fi
 
-if [ "$HARD_RESET" = true ]; then
-    rm -f "$ORCH_DIR/config/addresses.json"
-    rm -f "$ORCH_DIR/deployed-addresses.json"
-    log_info "Removed config/addresses.json"
-    $DC_DEV exec -T wallet-gov sh -c 'cp /checkpoint/init-height /checkpoint/height' 2>/dev/null || true
+# Normal reset: restore EVM state from post-setup snapshot
+if [ "$HARD_RESET" = false ] && [ -f "$ORCH_DIR/snapshots/anvil/post-setup.hex" ]; then
+    log_info "Restoring Anvil from post-setup snapshot..."
+    # Build JSON payload with the hex state data via python (avoids shell arg length limits)
+    RESULT=$(python3 -c "
+import json, sys
+with open('$ORCH_DIR/snapshots/anvil/post-setup.hex') as f:
+    state = f.read().strip()
+# Strip surrounding quotes if present (older snapshots may include them)
+if state.startswith('\"') and state.endswith('\"'):
+    state = state[1:-1]
+payload = json.dumps({'jsonrpc':'2.0','id':1,'method':'anvil_loadState','params':[state]})
+sys.stdout.write(payload)
+" | curl -sf -X POST http://127.0.0.1:8545 \
+        -H "Content-Type: application/json" \
+        --data-binary @-)
+    if echo "$RESULT" | python3 -c "import sys,json; r=json.load(sys.stdin); assert r.get('result')" 2>/dev/null; then
+        log_success "Anvil state restored"
+    else
+        log_warn "Failed to restore Anvil state: $RESULT"
+    fi
+elif [ "$HARD_RESET" = false ]; then
+    log_warn "No Anvil snapshot found — EVM state not restored (run dev-setup to create one)"
 fi
 
 log_success "Anvil reset complete"

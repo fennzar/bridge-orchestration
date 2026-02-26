@@ -4,6 +4,18 @@ import { promisify } from "util";
 import * as path from "path";
 import type { TestInfo } from "@/lib/types";
 import { ORCH_DIR } from "@/lib/constants";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "Test Catalog",
+  category: "Testing",
+  description: "List all available L1-L5 tests with their IDs, names, levels, and categories.",
+  response: [
+    { name: "tests", type: "TestInfo[]", required: true, description: "All available tests with id, name, level, category, sublevel" },
+    { name: "summary", type: "{ L1, L2, L3, L4, L5, total }", required: true, description: "Test counts per level" },
+  ],
+  curl: "curl localhost:7100/api/tests",
+};
 
 const execAsync = promisify(exec);
 

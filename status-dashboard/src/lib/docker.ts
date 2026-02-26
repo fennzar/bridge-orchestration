@@ -53,3 +53,22 @@ export async function getContainerLogs(service: string, tail: number = 20): Prom
     return [];
   }
 }
+
+export async function readCheckpointHeight(): Promise<number | null> {
+  try {
+    const stdout = await runDC(`exec -T wallet-gov cat /checkpoint/height`);
+    const height = parseInt(stdout.trim(), 10);
+    return isNaN(height) ? null : height;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCheckpointHeight(height: number): Promise<boolean> {
+  try {
+    await runDC(`exec -T wallet-gov sh -c "echo ${height} > /checkpoint/height"`);
+    return true;
+  } catch {
+    return false;
+  }
+}

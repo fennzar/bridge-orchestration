@@ -32,6 +32,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { ChainResponse, WalletBalance, AssetType, ReserveInfo } from "@/lib/types";
+import { INPUT_CLASS } from "@/lib/styles";
 
 function NodeCard({
   label,
@@ -293,15 +294,20 @@ function OracleSection({
   loading,
   onSetPrice,
   onSetScenario,
+  onSetMode,
 }: {
-  oracle: { price: number | null } | undefined;
+  oracle: ChainResponse["oracle"] | undefined;
   loading: boolean;
   onSetPrice: (price: string) => Promise<void>;
   onSetScenario: (scenario: string) => Promise<void>;
+  onSetMode: (mode: "manual" | "mirror") => Promise<void>;
 }) {
   const [priceInput, setPriceInput] = useState("");
   const [settingPrice, setSettingPrice] = useState(false);
   const [settingScenario, setSettingScenario] = useState<string | null>(null);
+  const [settingMode, setSettingMode] = useState(false);
+
+  const isMirror = oracle?.mode === "mirror";
 
   const handleSetPrice = async () => {
     if (!priceInput.trim()) return;
@@ -323,6 +329,15 @@ function OracleSection({
     }
   };
 
+  const handleSetMode = async (mode: "manual" | "mirror") => {
+    setSettingMode(true);
+    try {
+      await onSetMode(mode);
+    } finally {
+      setSettingMode(false);
+    }
+  };
+
   const scenarios = [
     { id: "normal", label: "Normal", color: "bg-green-600 hover:bg-green-700" },
     { id: "defensive", label: "Defensive", color: "bg-amber-500 hover:bg-amber-600" },
@@ -337,6 +352,11 @@ function OracleSection({
           <div className="flex items-center gap-2">
             <DollarSign className="h-4 w-4" />
             <CardTitle className="text-sm">Oracle Price</CardTitle>
+            {!loading && isMirror && (
+              <Badge className="bg-blue-600 hover:bg-blue-700 text-xs">
+                Mirror
+              </Badge>
+            )}
           </div>
           {!loading && oracle && (
             <span className="text-2xl font-mono font-bold">
@@ -347,6 +367,49 @@ function OracleSection({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Mode Toggle */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Mode:</span>
+          <div className="flex gap-1">
+            <Button
+              variant={!isMirror ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleSetMode("manual")}
+              disabled={settingMode || !isMirror}
+            >
+              {settingMode && !isMirror ? (
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              ) : null}
+              Manual
+            </Button>
+            <Button
+              variant={isMirror ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleSetMode("mirror")}
+              disabled={settingMode || isMirror}
+            >
+              {settingMode && isMirror ? (
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              ) : null}
+              Mirror
+            </Button>
+          </div>
+        </div>
+
+        {/* Mirror info */}
+        {isMirror && (
+          <div className="text-xs text-muted-foreground space-y-1 bg-blue-500/10 rounded-md px-3 py-2">
+            <div>Syncing from mainnet oracle</div>
+            {oracle.mirrorSpot !== undefined && (
+              <div>Mainnet spot: <span className="font-mono">${oracle.mirrorSpot.toFixed(4)}</span></div>
+            )}
+            {oracle.mirrorLastFetch && (
+              <div>Last fetch: <span className="font-mono">{oracle.mirrorLastFetch}</span></div>
+            )}
+          </div>
+        )}
+
+        {/* Manual controls — disabled in mirror mode */}
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -356,12 +419,13 @@ function OracleSection({
             onKeyDown={(e) => {
               if (e.key === "Enter") handleSetPrice();
             }}
-            className="flex h-8 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 w-28 font-mono"
+            disabled={isMirror}
+            className="flex h-8 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 w-28 font-mono disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <Button
             size="sm"
             onClick={handleSetPrice}
-            disabled={settingPrice || !priceInput.trim()}
+            disabled={settingPrice || !priceInput.trim() || isMirror}
           >
             {settingPrice ? (
               <Loader2 className="h-4 w-4 mr-1 animate-spin" />
@@ -381,7 +445,7 @@ function OracleSection({
                 size="sm"
                 className={s.color}
                 onClick={() => handleSetScenario(s.id)}
-                disabled={settingScenario !== null}
+                disabled={settingScenario !== null || isMirror}
               >
                 {settingScenario === s.id ? (
                   <Loader2 className="h-3 w-3 mr-1 animate-spin" />
@@ -496,7 +560,7 @@ function WalletBalancesSection({
 }
 
 const ASSETS: AssetType[] = ["ZPH", "ZSD", "ZRS", "ZYS"];
-const WALLET_NAMES = ["gov", "miner", "test", "bridge"];
+const WALLET_NAMES = ["gov", "miner", "test", "bridge", "engine"];
 
 const VALID_CONVERSION_TARGETS: Record<string, AssetType[]> = {
   ZPH: ["ZSD", "ZRS"],
@@ -571,9 +635,6 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
     }
   };
 
-  const inputClass =
-    "flex h-8 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 font-mono";
-
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -610,7 +671,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
               <select
                 value={fromWallet}
                 onChange={(e) => setFromWallet(e.target.value)}
-                className={`${inputClass} w-24`}
+                className={`${INPUT_CLASS} w-24`}
               >
                 {WALLET_NAMES.map((w) => (
                   <option key={w} value={w}>{w}</option>
@@ -622,7 +683,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
               <select
                 value={toWallet}
                 onChange={(e) => setToWallet(e.target.value)}
-                className={`${inputClass} w-24`}
+                className={`${INPUT_CLASS} w-24`}
               >
                 {WALLET_NAMES.filter((w) => w !== fromWallet).map((w) => (
                   <option key={w} value={w}>{w}</option>
@@ -637,7 +698,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
-                className={`${inputClass} w-28`}
+                className={`${INPUT_CLASS} w-28`}
               />
             </div>
             <div>
@@ -645,7 +706,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
               <select
                 value={sourceAsset}
                 onChange={(e) => setSourceAsset(e.target.value as AssetType)}
-                className={`${inputClass} w-20`}
+                className={`${INPUT_CLASS} w-20`}
               >
                 {ASSETS.map((a) => (
                   <option key={a} value={a}>{a}</option>
@@ -668,7 +729,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
               <select
                 value={fromWallet}
                 onChange={(e) => setFromWallet(e.target.value)}
-                className={`${inputClass} w-24`}
+                className={`${INPUT_CLASS} w-24`}
               >
                 {WALLET_NAMES.map((w) => (
                   <option key={w} value={w}>{w}</option>
@@ -683,7 +744,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
-                className={`${inputClass} w-28`}
+                className={`${INPUT_CLASS} w-28`}
               />
             </div>
             <div>
@@ -691,7 +752,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
               <select
                 value={sourceAsset}
                 onChange={(e) => handleSourceChange(e.target.value as AssetType)}
-                className={`${inputClass} w-20`}
+                className={`${INPUT_CLASS} w-20`}
               >
                 {ASSETS.map((a) => (
                   <option key={a} value={a}>{a}</option>
@@ -704,7 +765,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
               <select
                 value={destAsset}
                 onChange={(e) => setDestAsset(e.target.value as AssetType)}
-                className={`${inputClass} w-20`}
+                className={`${INPUT_CLASS} w-20`}
               >
                 {validTargets.map((a) => (
                   <option key={a} value={a}>{a}</option>
@@ -1026,6 +1087,19 @@ export function ZephyrPanel() {
     }
   };
 
+  const handleSetMode = async (mode: "manual" | "mirror") => {
+    try {
+      await fetch("/api/chain/oracle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set-mode", mode }),
+      });
+      setTimeout(fetchChain, 1000);
+    } catch (err) {
+      console.error("Set mode failed:", err);
+    }
+  };
+
   const isInitialLoad = loading && !data;
 
   return (
@@ -1090,6 +1164,7 @@ export function ZephyrPanel() {
         loading={isInitialLoad}
         onSetPrice={handleSetPrice}
         onSetScenario={handleSetScenario}
+        onSetMode={handleSetMode}
       />
 
       {/* Wallet Balances */}

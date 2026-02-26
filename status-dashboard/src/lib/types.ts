@@ -1,5 +1,5 @@
 // Lifecycle states for the two-layer architecture
-export type LifecycleState = "stopped" | "initializing" | "infra-only" | "running";
+export type LifecycleState = "stopped" | "initializing" | "infra-only" | "degraded" | "running";
 
 // Docker container status
 export interface ContainerStatus {
@@ -21,10 +21,15 @@ export interface ContainerStatus {
 // Overmind process status
 export interface AppStatus {
   name: string;
-  status: "running" | "stopped";
+  status: "running" | "error" | "stopped";
   port?: number;
   group: string;
   logs: string[];
+  health?: {
+    portListening: boolean | null;
+    httpOk: boolean | null;
+    errors: string[];
+  };
 }
 
 // Chain vitals for overview
@@ -40,7 +45,7 @@ export interface ChainVitals {
 export interface StatusResponse {
   lifecycle: LifecycleState;
   infraSummary: { running: number; total: number };
-  appsSummary: { running: number; total: number };
+  appsSummary: { running: number; healthy: number; total: number };
   chain: ChainVitals;
   timestamp: string;
 }
@@ -90,7 +95,12 @@ export interface ChainResponse {
   };
   mining: { active: boolean; threads?: number; speed?: number };
   checkpoint: { current: number | null; saved: number | null };
-  oracle: { price: number | null };
+  oracle: {
+    price: number | null;
+    mode: "manual" | "mirror";
+    mirrorSpot?: number;
+    mirrorLastFetch?: string;
+  };
   wallets: WalletBalance[];
   reserve?: ReserveInfo;
   timestamp: string;
@@ -153,6 +163,14 @@ export interface EvmPoolInfo {
   error?: string;
 }
 
+export interface EvmEngineWallet {
+  address: string;
+  ethBalance: string;
+  tokenBalances: { symbol: string; balance: string; address: string }[];
+}
+
+export type SeedingStatus = "seeded" | "partial" | "not_seeded";
+
 export interface EvmResponse {
   env: EvmEnv;
   chainId: number | null;
@@ -163,6 +181,8 @@ export interface EvmResponse {
   tokens: EvmTokenInfo[];
   contracts: EvmContractInfo[];
   pools: EvmPoolInfo[];
+  engineWallet?: EvmEngineWallet;
+  seedingStatus: SeedingStatus;
   timestamp: string;
   error?: string;
 }

@@ -23,6 +23,7 @@ import {
   RefreshCw,
   RotateCcw,
   CheckCircle2,
+  AlertTriangle,
   XCircle,
   Loader2,
 } from "lucide-react";
@@ -50,6 +51,7 @@ function ProcessCard({
   const [restarting, setRestarting] = useState(false);
 
   const isRunning = process.status === "running";
+  const isError = process.status === "error";
   const lastLog =
     process.logs.length > 0 ? process.logs[process.logs.length - 1] : null;
 
@@ -73,7 +75,11 @@ function ProcessCard({
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <div
         className={`border rounded-lg bg-card ${
-          isRunning ? "border-green-600/30 bg-green-500/5" : ""
+          isRunning
+            ? "border-green-600/30 bg-green-500/5"
+            : isError
+              ? "border-amber-500/30 bg-amber-500/5"
+              : ""
         }`}
       >
         <CollapsibleTrigger asChild>
@@ -86,8 +92,17 @@ function ProcessCard({
                     {process.name}
                   </div>
                   {process.port && (
-                    <span className="text-xs text-muted-foreground font-mono">
+                    <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
                       :{process.port}
+                      {process.health && process.health.portListening !== null && (
+                        <span
+                          className={`inline-block h-1.5 w-1.5 rounded-full ${
+                            process.health.portListening
+                              ? "bg-green-500"
+                              : "bg-red-500"
+                          }`}
+                        />
+                      )}
                     </span>
                   )}
                 </div>
@@ -110,13 +125,19 @@ function ProcessCard({
                   )}
                 </Button>
                 <Badge
-                  variant={isRunning ? "default" : "destructive"}
+                  variant={isRunning ? "default" : isError ? "default" : "destructive"}
                   className={
-                    isRunning ? "bg-green-600 hover:bg-green-700" : ""
+                    isRunning
+                      ? "bg-green-600 hover:bg-green-700"
+                      : isError
+                        ? "bg-amber-500 hover:bg-amber-600"
+                        : ""
                   }
                 >
                   {isRunning ? (
                     <CheckCircle2 className="h-3 w-3 mr-1" />
+                  ) : isError ? (
+                    <AlertTriangle className="h-3 w-3 mr-1" />
                   ) : (
                     <XCircle className="h-3 w-3 mr-1" />
                   )}
@@ -129,8 +150,31 @@ function ProcessCard({
                 )}
               </div>
             </div>
+            {/* Error summary for unhealthy processes */}
+            {isError && process.health && !isOpen && (
+              <div className="mt-2 pl-7 space-y-1">
+                {process.health.portListening === false && process.port && (
+                  <div className="text-xs text-amber-600 dark:text-amber-400 font-mono">
+                    Port {process.port} not listening
+                  </div>
+                )}
+                {process.health.httpOk === false && (
+                  <div className="text-xs text-amber-600 dark:text-amber-400 font-mono">
+                    Health check failed
+                  </div>
+                )}
+                {process.health.errors.map((err, i) => (
+                  <div
+                    key={i}
+                    className="text-xs text-amber-600 dark:text-amber-400 font-mono truncate max-w-full"
+                  >
+                    {err}
+                  </div>
+                ))}
+              </div>
+            )}
             {/* Last log line preview when collapsed */}
-            {!isOpen && (
+            {!isOpen && !isError && (
               <div className="mt-2 pl-7">
                 {lastLog ? (
                   <div className="inline-block px-2 py-1 rounded bg-zinc-900 dark:bg-zinc-950 text-xs font-mono text-zinc-300 truncate max-w-full">

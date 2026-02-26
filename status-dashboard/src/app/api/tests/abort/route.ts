@@ -1,4 +1,19 @@
 import { NextResponse } from "next/server";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "Abort Test Run",
+  category: "Testing",
+  description: "Abort a running test execution by its run ID.",
+  request: [
+    { name: "runId", type: "string", required: true, description: "The run ID returned by the test/run SSE start event" },
+  ],
+  response: [
+    { name: "success", type: "boolean", required: true, description: "Whether the run was aborted" },
+    { name: "message", type: "string", required: true, description: "Confirmation message" },
+  ],
+  curl: "curl -X POST localhost:7100/api/tests/abort -H 'Content-Type: application/json' -d '{\"runId\":\"run-123456789-abc1234\"}'",
+};
 
 // Store active processes (shared with run route via module-level Map)
 // Note: In a real production setup, this would use a more robust IPC mechanism

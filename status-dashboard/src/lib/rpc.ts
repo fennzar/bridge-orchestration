@@ -1,4 +1,14 @@
-import { ANVIL_PORT, ORACLE_PORT } from "./constants";
+import { ANVIL_PORT, ORACLE_PORT, ORDERBOOK_PORT } from "./constants";
+
+/** Convert atomic (1e12) Zephyr value to display number */
+export function fromAtomic(value: unknown): number {
+  return Number(value ?? 0) / 1e12;
+}
+
+/** Convert atomic (1e12) Zephyr value to fixed-decimal string */
+export function fromAtomicStr(value: unknown, decimals = 4): string {
+  return fromAtomic(value).toFixed(decimals);
+}
 
 export async function zephyrRpc(
   port: number,
@@ -84,25 +94,9 @@ export async function getWalletAddress(port: number): Promise<string | null> {
 export async function getWalletBalance(port: number): Promise<{ unlocked: string; total: string } | null> {
   const { result } = await walletRpc(port, "get_balance");
   if (!result) return null;
-  const unlocked = (Number(result.unlocked_balance ?? 0) / 1e12).toFixed(4);
-  const total = (Number(result.balance ?? 0) / 1e12).toFixed(4);
+  const unlocked = fromAtomicStr(result.unlocked_balance);
+  const total = fromAtomicStr(result.balance);
   return { unlocked, total };
-}
-
-export async function oracleGet(): Promise<number | null> {
-  try {
-    const response = await fetch(`http://127.0.0.1:${ORACLE_PORT}/status`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    // Oracle stores price in atomic units (1e12)
-    const spot = data.spot ?? data.price;
-    if (spot !== undefined) return Number(spot) / 1e12;
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 export async function oracleSet(price: number): Promise<boolean> {
@@ -133,7 +127,7 @@ export async function getMultiAssetBalance(
   const balArr = result.balances as Array<{ asset_type: string; unlocked_balance: number }> | undefined;
   if (Array.isArray(balArr)) {
     for (const entry of balArr) {
-      const amount = (Number(entry.unlocked_balance ?? 0) / 1e12).toFixed(4);
+      const amount = fromAtomicStr(entry.unlocked_balance);
       switch (entry.asset_type) {
         case "ZPH": case "ZEPH": balances.ZPH = amount; break;
         case "ZSD": case "ZEPHUSD": balances.ZSD = amount; break;
@@ -143,13 +137,13 @@ export async function getMultiAssetBalance(
     }
   } else {
     // Fallback: top-level unlocked_balance for ZPH
-    balances.ZPH = (Number(result.unlocked_balance ?? 0) / 1e12).toFixed(4);
+    balances.ZPH = fromAtomicStr(result.unlocked_balance);
     if (result.unlocked_zsd_balance !== undefined)
-      balances.ZSD = (Number(result.unlocked_zsd_balance) / 1e12).toFixed(4);
+      balances.ZSD = fromAtomicStr(result.unlocked_zsd_balance);
     if (result.unlocked_zrs_balance !== undefined)
-      balances.ZRS = (Number(result.unlocked_zrs_balance) / 1e12).toFixed(4);
+      balances.ZRS = fromAtomicStr(result.unlocked_zrs_balance);
     if (result.unlocked_zys_balance !== undefined)
-      balances.ZYS = (Number(result.unlocked_zys_balance) / 1e12).toFixed(4);
+      balances.ZYS = fromAtomicStr(result.unlocked_zys_balance);
   }
 
   return balances;
@@ -172,6 +166,102 @@ export async function walletTransfer(
   if (!result) return { success: false, error: "No response" };
   const txHash = (result.tx_hash as string) || (result.tx_hash_list as string[])?.[0];
   return { success: true, txHash };
+}
+
+export async function walletRescan(
+  port: number,
+  hard?: boolean
+): Promise<{ success: boolean; error?: string }> {
+  const { error } = await walletRpc(port, "rescan_blockchain", hard ? { hard: true } : {});
+  if (error) return { success: false, error };
+  return { success: true };
+}
+
+export async function orderbookGet(): Promise<Record<string, unknown> | null> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${ORDERBOOK_PORT}/status`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function orderbookSetSpread(bps: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${ORDERBOOK_PORT}/set-spread`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spreadBps: bps }),
+      signal: AbortSignal.timeout(2000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function oracleGetStatus(): Promise<{
+  mode: "manual" | "mirror";
+  price: number | null;
+  mirrorSpot?: number;
+  mirrorLastFetch?: string;
+} | null> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${ORACLE_PORT}/status`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const spot = data.spot ?? data.price;
+    const price = spot !== undefined ? fromAtomic(spot) : null;
+    const mode = data.mode === "mirror" ? "mirror" as const : "manual" as const;
+    const result: {
+      mode: "manual" | "mirror";
+      price: number | null;
+      mirrorSpot?: number;
+      mirrorLastFetch?: string;
+    } = { mode, price };
+    if (data.mirror_spot !== undefined) result.mirrorSpot = fromAtomic(data.mirror_spot);
+    if (data.mirror_last_fetch) result.mirrorLastFetch = data.mirror_last_fetch;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+export async function oracleSetMode(mode: "manual" | "mirror"): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${ORACLE_PORT}/set-mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+      signal: AbortSignal.timeout(2000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function anvilMine(blocks?: number): Promise<boolean> {
+  try {
+    const method = blocks && blocks > 1 ? "anvil_mine" : "evm_mine";
+    const params = blocks && blocks > 1 ? [`0x${blocks.toString(16)}`] : [];
+    const response = await fetch(`http://127.0.0.1:${ANVIL_PORT}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return false;
+    const data = await response.json();
+    return data.result !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 export async function anvilBlockNumber(): Promise<number | null> {

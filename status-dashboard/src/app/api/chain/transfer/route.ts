@@ -1,20 +1,28 @@
 import { NextResponse } from "next/server";
-import {
-  WALLET_GOV_PORT,
-  WALLET_MINER_PORT,
-  WALLET_TEST_PORT,
-  WALLET_BRIDGE_PORT,
-} from "@/lib/constants";
+import { WALLET_PORTS } from "@/lib/constants";
 import { getWalletAddress, walletTransfer } from "@/lib/rpc";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "Transfer Funds",
+  category: "Chain",
+  description:
+    "Transfer assets between wallets or convert between asset types (ZPH\u2194ZSD, ZPH\u2194ZRS, ZSD\u2194ZYS).",
+  request: [
+    { name: "fromWallet", type: "string", required: true, description: "Source wallet (gov, miner, test, bridge, engine)" },
+    { name: "toWallet", type: "string", description: "Destination wallet (for same-asset transfers)" },
+    { name: "amount", type: "number", required: true, description: "Amount to transfer" },
+    { name: "sourceAsset", type: "string", required: true, description: "Source asset (ZPH, ZSD, ZRS, ZYS)" },
+    { name: "destAsset", type: "string", required: true, description: "Destination asset (same for transfer, different for conversion)" },
+  ],
+  response: [
+    { name: "success", type: "boolean", required: true, description: "Whether the transfer succeeded" },
+    { name: "txHash", type: "string", description: "Transaction hash" },
+  ],
+  curl: "curl -X POST localhost:7100/api/chain/transfer -H 'Content-Type: application/json' -d '{\"fromWallet\":\"gov\",\"toWallet\":\"engine\",\"amount\":100,\"sourceAsset\":\"ZPH\",\"destAsset\":\"ZPH\"}'",
+};
 
 export const dynamic = "force-dynamic";
-
-const WALLET_PORTS: Record<string, number> = {
-  gov: WALLET_GOV_PORT,
-  miner: WALLET_MINER_PORT,
-  test: WALLET_TEST_PORT,
-  bridge: WALLET_BRIDGE_PORT,
-};
 
 // Valid conversion pairs (from zephyr-cli)
 const VALID_CONVERSIONS: [string, string][] = [

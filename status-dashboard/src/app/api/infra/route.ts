@@ -6,17 +6,36 @@ import {
   getDaemonInfo,
   getWalletAddress,
   getWalletBalance,
-  oracleGet,
+  oracleGetStatus,
   anvilBlockNumber,
 } from "@/lib/rpc";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "Infrastructure",
+  category: "Status",
+  description:
+    "Detailed status of all Docker containers including per-service RPC data (daemon height, wallet balances, oracle price, Anvil block number).",
+  response: [
+    { name: "containers", type: "ContainerStatus[]", required: true, description: "Status of each Docker service with RPC details (height, mining, balance, price, blockNumber)" },
+    { name: "timestamp", type: "string", required: true, description: "ISO 8601 timestamp" },
+  ],
+  curl: "curl localhost:7100/api/infra",
+};
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const containerStatuses = await getContainerStatuses();
 
+  // Filter optional services (e.g. Blockscout) that aren't running
+  const activeServices = DOCKER_SERVICES.filter((svc) => {
+    if (!("optional" in svc) || !svc.optional) return true;
+    return containerStatuses.has(svc.container);
+  });
+
   const containers: ContainerStatus[] = await Promise.all(
-    DOCKER_SERVICES.map(async (svc) => {
+    activeServices.map(async (svc) => {
       const info = containerStatuses.get(svc.container);
       const isRunning = info && info.state === "running";
 
@@ -55,8 +74,8 @@ export async function GET() {
           break;
         }
         case "oracle": {
-          const price = await oracleGet();
-          if (price !== null) base.price = price;
+          const status = await oracleGetStatus();
+          if (status?.price !== null && status?.price !== undefined) base.price = status.price;
           break;
         }
         case "evm": {

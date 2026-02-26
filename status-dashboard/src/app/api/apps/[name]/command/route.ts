@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { OVERMIND_PROCESSES } from "@/lib/constants";
 import { restartProcess } from "@/lib/overmind";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "Restart Process",
+  category: "Apps",
+  description: "Restart an Overmind-managed app process by name.",
+  request: [
+    { name: "command", type: '"restart"', required: true, description: "Only 'restart' is supported" },
+  ],
+  response: [
+    { name: "success", type: "boolean", required: true, description: "Whether the process was restarted" },
+  ],
+  curl: "curl -X POST localhost:7100/api/apps/bridge-api/command -H 'Content-Type: application/json' -d '{\"command\":\"restart\"}'",
+};
 
 const VALID_NAMES: string[] = OVERMIND_PROCESSES.map((p) => p.name);
 

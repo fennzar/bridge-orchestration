@@ -168,8 +168,8 @@ dev-start:
 	else \
 		$(DC_DEV) --profile explorer up -d; \
 	fi
-	@# Restore Anvil from post-seed snapshot (Anvil --state doesn't persist reliably)
-	@SNAPSHOT="$(ORCH_DIR)/snapshots/anvil/post-seed.hex"; \
+	@# Restore Anvil from post-setup snapshot (Anvil --state doesn't persist reliably)
+	@SNAPSHOT="$(ORCH_DIR)/snapshots/anvil/post-setup.hex"; \
 	if [ -f "$$SNAPSHOT" ]; then \
 		for i in $$(seq 1 20); do cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break; sleep 0.5; done; \
 		TMPFILE=$$(mktemp); \
@@ -181,6 +181,16 @@ dev-start:
 	fi
 	@# Open wallets (wallet RPCs don't auto-load after container restart)
 	@./scripts/open-wallets.sh
+	@# Wait for node1 to synchronize before starting mining
+	@for i in $$(seq 1 30); do \
+		curl -sf http://127.0.0.1:47767/json_rpc \
+			-d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' 2>/dev/null | \
+			python3 -c "import sys,json; assert json.load(sys.stdin)['result']['synchronized']" 2>/dev/null && break; \
+		sleep 1; \
+	done
+	@# Start mining — uses node2 fallback if node1 is unsynchronized after pop_blocks
+	@./scripts/mine-via-node2.sh 2>/dev/null || \
+		$(ZEPHYR_CLI) mine start --threads 2 2>/dev/null || true
 	@# Push database schemas (idempotent — applies any pending migrations)
 	@cd $(BRIDGE_REPO_PATH)/packages/db && DATABASE_URL=$(DATABASE_URL_BRIDGE) npx prisma db push 2>&1 | tail -1
 	@cd $(ENGINE_REPO_PATH) && DATABASE_URL=$(DATABASE_URL_ENGINE) pnpm prisma db push --schema=src/infra/prisma/schema.prisma --skip-generate 2>&1 | tail -1

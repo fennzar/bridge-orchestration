@@ -361,9 +361,9 @@ def probe_services() -> dict[str, bool]:
     except Exception:
         probes["bridge_web"] = False
 
-    # Engine
+    # Engine — use /api/engine/status which doesn't depend on daemon pricing
     try:
-        s, _, _ = _get(f"{ENGINE_URL}/api/state", timeout=3.0)
+        s, _, _ = _get(f"{ENGINE_URL}/api/engine/status", timeout=3.0)
         probes["engine"] = s == 200
     except Exception:
         probes["engine"] = False

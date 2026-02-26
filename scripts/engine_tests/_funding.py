@@ -147,10 +147,15 @@ def _zephyr_transfer(wallet_name: str, dest_addr: str,
 
 
 def _wait_daemon_ready(timeout: float = 60.0) -> bool:
-    """Wait until the Zephyr daemon is synchronized and wallets can respond.
+    """Wait until the Zephyr daemon is responsive and not actively syncing.
 
     Stops any active mining first (mining causes persistent "daemon is busy"),
-    then polls via zephyr-cli info for synchronized=True.
+    then polls via zephyr-cli info for busy_syncing=False.
+
+    Note: We check busy_syncing rather than synchronized because in devnet
+    after pop_blocks, the daemon may report synchronized=False even though
+    it's fully operational (no peers to sync from). busy_syncing=False is
+    the actual indicator that wallet operations will succeed.
     """
     _cli("mine", "stop")
     time.sleep(2)
@@ -161,8 +166,8 @@ def _wait_daemon_ready(timeout: float = 60.0) -> bool:
         if err or not out:
             time.sleep(3)
             continue
-        # Parse "synchronized: True/False" from CLI output
-        if "synchronized: True" in out:
+        # Accept if daemon is responsive and not actively syncing
+        if "busy_syncing: False" in out:
             return True
         time.sleep(3)
     return False

@@ -224,8 +224,11 @@ def ensure_test_wallet_funded(token_name: str, min_amount_atomic: int) -> tuple[
     if err:
         return None, f"Gov→bridge transfer failed: {err}"
 
+    # Step 3.5: Restart mining so the transfer confirms and bridge watcher detects it
+    _cli("mine", "start")
+    time.sleep(5)  # Give a few blocks to confirm
+
     # Step 4: Poll for claimable status
-    # Bridge watcher auto-mines in devnet mode when it detects deposits
     claims, err = _bridge_poll_claims(
         TEST_WALLET_ADDRESS, expected=1, timeout=180,
     )

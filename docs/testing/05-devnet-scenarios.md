@@ -13,35 +13,32 @@ Test scenarios specific to DEVNET mode, enabling controllable oracle prices and 
 DEVNET mode provides:
 - **Controllable Oracle**: Set any ZEPH/USD price via `make set-price`
 - **Fake Orderbook**: MEXC-compatible API tracking oracle price
-- **Fresh Chain**: No mainnet state, fast startup (~5 min first time)
-- **Fast Reset**: Return to known state in ~30 seconds
+- **Fresh Chain**: No mainnet state, staged setup (~4 min init + ~4 min setup)
+- **Fast Reset**: Return to known state in ~15 seconds
 - **RR Mode Testing**: Trigger defensive/crisis modes on demand
 
 ## Starting DEVNET
 
-**First time (full init):**
+**First time (staged setup):**
 ```bash
-# Build DEVNET binaries (if not done)
-make build
-
-# Start DEVNET stack - takes ~5-6 min, creates checkpoint automatically
-make dev-init
+make dev-init                          # Base Zephyr chain (~4 min), then stops
+make dev-setup                         # Bridge infra + contracts + seed (~4 min), then stops
+make dev                               # Start the stack (~10 sec)
 ```
 
 **Between tests (recommended):**
 ```bash
-# Light reset - pops blocks to checkpoint, rescans wallets (~30 sec)
-make dev-reset
+make dev-reset && make dev             # Reset to post-setup state + restart (~15 sec)
 ```
 
 **When to use which:**
 
 | Situation | Command | Time |
 |-----------|---------|------|
-| First time starting DEVNET | `make dev-init` | ~5-6 min |
-| DEVNET already initialized, need fresh state | `make dev-reset` | ~30 sec |
-| Running multiple test scenarios | `make dev-reset` between each | ~30 sec |
-| Something went wrong, need clean slate | `make dev-init` | ~5-6 min |
+| First time | `make dev-init && make dev-setup && make dev` | ~8 min |
+| Need fresh state between tests | `make dev-reset && make dev` | ~15 sec |
+| After changing EVM contracts | `make dev-reset-hard && make dev-setup && make dev` | ~4 min |
+| Something deeply broken | `make dev-delete && make dev-init && make dev-setup && make dev` | ~8 min |
 
 **Best practice:** Use `make dev-reset` for most testing. It's faster and provides consistent, repeatable state.
 
@@ -96,7 +93,7 @@ The init mints all Zephyr asset types to create a realistic protocol state:
 
 ### Post-Init State (Checkpoint)
 
-After init completes (~5-6 min), a checkpoint is automatically saved with this state:
+After `make dev-init` completes (~4 min), a checkpoint is saved with this state:
 
 **Network:**
 | Component | Status |
@@ -211,7 +208,7 @@ make dev-reset
 
 This ensures:
 - Consistent starting state for each test
-- Fast turnaround (~30 sec reset vs ~5 min full init)
+- Fast turnaround (~15 sec reset vs ~8 min full init+setup)
 - Reproducible test results
 
 ### Save/Restore Snapshots
@@ -220,16 +217,16 @@ For complex test sequences, save and restore named snapshots to avoid full re-in
 
 ```bash
 # Save current DEVNET state (persists across reboots, stored in ~/.zephyr-devnet/snapshots/)
-./scripts/save-devnet.sh my-test-state
+./scripts/devnet.sh save my-test-state
 
 # ... run tests, make changes ...
 
 # Restore to saved state
-./scripts/restore-devnet.sh my-test-state
+./scripts/devnet.sh restore my-test-state
 
 # Save without a name (uses "default")
-./scripts/save-devnet.sh
-./scripts/restore-devnet.sh
+./scripts/devnet.sh save
+./scripts/devnet.sh restore
 ```
 
 Snapshots are more powerful than checkpoints — they preserve the full chain state (node data, wallets, oracle config) and survive reboots, while checkpoints only track block height.
@@ -544,11 +541,13 @@ docker compose ps
 
 | Command | Description |
 |---------|-------------|
-| `make dev-init` | Full init from block 0 (~5-6 min) |
-| `make dev-reset` | Reset to checkpoint (~30 sec) |
+| `make dev-init` | Base Zephyr chain from block 0 (~4 min) |
+| `make dev-setup` | Bridge infra + contracts + seed (~4 min) |
+| `make dev-reset` | Reset to post-setup state (~15 sec) |
+| `make dev-reset-hard` | Reset to post-init state (~10 sec) |
 | `make dev-checkpoint` | Save current height as new checkpoint |
-| `./scripts/save-devnet.sh [name]` | Save named snapshot (default: "default") |
-| `./scripts/restore-devnet.sh [name]` | Restore from named snapshot |
+| `./scripts/devnet.sh save [name]` | Save named snapshot (default: "default") |
+| `./scripts/devnet.sh restore [name]` | Restore from named snapshot |
 
 ---
 

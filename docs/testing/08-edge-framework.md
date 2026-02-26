@@ -82,10 +82,20 @@ For each `SCOPED-TBC` test:
 ## Make Targets
 
 ```bash
-make test-l5
+# Core
+make test-l5                   # Summary + lint + logical pass
 make test-l5-lint
 make test-l5-summary
 make test-l5-browser-preflight
-make test-l5-execute
-make test-l5-execute-all
+make test-l5-execute           # Run ready+expand checks
+make test-l5-execute-all       # Run all checks including TBC
+
+# Sublevel targets
+make test-l5-sec               # L5.1 Security & Contracts (SEC + SC)
+make test-l5-runtime           # L5.2 Runtime & Consistency (CONS + RR + CONC + SEED)
+make test-l5-infra             # L5.3 Infra & Watchers (WATCH + CONF + REC)
+make test-l5-asset             # L5.4 Asset & DEX (ASSET + DEX)
+make test-l5-stress            # L5.5 Privacy & Load (PRIV + LOAD + TIME)
+make test-l5-fe                # L5.6 Frontend (FE)
+make test-l5-seed              # SEED checks (8 seeding verification tests)
 ```

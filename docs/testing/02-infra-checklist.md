@@ -12,7 +12,7 @@ This checklist verifies the bridge orchestration layer works correctly - scripts
 ## Prerequisites
 
 ### ✅ System Requirements
-- [ ] Verify all dependencies installed: `./scripts/verify.sh`
+- [ ] Verify all dependencies installed: `make status`
 - [ ] Check disk space (need ~30GB for Zephyr data)
 - [ ] Confirm all repos cloned in correct $ROOT structure
 - [ ] Verify .env file exists and has correct paths
@@ -25,21 +25,23 @@ This checklist verifies the bridge orchestration layer works correctly - scripts
 
 ## Setup Scripts
 
-### ✅ Initial Setup (`make build && make dev-init`)
-- [ ] `make build` completes without errors (builds Docker images and DEVNET binaries)
-- [ ] `make dev-init` starts fresh DEVNET and initializes all infrastructure
-- [ ] Creates all required directories (zephyr-data, zephyr-wallets)
-- [ ] Initializes Zephyr LMDB data (if available)
-- [ ] Creates wallet files (.keys and cache)
-- [ ] Initializes PostgreSQL database
-- [ ] Configures Redis
+### ✅ Initial Setup (`make dev-init && make dev-setup`)
+- [ ] `make dev-init` creates base Zephyr devnet (~4 min), then stops
+- [ ] Creates gov/miner/test wallets with funded balances
+- [ ] LMDB snapshots saved to `snapshots/chain/`
+- [ ] Checkpoint saved at post-init height
+- [ ] `make dev-setup` creates bridge infrastructure (~4 min), then stops
+- [ ] Bridge/engine wallets created
+- [ ] EVM contracts deployed, addresses written to `config/addresses.json`
+- [ ] Liquidity seeded through full bridge wrap flow
+- [ ] Anvil snapshot saved to `snapshots/anvil/`
 
-### ✅ Infrastructure Setup (`make dev` or `make dev-init`)
-- [ ] Docker containers start: Redis, PostgreSQL, Anvil
-- [ ] Redis accessible on port 6379: `redis-cli ping`
+### ✅ Infrastructure Setup (`make dev`)
+- [ ] Docker containers start: Redis, PostgreSQL, Anvil, Zephyr nodes, wallets
+- [ ] Redis accessible on port 6380: `redis-cli -p 6380 ping`
 - [ ] PostgreSQL accessible on port 5432
 - [ ] Anvil accessible on port 8545
-- [ ] Database initialized with tables
+- [ ] Overmind app processes start
 
 ### ✅ Zephyr Setup (part of `make dev-init`)
 - [ ] ~~LMDB data initialized or existing data found~~ (DEPRECATED: mainnet-fork only)
@@ -167,33 +169,25 @@ This checklist verifies the bridge orchestration layer works correctly - scripts
 
 ## Reset Operations
 
-### ✅ Reset Zephyr (DEPRECATED: ./scripts/reset-zephyr.sh — use `make dev-reset` instead)
-- [ ] ~~Stops Zephyr processes~~ (DEPRECATED: mainnet-fork only)
-- [ ] ~~Backs up existing data (if configured)~~ (DEPRECATED)
-- [ ] ~~Clears Zephyr data directories~~ (DEPRECATED)
-- [ ] ~~Reinitializes LMDB data~~ (DEPRECATED)
-- [ ] ~~Recreates wallet files~~ (DEPRECATED)
-
-### ✅ Reset EVM (`make dev-reset-evm` or `./scripts/reset-evm.sh`)
-- [ ] Wipes Anvil state file (`/data/anvil-state.json`)
-- [ ] Restarts Anvil container
-- [ ] Redeploys all contracts
-- [ ] Engine database reset
-
-### ✅ Full Coordinated Reset (`make dev-reset` or `./scripts/dev-reset.sh`)
+### ✅ Normal Reset (`make dev-reset`)
 - [ ] Stops Overmind apps (if running)
 - [ ] Pops Zephyr blocks to checkpoint on both nodes
 - [ ] Rescans wallets, restarts mining
-- [ ] Wipes Anvil state + restarts container + redeploys contracts
+- [ ] Wipes Anvil state + restarts container
 - [ ] Force-resets Postgres databases (bridge + engine)
 - [ ] Flushes Redis
-- [ ] Restarts Overmind apps (if they were running)
-- [ ] All layers in sync, ready for fresh test
+- [ ] Stops infrastructure
+- [ ] Ready for `make dev`
 
-### ✅ Scoped Resets
-- [ ] `make dev-reset-zephyr` — Zephyr chain only (pop to checkpoint)
-- [ ] `make dev-reset-evm` — Anvil wipe + contract redeploy only
-- [ ] `make dev-reset-db` — Postgres + Redis only
+### ✅ Hard Reset (`make dev-reset-hard`)
+- [ ] Stops Overmind apps (if running)
+- [ ] Restores Zephyr LMDB from init snapshots (not pop_blocks)
+- [ ] Hard-rescans base wallets, removes bridge/engine wallets
+- [ ] Wipes Anvil state + removes `config/addresses.json`
+- [ ] Force-resets Postgres databases (bridge + engine)
+- [ ] Flushes Redis
+- [ ] Stops infrastructure
+- [ ] Ready for `make dev-setup`
 
 ## Status Dashboard
 
@@ -224,22 +218,21 @@ This checklist verifies the bridge orchestration layer works correctly - scripts
 ## DEVNET Mode (Recommended)
 
 ### ✅ DEVNET First Start
-- [ ] `make build` completes (builds Docker images and DEVNET binaries)
-- [ ] `make dev-init` starts fresh DEVNET (~5-6 min)
+- [ ] `make dev-init` creates base Zephyr devnet (~4 min), then stops
+- [ ] `make dev-setup` deploys contracts + seeds liquidity (~4 min), then stops
+- [ ] `make dev` starts the stack (~10 sec)
 - [ ] Fake oracle responds: `curl http://127.0.0.1:5555/status`
 - [ ] Fake orderbook responds: `curl http://127.0.0.1:5556/status`
-- [ ] Checkpoint saved automatically at post-init height
-- [ ] Can check checkpoint: `make dev-checkpoint`
+- [ ] Checkpoint saved automatically at post-setup height
 
 ### ✅ DEVNET Reset (Use Between Tests)
-- [ ] `make status` shows current vs checkpoint height
-- [ ] `make dev-reset` completes in ~30 seconds
+- [ ] `make dev-reset` completes in ~15 seconds, then stops
 - [ ] Zephyr blocks popped back to checkpoint height
 - [ ] Wallets rescanned, mining restarted
-- [ ] Anvil wiped and contracts redeployed
+- [ ] Anvil wiped, state restored from post-seed snapshot
 - [ ] Postgres databases force-reset
 - [ ] Redis flushed
-- [ ] All layers in sync, ready for next test
+- [ ] `make dev` starts cleanly after reset
 
 ### ✅ DEVNET Oracle Control
 - [ ] `make set-price PRICE=15.00` sets normal price
@@ -248,8 +241,9 @@ This checklist verifies the bridge orchestration layer works correctly - scripts
 - [ ] Engine sees updated prices
 
 ### ✅ DEVNET Workflow
-- [ ] First time: `make dev-init` (~5-6 min)
-- [ ] Between tests: `make dev-reset` (~30 sec)
+- [ ] First time: `make dev-init && make dev-setup && make dev`
+- [ ] Between tests: `make dev-reset && make dev` (~15 sec)
+- [ ] After EVM contract changes: `make dev-reset-hard && make dev-setup && make dev`
 - [ ] Use reset as default for repeatable test state
 
 ## Common Issues

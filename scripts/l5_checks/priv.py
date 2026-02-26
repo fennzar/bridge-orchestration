@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 
 from ._helpers import (
     PASS, FAIL, BLOCKED,
@@ -83,10 +85,59 @@ def check_priv_003(row, probes):
     return _r(row, PASS, f"SSE stream responds (HTTP {s})")
 
 def check_priv_004(row, probes):
+    """Logs do not print full Zephyr destination addresses by default."""
     b = _needs(row, probes, "bridge_api")
     if b:
         return b
-    return _r(row, PASS, "Baseline: API healthy (TBC: log output inspection)")
+
+    # Zephyr addresses: main start with "ZEPHYR" (~95 chars), subaddrs with "ZEPHs" (~95 chars)
+    # We look for full-length addresses (>60 chars) to avoid false positives from short prefixes.
+    zeph_addr_re = re.compile(r"(?:ZEPHYR|ZEPHs)[1-9A-HJ-NP-Za-km-z]{60,}")
+
+    # Check logs from docker services that handle bridge operations
+    containers = ["zephyr-bridge-api", "zephyr-bridge-watchers"]
+    total_lines = 0
+    leaks = []
+
+    for container in containers:
+        try:
+            result = subprocess.run(
+                ["docker", "logs", "--tail", "500", container],
+                capture_output=True, text=True, timeout=15,
+            )
+        except FileNotFoundError:
+            return _r(row, BLOCKED, "docker CLI not found")
+        except subprocess.TimeoutExpired:
+            return _r(row, BLOCKED, f"docker logs timed out for {container}")
+
+        # docker logs outputs to both stdout and stderr
+        log_output = (result.stdout or "") + (result.stderr or "")
+        if not log_output.strip():
+            continue
+
+        lines = log_output.splitlines()
+        total_lines += len(lines)
+        for i, line in enumerate(lines):
+            matches = zeph_addr_re.findall(line)
+            if matches:
+                # Truncate the address in the report to avoid leaking it here too
+                for addr in matches:
+                    preview = addr[:12] + "..." + addr[-6:]
+                    leaks.append(f"{container}:L{i+1} ({preview})")
+
+    if not total_lines:
+        return _r(row, BLOCKED,
+                  "No log output from bridge containers (containers may not exist)")
+
+    if leaks:
+        sample = "; ".join(leaks[:3])
+        extra = f" (+{len(leaks)-3} more)" if len(leaks) > 3 else ""
+        return _r(row, FAIL,
+                  f"Full Zephyr address found in logs: {sample}{extra}")
+
+    return _r(row, PASS,
+              f"No full Zephyr addresses found in {total_lines} log lines "
+              f"across {len(containers)} containers")
 
 def check_priv_005(row, probes):
     """Engine state must not include private keys."""

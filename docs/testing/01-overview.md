@@ -120,11 +120,13 @@ curl -s "http://127.0.0.1:${NODE2_RPC}/json_rpc" -d '{"jsonrpc":"2.0","id":"0","
 | Gov | 48769 | Main funds, conversions |
 | Miner | 48767 | Mining rewards |
 | Test | 48768 | User-initiated transactions |
+| Bridge | 48770 | Bridge operator |
+| Engine | 48771 | Engine operator |
 
 ```bash
-GOV_RPC=48769; MINER_RPC=48767; TEST_RPC=48768
+GOV_RPC=48769; MINER_RPC=48767; TEST_RPC=48768; BRIDGE_RPC=48770; ENGINE_RPC=48771
 
-for port in $GOV_RPC $MINER_RPC $TEST_RPC; do
+for port in $GOV_RPC $MINER_RPC $TEST_RPC $BRIDGE_RPC $ENGINE_RPC; do
   RESULT=$(curl -s "http://127.0.0.1:$port/json_rpc" \
     -d '{"jsonrpc":"2.0","id":"0","method":"get_version"}' | jq -r '.result.version')
   echo "Port $port: $RESULT"
@@ -137,6 +139,8 @@ done
 | Gov | 48769 | Non-empty version number |
 | Miner | 48767 | Non-empty version number |
 | Test | 48768 | Non-empty version number |
+| Bridge | 48770 | Non-empty version number |
+| Engine | 48771 | Non-empty version number |
 
 ---
 
@@ -338,7 +342,7 @@ See these docs for full L4 test scenarios:
 
 # L5: Edge/Chaos Scope
 
-The edge-case catalog tracks all 138 scoped tests and maps each test to a primary testing doc.
+The edge-case catalog tracks all 146 scoped tests (138 catalog + 8 SEED) and maps each test to a primary testing doc.
 
 **Source of truth:** [00-edge-case-scope.md](./00-edge-case-scope.md)
 
@@ -348,7 +352,7 @@ The edge-case catalog tracks all 138 scoped tests and maps each test to a primar
 
 | Total | SCOPED-READY | SCOPED-EXPAND | SCOPED-TBC |
 |-------|--------------|---------------|------------|
-| 138 | 17 | 27 | 94 |
+| 146 | 116 | 27 | 3 |
 
 `SCOPED-TBC` items are intentionally included now for visibility; they need extra runbook-level guidance before execution steps are finalized.
 

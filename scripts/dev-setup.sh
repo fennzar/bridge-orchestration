@@ -26,7 +26,7 @@ PROCFILE="$ORCH_DIR/Procfile.dev"
 ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
 
 # Target oracle price for this setup run (USD)
-SETUP_PRICE="${SETUP_PRICE:-1.50}"
+SETUP_PRICE="${SETUP_PRICE:-2.00}"
 
 # Cleanup handler: stop apps + infra on exit (success or failure)
 cleanup() {

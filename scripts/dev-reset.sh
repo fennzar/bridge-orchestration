@@ -143,10 +143,12 @@ if [ "$HARD_RESET" = true ]; then
     log_info "Waiting for daemons..."
     "$ZEPHYR_CLI" wait-daemons
 
-    # Re-open wallets + hard rescan
+    # Re-open base wallets + hard rescan (bridge/engine/cex were deleted)
     "$SCRIPT_DIR/open-wallets.sh"
-    log_info "Hard-rescanning wallets..."
-    "$ZEPHYR_CLI" rescan all
+    log_info "Hard-rescanning base wallets..."
+    for w in gov miner test; do
+        "$ZEPHYR_CLI" rescan "$w" 2>/dev/null || true
+    done
     sleep 15
     # Close wallets to flush rescan results to disk
     "$ZEPHYR_CLI" wallet close gov 2>/dev/null || true

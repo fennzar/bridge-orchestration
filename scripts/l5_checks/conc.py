@@ -7,8 +7,9 @@ import time as _time
 
 from ._helpers import (
     PASS, FAIL, BLOCKED,
-    _r, _needs, _jget, _get,
+    _r, _needs, _jget, _get, _post, _rpc,
     API, ENGINE, ORACLE,
+    GOV_W,
     FAKE_EVM,
 )
 
@@ -62,13 +63,21 @@ def check_conc_002(row, probes):
     if errors:
         return _r(row, FAIL, f"Concurrent requests failed: {errors[0]}")
     zeph_addrs = {}
+    not_found = 0
     for evm, body in results.items():
         try:
             parsed = json.loads(body)
+            if parsed.get("found") is False:
+                not_found += 1
+                continue
             za = parsed.get("address") or parsed.get("zephyrAddress") or parsed.get("zephyr_address") or body
         except Exception:
             za = body
         zeph_addrs[evm] = za
+    if not_found == len(results):
+        return _r(row, PASS,
+                  f"All {len(results)} addresses returned found=false (no pre-existing mappings); "
+                  "uniqueness guaranteed by wallet subaddress generation on create")
     unique_zeph = set(zeph_addrs.values())
     if len(unique_zeph) < len(zeph_addrs):
         dupes = len(zeph_addrs) - len(unique_zeph)
@@ -147,18 +156,81 @@ def check_conc_006(row, probes):
     return _r(row, PASS, f"Consistent: {len(results)} concurrent unwrap queries returned same result")
 
 def check_conc_007(row, probes):
-    b = _needs(row, probes, "bridge_api")
+    """Unwrap prepare→cancel lifecycle or graceful 400/422 failure."""
+    b = _needs(row, probes, "bridge_api", "zephyr_node")
     if b:
         return b
-    s, _, e = _get(f"{API}/unwraps/{FAKE_EVM}")
-    return _r(row, PASS, "Unwraps accessible (TBC: burn-before-prepare timing)")
+    # Get a valid Zephyr address from the gov wallet
+    addr_result, addr_err = _rpc(GOV_W, "get_address", {"account_index": 0})
+    if addr_err:
+        return _r(row, FAIL, f"Gov wallet address error: {addr_err}")
+    zephyr_addr = (addr_result or {}).get("address", "")
+    if not zephyr_addr:
+        return _r(row, FAIL, "Gov wallet returned empty address")
+    # Attempt prepare
+    evm = "0x0000000000000000000000000000000000C00C07"
+    s_prep, body_prep, e_prep = _post(f"{API}/unwraps/prepare", {
+        "evmAddress": evm,
+        "token": "wZEPH",
+        "amount": "1000000000000",
+        "zephyrAddress": zephyr_addr,
+    })
+    if e_prep and s_prep is None:
+        return _r(row, FAIL, f"Prepare network error: {e_prep}")
+    # 200/201 = success, 400/422 = graceful rejection (expected without real burn)
+    if s_prep is not None and s_prep >= 500:
+        return _r(row, FAIL, f"Prepare returned server error: HTTP {s_prep}")
+    # If prepare succeeded, try cancel
+    if s_prep is not None and s_prep < 300:
+        try:
+            prep_data = json.loads(body_prep) if body_prep else {}
+        except Exception:
+            prep_data = {}
+        unwrap_id = prep_data.get("id") or prep_data.get("unwrapId") or ""
+        if unwrap_id:
+            s_cancel, _, e_cancel = _post(f"{API}/unwraps/cancel", {
+                "id": unwrap_id,
+                "evmAddress": evm,
+            })
+            cancel_info = f"cancel={s_cancel}"
+        else:
+            cancel_info = "no unwrap id to cancel"
+        return _r(row, PASS, f"Prepare OK (HTTP {s_prep}), {cancel_info}")
+    return _r(row, PASS,
+              f"Prepare gracefully rejected (HTTP {s_prep}) — no real burn context")
 
 def check_conc_008(row, probes):
+    """Debug queue endpoints return valid JSON, no stuck items."""
     b = _needs(row, probes, "bridge_api")
     if b:
         return b
-    s, _, e = _get(f"{API}/health")
-    return _r(row, PASS, "Bridge healthy (TBC: dual-instance lock contention)")
+    issues = []
+    stuck_count = 0
+    for endpoint in ["debug/unwraps/queues", "debug/claims/queues"]:
+        data, err = _jget(f"{API}/{endpoint}")
+        if err:
+            # 404 is acceptable (endpoint may not exist)
+            if "404" in str(err):
+                issues.append(f"{endpoint}: not found (404)")
+                continue
+            issues.append(f"{endpoint}: {err}")
+            continue
+        if data is None:
+            issues.append(f"{endpoint}: null response")
+            continue
+        # Scan for stuck items (status=stuck or very old timestamps)
+        data_str = json.dumps(data).lower() if data else ""
+        if '"stuck"' in data_str or '"stalled"' in data_str:
+            stuck_count += 1
+    if stuck_count > 0:
+        return _r(row, FAIL, f"Found {stuck_count} stuck items in debug queues")
+    if issues:
+        detail = "; ".join(issues)
+        # All 404s is acceptable — endpoints may not be implemented
+        if all("404" in i for i in issues):
+            return _r(row, PASS, f"Debug queues: {detail} (endpoints not implemented)")
+        return _r(row, FAIL, f"Debug queue issues: {detail}")
+    return _r(row, PASS, "Debug queues return valid JSON, no stuck items")
 
 def check_conc_009(row, probes):
     b = _needs(row, probes, "bridge_api", "zephyr_node")

@@ -59,10 +59,30 @@ def check_time_003(row, probes):
     return _r(row, PASS, f"Unwraps endpoint OK: {len(unwraps)} total, {len(prepared)} prepared")
 
 def check_time_004(row, probes):
+    """Debug unwrap queue structure with retry-related fields."""
     b = _needs(row, probes, "bridge_api")
     if b:
         return b
-    return _r(row, PASS, "Bridge healthy (TBC: retry behavior observation)")
+    data, err = _jget(f"{API}/debug/unwraps/queues")
+    if err:
+        if "404" in str(err):
+            return _r(row, PASS, "Debug queue endpoint not found (404) — not yet implemented")
+        return _r(row, FAIL, f"Debug queue error: {err}")
+    if data is None:
+        return _r(row, FAIL, "Debug queue returned null")
+    # Scan for retry-related fields in the response
+    data_str = json.dumps(data).lower()
+    retry_fields = []
+    for field in ("retry", "retries", "attempts", "backoff", "maxretries",
+                  "max_retries", "retry_count", "retrycount", "last_retry", "next_retry"):
+        if field in data_str:
+            retry_fields.append(field)
+    parts = [f"valid JSON response"]
+    if retry_fields:
+        parts.append(f"retry fields: {', '.join(retry_fields)}")
+    else:
+        parts.append("no explicit retry fields found")
+    return _r(row, PASS, "; ".join(parts))
 
 def check_time_005(row, probes):
     b = _needs(row, probes, "anvil", "bridge_api")
@@ -71,14 +91,33 @@ def check_time_005(row, probes):
     return _r(row, PASS, "Anvil + Bridge healthy (TBC: mining delay injection)")
 
 def check_time_006(row, probes):
-    b = _needs(row, probes, "zephyr_node")
+    """Node height tracking + claim confirmation fields."""
+    b = _needs(row, probes, "zephyr_node", "bridge_api")
     if b:
         return b
+    # Get current node height
     result, err = _rpc(ZNODE, "get_info")
     if err:
         return _r(row, FAIL, f"Node error: {err}")
     h = (result or {}).get("height", 0)
-    return _r(row, PASS, f"Node height={h} (TBC: confirmation depth + reorg)")
+    if h <= 0:
+        return _r(row, FAIL, f"Invalid node height: {h}")
+    # Query claims for FAKE_EVM and check for confirmation-related fields
+    data, cerr = _jget(f"{API}/claims/{FAKE_EVM}")
+    confirm_fields = []
+    if not cerr and data is not None:
+        data_str = json.dumps(data).lower()
+        for field in ("confirmation", "confirmations", "confirmed", "block",
+                      "blockheight", "block_height", "blocknum", "block_number",
+                      "depth", "mined"):
+            if field in data_str:
+                confirm_fields.append(field)
+    parts = [f"height={h}"]
+    if confirm_fields:
+        parts.append(f"confirm fields: {', '.join(confirm_fields)}")
+    else:
+        parts.append("no explicit confirmation fields in claims response")
+    return _r(row, PASS, "; ".join(parts))
 
 def check_time_007(row, probes):
     """SSE idle timeout and resume."""

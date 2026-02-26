@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from urllib.request import Request, urlopen
 
+import json
+import os
+
 from ._helpers import (
     PASS, FAIL, BLOCKED,
-    _r, _needs, _jget, _jpost, _get,
+    _r, _needs, _jget, _jpost, _get, _post, _rpc,
     _has_role, _contract_exists, _eth_call, _eth_code,
     API, ANVIL, ORACLE,
-    TK, CTX,
+    TK, CTX, GOV_W,
     SEL_EIP712_DOMAIN, MINTER_ROLE, FAKE_EVM, FAKE_EVM_2,
 )
 
@@ -90,33 +93,95 @@ def check_sec_004(row, probes):
 
 
 def check_sec_005(row, probes):
-    """Multi-destination Zephyr tx: no funds lost due to txHash-only idempotency."""
+    """10 EVMs → unique Zephyr addrs, re-query → same addrs (idempotency)."""
     b = _needs(row, probes, "bridge_api")
     if b:
         return b
-    data, err = _jget(f"{API}/bridge/tokens")
-    if err:
-        return _r(row, FAIL, f"Bridge tokens error: {err}")
-    tokens = data.get("tokens", data) if isinstance(data, dict) else data
-    if not isinstance(tokens, list) or len(tokens) < 4:
-        return _r(row, FAIL, f"Expected 4+ tokens, got {len(tokens) if isinstance(tokens, list) else 0}")
-    return _r(row, PASS, f"Bridge API healthy, {len(tokens)} tokens (TBC: multi-dest harness)")
+    first_pass = {}
+    errors = []
+    for i in range(10):
+        evm = f"0x{0xD00000 + i:040x}"
+        s, body, e = _post(f"{API}/bridge/address", {"evmAddress": evm})
+        if e and s is None:
+            errors.append(f"{evm}: {e}")
+            continue
+        try:
+            data = json.loads(body) if body else {}
+        except Exception:
+            data = {}
+        addr = (data.get("address") or data.get("zephyrAddress")
+                or data.get("zephyr_address") or "")
+        first_pass[evm] = addr
+    if errors:
+        return _r(row, FAIL, f"First pass errors: {errors[0]}")
+    non_empty = {k: v for k, v in first_pass.items() if v}
+    vals = list(non_empty.values())
+    unique = set(vals)
+    if len(vals) > 0 and len(unique) < len(vals):
+        dupes = len(vals) - len(unique)
+        return _r(row, FAIL, f"Duplicate Zephyr addresses: {dupes} collisions in {len(vals)}")
+    # Re-query same EVMs — must get identical addresses
+    mismatches = []
+    for evm, expected in first_pass.items():
+        s2, body2, e2 = _post(f"{API}/bridge/address", {"evmAddress": evm})
+        if e2 and s2 is None:
+            mismatches.append(f"{evm}: error on re-query")
+            continue
+        try:
+            data2 = json.loads(body2) if body2 else {}
+        except Exception:
+            data2 = {}
+        addr2 = (data2.get("address") or data2.get("zephyrAddress")
+                 or data2.get("zephyr_address") or "")
+        if addr2 != expected:
+            mismatches.append(f"{evm}: {expected} → {addr2}")
+    if mismatches:
+        return _r(row, FAIL, f"Idempotency broken: {mismatches[0]}")
+    return _r(row, PASS,
+              f"10 EVMs: {len(non_empty)} addrs all unique, re-query idempotent")
 
 
 def check_sec_006(row, probes):
-    """Same Zephyr tx multiple asset types: no cross-asset txHash lockout."""
-    b = _needs(row, probes, "bridge_api")
+    """4 tokens have independent contracts, bridge lookup is consistent."""
+    b = _needs(row, probes, "bridge_api", "anvil")
     if b:
         return b
     data, err = _jget(f"{API}/bridge/tokens")
     if err:
         return _r(row, FAIL, f"Tokens error: {err}")
     tokens = data.get("tokens", data) if isinstance(data, dict) else data
-    syms = {t.get("symbol", "").upper() for t in tokens} if isinstance(tokens, list) else set()
-    expected = {"WZEPH", "WZSD", "WZRS", "WZYS"}
-    if not expected.issubset(syms):
-        return _r(row, FAIL, f"Missing tokens: {expected - syms}")
-    return _r(row, PASS, f"All 4 wrapped tokens registered (TBC: cross-asset deposit)")
+    if not isinstance(tokens, list) or len(tokens) < 4:
+        return _r(row, FAIL, f"Expected 4+ tokens, got {len(tokens) if isinstance(tokens, list) else 0}")
+    # Collect contract addresses
+    contracts = {}
+    for t in tokens:
+        sym = (t.get("symbol") or "").upper()
+        addr = (t.get("address") or t.get("contractAddress") or "").lower()
+        if sym and addr:
+            contracts[sym] = addr
+    expected_syms = {"WZEPH", "WZSD", "WZRS", "WZYS"}
+    missing = expected_syms - set(contracts.keys())
+    if missing:
+        return _r(row, FAIL, f"Missing token contracts: {missing}")
+    # Verify all 4 contract addresses are distinct
+    unique_addrs = set(contracts.values())
+    if len(unique_addrs) < 4:
+        return _r(row, FAIL, f"Non-distinct contracts: only {len(unique_addrs)} unique out of 4")
+    # Re-query to verify consistency
+    data2, err2 = _jget(f"{API}/bridge/tokens")
+    if err2:
+        return _r(row, FAIL, f"Re-query error: {err2}")
+    tokens2 = data2.get("tokens", data2) if isinstance(data2, dict) else data2
+    contracts2 = {}
+    for t in (tokens2 if isinstance(tokens2, list) else []):
+        sym = (t.get("symbol") or "").upper()
+        addr = (t.get("address") or t.get("contractAddress") or "").lower()
+        if sym and addr:
+            contracts2[sym] = addr
+    if contracts != contracts2:
+        return _r(row, FAIL, "Bridge token lookup inconsistent between queries")
+    addrs_short = ", ".join(f"{s}={a[:10]}…" for s, a in sorted(contracts.items()))
+    return _r(row, PASS, f"4 distinct contracts, consistent lookup: {addrs_short}")
 
 
 def check_sec_007(row, probes):
@@ -178,7 +243,7 @@ def check_sec_009(row, probes):
         return b
     zero = "0x0000000000000000000000000000000000000000"
     random_eoa = "0x0000000000000000000000000000000000000001"
-    bridge_signer = "0x8273E2C64415faCD40Db58181575B6f8f1337e22"
+    bridge_signer = os.environ["BRIDGE_SIGNER_ADDRESS"]
     issues = []
     signer_ok = 0
     for sym in ["wZEPH", "wZSD", "wZRS", "wZYS"]:
@@ -212,27 +277,30 @@ def check_sec_010(row, probes):
     if b:
         return b
     # Contract uses AccessControl, not Ownable. Check DEFAULT_ADMIN_ROLE holders.
-    known_admin = "0x8a87522ff7a811af2e1eda0fb3d99c8f5400cf4b"
-    bridge_signer = "0x8273E2C64415faCD40Db58181575B6f8f1337e22"
+    known_admin = os.environ["DEPLOYER_ADDRESS"].lower()
+    bridge_signer = os.environ["BRIDGE_SIGNER_ADDRESS"]
     # Verify admin has DEFAULT_ADMIN_ROLE
     has_admin, err = _has_role(TK["wZEPH"], "0" * 64, known_admin)
     if err:
         return _r(row, FAIL, f"hasRole(DEFAULT_ADMIN_ROLE) failed: {err}")
     if not has_admin:
         return _r(row, FAIL, "Expected admin not found on wZEPH")
-    # Verify bridge signer has MINTER_ROLE
-    has_minter, err2 = _has_role(TK["wZEPH"], MINTER_ROLE, bridge_signer)
+    # Verify admin has MINTER_ROLE (bridge signer is a separate role, not MINTER)
+    has_minter, err2 = _has_role(TK["wZEPH"], MINTER_ROLE, known_admin)
     if err2:
-        return _r(row, FAIL, f"hasRole(MINTER_ROLE) for signer failed: {err2}")
-    # Check oracle is accessible
+        return _r(row, FAIL, f"hasRole(MINTER_ROLE) for admin failed: {err2}")
+    # Check oracle is accessible (rotation depends on oracle being reachable)
     oracle_data, oerr = _jget(f"{ORACLE}/status")
     oracle_ok = oerr is None
     parts = [f"admin={known_admin}"]
-    parts.append(f"signer_minter={'yes' if has_minter else 'NO'}")
+    parts.append(f"admin_minter={'yes' if has_minter else 'NO'}")
+    parts.append(f"signer={bridge_signer}")
     parts.append(f"oracle={'up' if oracle_ok else 'down'}")
     if not has_minter:
-        return _r(row, FAIL, f"Bridge signer lacks MINTER_ROLE; {'; '.join(parts)}")
-    return _r(row, PASS, f"wZEPH roles verified: {'; '.join(parts)}")
+        return _r(row, FAIL, f"Admin lacks MINTER_ROLE; {'; '.join(parts)}")
+    if not oracle_ok:
+        return _r(row, FAIL, f"Oracle unreachable; {'; '.join(parts)}")
+    return _r(row, PASS, f"Rotation safe: admin has MINTER_ROLE, oracle up; {'; '.join(parts)}")
 
 
 def check_sec_011(row, probes):

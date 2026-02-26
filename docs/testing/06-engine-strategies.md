@@ -315,3 +315,49 @@ These ZB tests are integrated here as strategy-adjacent checks. Some are fully r
 | `ZB-RR-008` | Stale reserve snapshot handling | P0 | High | `SCOPED-TBC` | Add daemon pause + staleness expectation assertions. |
 | `ZB-TIME-008` | Engine staleness guard (market data age) | P0 | High | `SCOPED-TBC` | Add MEXC feed stop/invalidate and evaluate assertions. |
 | `ZB-CONF-010` | Wrong RR thresholds configured in engine | P0 | High | `SCOPED-EXPAND` | Add config override checks and expected mode matrix. |
+
+<!-- L5-CATALOG-START -->
+## L5 Seeding Verification
+
+Automated checks in `scripts/l5_checks/seed.py` — verify the seeding pipeline populated engine wallets correctly.
+
+| ID | Test | Priority | Status | Notes |
+|---|---|---|---|---|
+| `ZB-SEED-001` | Engine Zephyr wallet is funded with all asset types | P0 | `SCOPED-READY` | Automated check. |
+| `ZB-SEED-002` | Bridge API recognises the engine EVM address | P0 | `SCOPED-READY` | Automated check. |
+| `ZB-SEED-003` | At least 4 completed claims exist for engine | P0 | `SCOPED-READY` | Automated check. |
+| `ZB-SEED-004` | Engine holds non-zero wrapped token balances | P0 | `SCOPED-READY` | Automated check. |
+| `ZB-SEED-005` | Engine holds non-zero USDC and USDT balances | P0 | `SCOPED-READY` | Automated check. |
+| `ZB-SEED-006` | All 5 pools have non-zero liquidity | P0 | `SCOPED-READY` | Automated check. |
+| `ZB-SEED-007` | All pools have non-zero sqrtPriceX96 | P0 | `SCOPED-READY` | Automated check. |
+| `ZB-SEED-008` | Seed is idempotent — no excessive duplicates | P0 | `SCOPED-READY` | Automated check. |
+
+## L5 Engine Arbitrage Edge Cases
+
+Automated checks in `scripts/l5_checks/engine_arb.py` — 4 stages: Detection (6) | Planning (4) | Execution (6) | Guardrails (6).
+
+| ID | Test | Priority | Status | Notes |
+|---|---|---|---|---|
+| `ZB-ARB-001` | ZEPH evm_premium detection via pool swap | P0 | `SCOPED-READY` | Automated: sells wZEPH to push price up, checks engine API. |
+| `ZB-ARB-002` | ZEPH evm_discount detection via pool swap | P0 | `SCOPED-READY` | Automated: sells wZSD to push price down, checks engine API. |
+| `ZB-ARB-003` | ZSD evm_premium detection via wZSD-USDT pool | P1 | `SCOPED-TBC` | Push wZSD above $1 peg. |
+| `ZB-ARB-004` | ZSD evm_discount detection via wZSD-USDT pool | P1 | `SCOPED-TBC` | Push wZSD below $1 peg. |
+| `ZB-ARB-005` | Aligned baseline — no false triggers | P0 | `SCOPED-READY` | Automated: no manipulation, verify all assets aligned. |
+| `ZB-ARB-006` | Price restore realigns engine state | P0 | `SCOPED-READY` | Automated: push price, restore, verify aligned. |
+| `ZB-ARB-007` | ZEPH premium plan — swapEVM open leg | P0 | `SCOPED-READY` | Automated: push premium, verify plan has swapEVM open leg. |
+| `ZB-ARB-008` | ZEPH discount plan — swapEVM open leg | P0 | `SCOPED-READY` | Automated: push discount, verify plan has swapEVM open leg. |
+| `ZB-ARB-009` | Plan includes expectedPnl > minProfitUsd | P1 | `SCOPED-TBC` | Verify plan expectedPnl exceeds $1 threshold. |
+| `ZB-ARB-010` | Plan respects clip size limits | P1 | `SCOPED-TBC` | Verify clip <= 10% pool depth and <= inventory. |
+| `ZB-ARB-011` | ZEPH premium executed in paper mode | P0 | `SCOPED-READY` | Automated: push premium, engine auto-executes, verify history. |
+| `ZB-ARB-012` | ZEPH discount executed in paper mode | P0 | `SCOPED-READY` | Automated: push discount, engine auto-executes, verify history. |
+| `ZB-ARB-013` | Execution history has step results | P1 | `SCOPED-TBC` | Verify stepResults array matches plan steps. |
+| `ZB-ARB-014` | Execution records PnL and duration | P1 | `SCOPED-TBC` | Verify netPnlUsd > 0 and durationMs > 0. |
+| `ZB-ARB-015` | ZSD premium executed in paper mode | P1 | `SCOPED-TBC` | Push ZSD premium, verify execution in history. |
+| `ZB-ARB-016` | ZSD discount executed in paper mode | P1 | `SCOPED-TBC` | Push ZSD discount, verify execution in history. |
+| `ZB-ARB-017` | Crisis mode blocks auto-execution | P0 | `SCOPED-TBC` | RR<200%, push premium, engine detects but does not execute. |
+| `ZB-ARB-018` | Defensive mode blocks ZRS arb | P1 | `SCOPED-TBC` | 200%<RR<400%, push ZRS gap, verify blocked. |
+| `ZB-ARB-019` | Defensive mode ZEPH profit gate | P1 | `SCOPED-TBC` | Defensive mode requires >=$20 ZEPH profit for auto-execute. |
+| `ZB-ARB-020` | High spread blocks auto-execute | P1 | `SCOPED-TBC` | >5% spot/MA spread blocks non-stable auto-execute. |
+| `ZB-ARB-021` | Manual mode queues instead of executing | P1 | `SCOPED-TBC` | --manual flag queues to operationQueue. |
+| `ZB-ARB-022` | Inventory snapshot matches seeded state | P0 | `SCOPED-TBC` | /api/inventory/balances matches expected seeded state. |
+<!-- L5-CATALOG-END -->

@@ -1,6 +1,8 @@
 """ZB-SC: Smart Contract Edge Cases (12 tests)."""
 from __future__ import annotations
 
+import os
+
 from ._helpers import (
     PASS, FAIL, BLOCKED,
     _r, _needs, _jpost,
@@ -34,9 +36,10 @@ def check_sc_001(row, probes):
     if code_len < 2000:
         return _r(row, FAIL, f"wZEPH bytecode too small ({code_len} hex chars), likely stub")
     # Check function selectors exist in bytecode (push4 pattern)
-    # mintFromZephyr: 0xc24d4f4d, claimWithSignature: 0x8f859686
+    # claimWithSignature(address,uint256,bytes32,uint256,bytes): 0x069353c7
+    # mintFromZephyr(bytes32,address,uint256,uint8,bytes32,bytes32,uint256): 0xc24d4f4d (legacy)
     has_mint = "c24d4f4d" in code.lower()
-    has_claim = "8f859686" in code.lower()
+    has_claim = "069353c7" in code.lower()
     parts = [f"bytecode={code_len} hex chars"]
     parts.append(f"mintFromZephyr={'found' if has_mint else 'NOT FOUND'}")
     parts.append(f"claimWithSignature={'found' if has_claim else 'NOT FOUND'}")
@@ -176,7 +179,7 @@ def check_sc_009(row, probes):
     b = _needs(row, probes, "anvil")
     if b:
         return b
-    known_admin = "0x8a87522ff7a811af2e1eda0fb3d99c8f5400cf4b"
+    known_admin = os.environ["DEPLOYER_ADDRESS"].lower()
     # Verify admin role is assigned
     has_admin, err = _has_role(TK["wZEPH"], "0" * 64, known_admin)
     if err:

@@ -1,7 +1,9 @@
-"""L3: Component Feature Tests (14 tests)."""
+"""L3: Component Feature Tests (15 tests)."""
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import time as _time
 
 from test_common import (
@@ -237,6 +239,50 @@ def check_orderbook_01(probes: dict[str, bool]) -> "ExecutionResult":
     return _r(tid, lvl, lane, FAIL, "Orderbook not tracking price")
 
 
+def check_engine_seed_01(probes: dict[str, bool]) -> "ExecutionResult":
+    """Engine CLI setup --dry-run: verify plan includes all 5 pools."""
+    tid, lvl, lane = "ENGINE-SEED-01", "L3", "engine"
+
+    engine_repo = os.environ.get("ENGINE_REPO_PATH", "")
+    if not engine_repo:
+        return _r(tid, lvl, lane, SKIP, "ENGINE_REPO_PATH not set")
+
+    # Build env with engine's .env merged (CLI needs EVM_PRIVATE_KEY etc.)
+    engine_env_file = os.path.join(engine_repo, ".env")
+    if not os.path.exists(engine_env_file):
+        return _r(tid, lvl, lane, SKIP, "Engine .env not found")
+
+    child_env = dict(os.environ)
+    with open(engine_env_file) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            child_env[k.strip()] = v.strip().strip("'\"")
+
+    try:
+        result = subprocess.run(
+            ["pnpm", "engine", "setup", "--dry-run"],
+            capture_output=True, text=True, timeout=30,
+            cwd=engine_repo, env=child_env,
+        )
+        output = result.stdout + result.stderr
+        if result.returncode != 0:
+            return _r(tid, lvl, lane, FAIL, f"CLI exited {result.returncode}: {output[-200:]}")
+
+        # Check for pool plans in output (5 pools expected)
+        pool_count = output.count('"base"')
+        if pool_count >= 5:
+            return _r(tid, lvl, lane, PASS, f"Dry run shows {pool_count} pool plans")
+        return _r(tid, lvl, lane, FAIL, f"Expected 5+ pool plans, found {pool_count}")
+
+    except subprocess.TimeoutExpired:
+        return _r(tid, lvl, lane, FAIL, "CLI timed out after 30s")
+    except FileNotFoundError:
+        return _r(tid, lvl, lane, SKIP, "pnpm not found")
+
+
 TESTS: list[TestDef] = [
     TestDef("ENGINE-01", "State Builder", "L3", "engine", check_engine_01),
     TestDef("ENGINE-02", "Engine Status", "L3", "engine", check_engine_02),
@@ -252,4 +298,5 @@ TESTS: list[TestDef] = [
     TestDef("EVM-01", "Deployed Contracts", "L3", "evm", check_evm_01),
     TestDef("ORACLE-01", "Oracle Price Control", "L3", "oracle", check_oracle_01),
     TestDef("ORDERBOOK-01", "Orderbook Price Tracking", "L3", "orderbook", check_orderbook_01),
+    TestDef("ENGINE-SEED-01", "Engine CLI Dry Run", "L3", "engine", check_engine_seed_01),
 ]

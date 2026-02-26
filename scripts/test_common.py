@@ -13,6 +13,7 @@ import sys
 import time as _time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any, Literal, NotRequired, TypedDict
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -22,6 +23,16 @@ PASS = "PASS"
 FAIL = "FAIL"
 BLOCKED = "BLOCKED"
 SKIP = "SKIP"
+
+ResultStatus = Literal["PASS", "FAIL", "BLOCKED", "SKIP"]
+
+
+class TestResult(TypedDict):
+    test_id: str
+    result: str
+    detail: str
+    module: NotRequired[str]
+    category: NotRequired[str]
 
 
 @dataclass
@@ -34,9 +45,30 @@ class ExecutionResult:
     priority: str
 
 
-# ── Constants ─────────────────────────────────────────────────────────────
+# ── Load .env (stdlib-only, no dotenv dependency) ────────────────────────
 
 ROOT = Path(__file__).resolve().parent.parent
+
+_env_file = ROOT / ".env"
+if _env_file.exists():
+    import re as _re
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith("#") or "=" not in _line:
+            continue
+        _key, _, _val = _line.partition("=")
+        _key = _key.strip()
+        _val = _val.strip().strip("'\"")
+        # Expand ${VAR} and $VAR references
+        _val = _re.sub(
+            r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)",
+            lambda m: os.environ.get(m.group(1) or m.group(2), ""),
+            _val,
+        )
+        if _key and _key not in os.environ:
+            os.environ[_key] = _val
+
+# ── Constants ─────────────────────────────────────────────────────────────
 
 # Ports (DEVNET defaults, overridable via env)
 NODE1_RPC_PORT = int(os.environ.get("DEVNET_NODE1_RPC", "47767"))
@@ -62,22 +94,35 @@ BRIDGE_WEB_URL = "http://127.0.0.1:7050"
 
 DEPLOYED_ADDRESSES_FILE = ROOT / "deployed-addresses.json"
 
-# Token addresses (from l5_checks.py)
-TK = {
-    "wZEPH": "0xc5996c89394e0fef9a6817468c1181d104f6c991",
-    "wZSD": "0x1d9a006bf0819bdff41144e89c2fb2105ad46003",
-    "wZRS": "0x47b0c4d054a0a0c687906e4f4065b0e761afd46d",
-    "wZYS": "0xe4e5353623cbada38d3d52bc772fbb70ea1e0baa",
-    "USDC": "0xa62fe7e72d93ca92e620a5c1d0a8061d7b466f90",
-    "USDT": "0xd65b8d42b5f970b83e17c098b5b986b44c385af5",
-}
-CTX = {
-    "PoolManager": "0x558a4F3BdF7d9e61FfAF3072C5Af5f5901B26e97",
-    "SwapRouter": "0x50B98b0B8C4Fd6e62b9A2ebFF94d916e6A7F70bd",
-    "Permit2": "0x3191Fc1E303EF4e12a7DE5f5d2e8d53A0660c5b9",
-    "V4Quoter": "0xbCC03DFa9dF1cA4813Fb51b7A6a1f64e5Dd771a1",
-    "StateView": "0x5dd33029AC546e7F2F18096D505153e0a8F5e8ad",
-}
+# Token + contract addresses — loaded dynamically from config/addresses.json
+# (falls back to empty if file not found; tests that need addresses will FAIL
+#  visibly rather than pass against stale hardcoded values)
+def _load_addresses() -> tuple[dict[str, str], dict[str, str]]:
+    """Load token and contract addresses from config/addresses.json."""
+    addr_file = ROOT / "config" / "addresses.json"
+    if not addr_file.exists():
+        return {}, {}
+    try:
+        data = json.loads(addr_file.read_text())
+        tokens = {k: v["address"] for k, v in data.get("tokens", {}).items() if "address" in v}
+        # Map camelCase keys from JSON to PascalCase used by L5 tests
+        _ctx_map = {
+            "poolManager": "PoolManager",
+            "positionManager": "PositionManager",
+            "stateView": "StateView",
+            "v4Quoter": "V4Quoter",
+            "swapRouter": "SwapRouter",
+            "permit2": "Permit2",
+        }
+        contracts: dict[str, str] = {}
+        for k, v in data.get("contracts", {}).items():
+            if isinstance(v, str):
+                contracts[_ctx_map.get(k) or k] = v
+        return tokens, contracts
+    except Exception:
+        return {}, {}
+
+TK, CTX = _load_addresses()
 
 ATOMIC = 1_000_000_000_000  # 1e12 — Zephyr uses 12 decimal places
 
@@ -104,7 +149,7 @@ class L5Result:
 
 # ── HTTP / RPC Helpers ────────────────────────────────────────────────────
 
-def _get(url: str, timeout: float = 10.0):
+def _get(url: str, timeout: float = 10.0) -> tuple[int | None, str | None, str | None]:
     """GET request. Returns (status, body, error)."""
     try:
         req = Request(url, method="GET")
@@ -121,7 +166,7 @@ def _get(url: str, timeout: float = 10.0):
         return None, None, str(e)
 
 
-def _post(url: str, payload, headers=None, timeout: float = 10.0):
+def _post(url: str, payload: Any, headers: dict[str, str] | None = None, timeout: float = 10.0) -> tuple[int | None, str | None, str | None]:
     """POST JSON request. Returns (status, body, error)."""
     try:
         hdrs = {"Content-Type": "application/json"}
@@ -142,7 +187,7 @@ def _post(url: str, payload, headers=None, timeout: float = 10.0):
         return None, None, str(e)
 
 
-def _jget(url: str, timeout: float = 10.0):
+def _jget(url: str, timeout: float = 10.0) -> tuple[dict | None, str | None]:
     """GET + parse JSON. Returns (parsed, error)."""
     s, b, e = _get(url, timeout)
     if e and s is None:
@@ -155,7 +200,7 @@ def _jget(url: str, timeout: float = 10.0):
         return None, f"JSON parse error (HTTP {s})"
 
 
-def _jpost(url: str, payload, headers=None, timeout: float = 10.0):
+def _jpost(url: str, payload: Any, headers: dict[str, str] | None = None, timeout: float = 10.0) -> tuple[dict | None, str | None]:
     """POST JSON + parse response. Returns (parsed, error)."""
     s, b, e = _post(url, payload, headers, timeout)
     if e and s is None:
@@ -166,7 +211,7 @@ def _jpost(url: str, payload, headers=None, timeout: float = 10.0):
         return None, f"JSON parse error (HTTP {s})"
 
 
-def _rpc(url: str, method: str, params=None, timeout: float = 10.0):
+def _rpc(url: str, method: str, params: Any = None, timeout: float = 10.0) -> tuple[Any, str | None]:
     """JSON-RPC call. Returns (result, error)."""
     payload = {"jsonrpc": "2.0", "id": "0", "method": method}
     if params:
@@ -181,7 +226,7 @@ def _rpc(url: str, method: str, params=None, timeout: float = 10.0):
     return parsed.get("result"), None
 
 
-def _eth_call(to: str, data: str, timeout: float = 10.0):
+def _eth_call(to: str, data: str, timeout: float = 10.0) -> tuple[str | None, str | None]:
     """eth_call to Anvil. Returns (hex_result, error)."""
     parsed, err = _jpost(
         ANVIL_URL,
@@ -228,7 +273,7 @@ def _cast(args: list[str], timeout: float = 15.0) -> tuple[str | None, str | Non
         return None, str(e)
 
 
-def _get_rr():
+def _get_rr() -> tuple[float | None, str | None]:
     """Get current reserve ratio from Zephyr node. Returns (float, error)."""
     result, err = _rpc(NODE1_RPC, "get_reserve_info")
     if err:

@@ -1,12 +1,14 @@
-"""L4: End-to-End Tests (8 tests)."""
+"""L4: End-to-End Tests (9 tests)."""
 from __future__ import annotations
 
+import json
+import os
 import time as _time
 
 from test_common import (
-    ATOMIC, ENGINE_URL, ExecutionResult, FAIL, GOV_W, NODE1_RPC, PASS,
-    TEST_W,
-    _jget, _rpc,
+    ANVIL_URL, ATOMIC, ENGINE_URL, ExecutionResult, FAIL, GOV_W, NODE1_RPC,
+    PASS, SKIP, TEST_W,
+    _cast, _jget, _rpc,
     set_oracle_price, set_orderbook_spread,
 )
 from ._types import TestDef, _r
@@ -161,6 +163,71 @@ def check_l4_08(probes: dict[str, bool]) -> "ExecutionResult":
     return _r(tid, lvl, lane, PASS, "Positions endpoint responds")
 
 
+def check_l4_seed_01(probes: dict[str, bool]) -> "ExecutionResult":
+    """Verify seeding results: pools have liquidity, engine has inventory."""
+    tid, lvl, lane = "L4-SEED-01", "L4", "e2e"
+
+    # Load addresses
+    orch_dir = os.environ.get("ORCHESTRATION_PATH", "")
+    addr_file = os.path.join(orch_dir, "config", "addresses.json") if orch_dir else ""
+    if not addr_file or not os.path.exists(addr_file):
+        return _r(tid, lvl, lane, SKIP, "addresses.json not found")
+
+    addrs = json.loads(open(addr_file).read())
+    engine_addr = os.environ.get("ENGINE_ADDRESS", "")
+    if not engine_addr:
+        return _r(tid, lvl, lane, SKIP, "ENGINE_ADDRESS not set")
+
+    rpc_url = ANVIL_URL
+    tokens = addrs.get("tokens", {})
+    details = []
+    has_inventory = True
+
+    # Check engine has leftover wrapped token inventory
+    for symbol in ("wZEPH", "wZSD", "wZRS", "wZYS"):
+        token_info = tokens.get(symbol, {})
+        token_addr = token_info.get("address", "")
+        if not token_addr:
+            continue
+        stdout, err = _cast([
+            "call", token_addr, "balanceOf(address)(uint256)",
+            engine_addr, "--rpc-url", rpc_url,
+        ])
+        if err or not stdout:
+            has_inventory = False
+            details.append(f"{symbol}=ERR")
+            continue
+        try:
+            bal = int(stdout.strip().split()[0])
+        except (ValueError, IndexError):
+            bal = 0
+        human = bal / ATOMIC
+        details.append(f"{symbol}={human:.0f}")
+        if bal == 0:
+            has_inventory = False
+
+    # Check StateView for pool liquidity (if positionManager is deployed)
+    posm = addrs.get("contracts", {}).get("positionManager", "")
+    lp_count = 0
+    if posm:
+        stdout, err = _cast([
+            "call", posm, "balanceOf(address)(uint256)",
+            engine_addr, "--rpc-url", rpc_url,
+        ])
+        if not err and stdout:
+            try:
+                lp_count = int(stdout.strip().split()[0])
+            except (ValueError, IndexError):
+                lp_count = 0
+
+    detail_str = ", ".join(details)
+    if has_inventory and lp_count >= 4:
+        return _r(tid, lvl, lane, PASS, f"Seeding verified: {lp_count} LP positions, inventory=[{detail_str}]")
+    if lp_count < 4:
+        return _r(tid, lvl, lane, FAIL, f"Only {lp_count} LP positions (expected 4+), inventory=[{detail_str}]")
+    return _r(tid, lvl, lane, FAIL, f"Missing inventory: [{detail_str}]")
+
+
 TESTS: list[TestDef] = [
     TestDef("L4-01", "Transfer Gov -> Test Wallet", "L4", "e2e", check_l4_01),
     TestDef("L4-02", "RR Mode Transitions", "L4", "e2e", check_l4_02),
@@ -170,4 +237,5 @@ TESTS: list[TestDef] = [
     TestDef("L4-06", "Quoter System", "L4", "e2e", check_l4_06),
     TestDef("L4-07", "MEXC Market Data", "L4", "e2e", check_l4_07),
     TestDef("L4-08", "LP Positions", "L4", "e2e", check_l4_08),
+    TestDef("L4-SEED-01", "Seeding Verification", "L4", "e2e", check_l4_seed_01),
 ]

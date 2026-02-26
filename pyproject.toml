@@ -1,0 +1,6 @@
+[tool.pyright]
+pythonVersion = "3.11"
+pythonPlatform = "Linux"
+include = ["scripts/engine_tests/", "scripts/test_common.py"]
+extraPaths = ["scripts", "scripts/engine_tests"]
+typeCheckingMode = "standard"

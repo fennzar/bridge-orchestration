@@ -4,7 +4,7 @@ set -euo pipefail
 # ===========================================
 # Sync Zephyr Artifacts into Bridge-Orchestration
 # ===========================================
-# Copies binaries, oracle files, fresh-devnet tooling, and zephyr-cli
+# Copies binaries, oracle files, and zephyr-cli
 # from the Zephyr repo so this repo can function independently.
 #
 # Usage:
@@ -15,17 +15,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Load shared logging
+source "$SCRIPT_DIR/lib/logging.sh"
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# Override log_skip with script-specific version
 log_skip() { echo -e "${YELLOW}[SKIP]${NC} $1 (already exists, use --force to overwrite)"; }
 
 # ===========================================
@@ -44,8 +37,8 @@ for arg in "$@"; do
             echo "Copies Zephyr artifacts into this repo:"
             echo "  - Devnet binaries (zephyrd, zephyr-wallet-rpc) → docker/zephyr/bin/"
             echo "  - Fake oracle files → docker/fake-oracle/"
-            echo "  - Fresh-devnet tooling → tools/fresh-devnet/"
             echo "  - Zephyr CLI → tools/zephyr-cli/"
+            echo "  - Python RPC framework → utils/python-rpc/"
             echo ""
             echo "Options:"
             echo "  --force     Overwrite existing files"
@@ -142,6 +135,14 @@ fi
 copy_file "$BIN_SRC/zephyrd" "$ORCH_DIR/docker/zephyr/bin/zephyrd" "zephyrd"
 copy_file "$BIN_SRC/zephyr-wallet-rpc" "$ORCH_DIR/docker/zephyr/bin/zephyr-wallet-rpc" "zephyr-wallet-rpc"
 
+# Mirror mode binaries (optional — only if built with DEVNET_MIRROR_SUPPLY)
+MIRROR_BIN_SRC="$ZEPHYR_REPO/build/devnet-mirror/bin"
+if [[ -f "$MIRROR_BIN_SRC/zephyrd" ]] && [[ -f "$MIRROR_BIN_SRC/zephyr-wallet-rpc" ]]; then
+    log_info "Mirror binaries..."
+    copy_file "$MIRROR_BIN_SRC/zephyrd" "$ORCH_DIR/docker/zephyr/bin-mirror/zephyrd" "zephyrd (mirror)"
+    copy_file "$MIRROR_BIN_SRC/zephyr-wallet-rpc" "$ORCH_DIR/docker/zephyr/bin-mirror/zephyr-wallet-rpc" "zephyr-wallet-rpc (mirror)"
+fi
+
 # ===========================================
 # 2. Fake oracle files
 # ===========================================
@@ -153,18 +154,20 @@ copy_file "$ORACLE_SRC/oracle_private.pem" "$ORCH_DIR/docker/fake-oracle/oracle_
 copy_file "$ORACLE_SRC/oracle_public.pem" "$ORCH_DIR/docker/fake-oracle/oracle_public.pem" "oracle_public.pem"
 
 # ===========================================
-# 3. Fresh-devnet tooling
+# 3. Docker infrastructure (Dockerfiles, entrypoints, compose)
 # ===========================================
-log_info "Fresh-devnet tooling..."
+log_info "Docker infrastructure..."
 
-copy_dir "$ZEPHYR_REPO/tools/fresh-devnet" "$ORCH_DIR/tools/fresh-devnet" "tools/fresh-devnet/"
+copy_dir "$ZEPHYR_REPO/docker/zephyr" "$ORCH_DIR/docker/zephyr" "docker/zephyr/"
+copy_dir "$ZEPHYR_REPO/docker/devnet-init" "$ORCH_DIR/docker/devnet-init" "docker/devnet-init/"
 
 # ===========================================
-# 4. Zephyr CLI
+# 4. Zephyr CLI + python-rpc dependency
 # ===========================================
 log_info "Zephyr CLI..."
 
 copy_dir "$ZEPHYR_REPO/tools/zephyr-cli" "$ORCH_DIR/tools/zephyr-cli" "tools/zephyr-cli/"
+copy_dir "$ZEPHYR_REPO/utils/python-rpc" "$ORCH_DIR/utils/python-rpc" "utils/python-rpc/"
 
 # ===========================================
 # Summary

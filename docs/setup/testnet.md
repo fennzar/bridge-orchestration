@@ -1,44 +1,43 @@
-# Zephyr Bridge Stack - Testnet Deployment
+# Zephyr Bridge Stack - Testnet V2 (Anvil)
 
-Deploys the bridge stack to a server with Sepolia as the EVM chain, Zephyr DEVNET nodes, and Caddy for TLS.
+Deploys the bridge stack with a local Anvil EVM chain, containerized apps, Caddy TLS, and Blockscout block explorer. Full control over EVM state with aggressive resets.
+
+> For Sepolia pre-mainnet validation, see [testnet-v3.md](./testnet-v3.md).
 
 ## Quick Start
 
 ```bash
 # 1. Build all images (infra + app containers)
-make testnet-build
+make testnet-v2-build
 
 # 2. Configure environment
-cp env/.env.testnet.example env/.env.testnet
-# Edit env/.env.testnet — fill in Sepolia RPC, keys, domain
+cp env/.env.testnet-v2.example env/.env.testnet-v2
+# Edit env/.env.testnet-v2 — fill in domain, keys
 
-# 3. Init Zephyr DEVNET chain (first time only)
-make testnet-up PROFILE=init
-# Wait for init to complete, then:
-make testnet-down
-
-# 4. Deploy EVM contracts to Sepolia
-cd $ROOT/zephyr-eth-foundry
-RPC_URL=<sepolia-rpc> DEPLOYER_KEY=<key> ./scripts/deploy_all_test_env1.sh
-
-# 5. Start the stack
-make testnet-up                       # All services (default: --profile full)
-make testnet-up APPS=bridge           # Bridge only
-make testnet-up APPS=bridge,engine    # Bridge + engine
+# 3. Start the stack (Anvil + apps + Blockscout)
+make testnet-v2-up                    # All services
+make testnet-v2-up APPS=bridge        # Bridge only
+make testnet-v2-up APPS=bridge,engine # Bridge + engine
 ```
 
 ## What's Different from Dev
 
-| Aspect | Dev (`make dev`) | Testnet (`make testnet-up`) |
-|--------|-----------------|---------------------------|
-| EVM chain | Anvil (local, chain 31337) | Sepolia (chain 11155111) |
+| Aspect | Dev (`make dev`) | Testnet V2 (`make testnet-v2-up`) |
+|--------|-----------------|----------------------------------|
+| EVM chain | Anvil (local, chain 31337) | Anvil (remote, chain 31337) |
 | Apps run via | Overmind (native, hot-reload) | Docker containers |
 | TLS | None (http://localhost) | Caddy + Let's Encrypt |
 | Ports | All exposed on localhost | Internal only, Caddy on 80/443 |
-| Env file | `.env` (root) | `env/.env.testnet` |
-| Contract deploy | Automatic (`make dev-init`) | Manual (Sepolia, costs gas) |
+| Env file | `.env` (root) | `env/.env.testnet-v2` |
+| Explorer | Blockscout (opt-out via `EXPLORER=0`) | Blockscout (always-on) |
 
-Zephyr infrastructure is the same — DEVNET nodes, fake oracle, fake orderbook. The difference is apps are containerized and EVM points to Sepolia.
+## Environment Matrix
+
+| Env | EVM Chain | Apps Run Via | Explorer | Make Targets |
+|-----|-----------|-------------|----------|--------------|
+| **Dev** | Anvil (local) | Overmind (hot-reload) | Blockscout (opt-out) | `make dev` |
+| **Testnet V2** | Anvil (remote) | Docker containers | Blockscout (always-on) | `make testnet-v2-*` |
+| **Testnet V3** | Sepolia RPC | Docker containers | Etherscan (external) | `make testnet-v3-*` |
 
 ## Prerequisites
 
@@ -46,16 +45,14 @@ Everything from the [dev setup](./dev.md) plus:
 
 - A server with ports 80/443 open (for Caddy TLS)
 - A domain pointing to the server (e.g. `bridge.example.com`)
-- Sepolia RPC endpoint (Infura, Alchemy, etc.)
-- Sepolia ETH for deployer + bridge signer accounts
-- Deployed contracts on Sepolia
+- Subdomains: `engine.`, `status.`, `explorer.` pointing to same server
 
 ## Configuration
 
-Copy and fill in the testnet env file:
+Copy and fill in the testnet V2 env file:
 
 ```bash
-cp env/.env.testnet.example env/.env.testnet
+cp env/.env.testnet-v2.example env/.env.testnet-v2
 ```
 
 Key values to set:
@@ -64,59 +61,55 @@ Key values to set:
 # Domain (Caddy uses this for Let's Encrypt)
 DOMAIN=bridge.example.com
 
-# Sepolia RPC
-EVM_RPC_HTTP=https://sepolia.infura.io/v3/YOUR_KEY
-EVM_RPC_WS=wss://sepolia.infura.io/ws/v3/YOUR_KEY
-EVM_CHAIN_ID=11155111
-
-# Keys (generate your own!)
+# Keys (from make keygen or generate your own)
 DEPLOYER_ADDRESS=0x...
 DEPLOYER_PRIVATE_KEY=0x...
 BRIDGE_SIGNER_ADDRESS=0x...
 BRIDGE_PK=0x...
 
-# WalletConnect (required for frontend)
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your-project-id
+# Blockscout (uses domain-based URLs via Caddy)
+BLOCKSCOUT_API_HOST=explorer.bridge.example.com
+BLOCKSCOUT_API_PROTOCOL=https
 ```
 
-Infrastructure variables (Redis, Postgres, Zephyr) use Docker service names and don't need changing.
+Infrastructure variables (Redis, Postgres, Zephyr, Anvil) use Docker service names and don't need changing.
 
 ## Make Targets
 
 ```bash
-make testnet-build                    # Build all images (infra + apps)
-make testnet-up                       # Start full stack (--profile full)
-make testnet-up APPS=bridge           # Bridge services only
-make testnet-up APPS=bridge,engine    # Bridge + engine
-make testnet-up PROFILE=full          # Explicit profile (backwards compat)
-make testnet-down                     # Stop everything
-make testnet-logs SERVICE=bridge-api  # Tail container logs
+make testnet-v2-build                    # Build all images (infra + apps)
+make testnet-v2-up                       # Start full stack + Blockscout
+make testnet-v2-up APPS=bridge           # Bridge services only + Blockscout
+make testnet-v2-up APPS=bridge,engine    # Bridge + engine + Blockscout
+make testnet-v2-down                     # Stop everything
+make testnet-v2-logs SERVICE=bridge-api  # Tail container logs
 ```
 
 ## Architecture
 
 ```
                     Internet
-                       │
-                   ┌───┴───┐
-                   │ Caddy  │  :80/:443 (Let's Encrypt)
-                   └───┬───┘
-          ┌────────────┼────────────┐
-          │            │            │
-    bridge.domain  engine.domain  status.domain
-          │            │            │
-    ┌─────┴─────┐  ┌──┴──┐    ┌───┴───┐
-    │bridge-web │  │eng- │    │dash-  │
-    │bridge-api │  │ine  │    │board  │
-    │bridge-    │  │     │    │       │
-    │watchers   │  │     │    │       │
-    └─────┬─────┘  └──┬──┘    └───────┘
-          │            │
-    ┌─────┴────────────┴─────┐
-    │  Redis / Postgres      │
-    │  Zephyr Nodes/Wallets  │
-    │  Fake Oracle/Orderbook │
-    └────────────────────────┘
+                       |
+                   +-------+
+                   | Caddy  |  :80/:443 (Let's Encrypt)
+                   +---+---+
+          +------------+------------+-----------+
+          |            |            |           |
+    bridge.domain  engine.domain  status.   explorer.
+          |            |          domain    domain
+    +-----+-----+  +--+--+    +------+  +----------+
+    |bridge-web |  |eng- |    |dash- |  |blockscout |
+    |bridge-api |  |ine  |    |board |  |proxy      |
+    |bridge-    |  |     |    |      |  |  +API     |
+    |watchers   |  |     |    |      |  |  +frontend|
+    +-----+-----+  +--+--+    +------+  +----+-----+
+          |            |                      |
+    +-----+------------+----------------------+--+
+    |  Anvil / Redis / Postgres                  |
+    |  Zephyr Nodes/Wallets                      |
+    |  Fake Oracle/Orderbook                     |
+    |  Blockscout DB                             |
+    +--------------------------------------------+
 ```
 
 ### Compose Profiles
@@ -126,6 +119,7 @@ make testnet-logs SERVICE=bridge-api  # Tail container logs
 | `bridge` | bridge-web, bridge-api, bridge-watchers, caddy |
 | `engine` | engine-web, engine-watchers |
 | `full` | All of the above + dashboard |
+| `explorer` | Blockscout (always included in V2) |
 | `init` | devnet-init container (first-time setup) |
 
 ### URLs (with Caddy)
@@ -136,59 +130,30 @@ make testnet-logs SERVICE=bridge-api  # Tail container logs
 | Bridge API | `https://bridge.example.com/api/*` |
 | Engine | `https://engine.bridge.example.com` |
 | Dashboard | `https://status.bridge.example.com` |
-
-## Deploy Contracts to Sepolia
-
-Contracts must be deployed to Sepolia separately (not automated like dev). This costs Sepolia ETH.
-
-```bash
-cd $ROOT/zephyr-eth-foundry
-export RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
-export DEPLOYER_KEY=0x...your-sepolia-funded-key...
-./scripts/deploy_all_test_env1.sh
-```
-
-Update `env/.env.testnet` with the deployed contract addresses if needed.
-
-> Fund the deployer account with Sepolia ETH first: [sepoliafaucet.com](https://sepoliafaucet.com/), [Alchemy faucet](https://www.alchemy.com/faucets/ethereum-sepolia)
-
-## Init Zephyr Chain
-
-The Zephyr DEVNET chain needs to be initialized once (same as dev, but via compose profile):
-
-```bash
-# Start infra + run init container
-make testnet-up PROFILE=init
-
-# Watch init progress
-make testnet-logs SERVICE=devnet-init
-
-# After init completes, bring everything down and start normally
-make testnet-down
-make testnet-up
-```
+| Explorer | `https://explorer.bridge.example.com` |
 
 ## Updating
 
 ```bash
 # Rebuild app images after code changes
-make testnet-build
+make testnet-v2-build
 
 # Restart with new images
-make testnet-down && make testnet-up
+make testnet-v2-down && make testnet-v2-up
 ```
 
 ## Troubleshooting
 
 **Caddy won't start / TLS errors:**
-- Verify domain DNS points to this server
+- Verify domain DNS points to this server (including `explorer.` subdomain)
 - Ports 80 and 443 must be open (no other reverse proxy in front)
-- Check Caddy logs: `make testnet-logs SERVICE=caddy`
+- Check Caddy logs: `make testnet-v2-logs SERVICE=caddy`
 
-**Sepolia RPC errors:**
-- Verify `EVM_RPC_HTTP` and `EVM_RPC_WS` in `env/.env.testnet`
-- Check rate limits on your RPC provider
+**Blockscout not indexing:**
+- Ensure Anvil is healthy: `make testnet-v2-logs SERVICE=anvil`
+- Check Blockscout backend logs: `make testnet-v2-logs SERVICE=blockscout-backend`
+- Blockscout needs a few minutes to index existing blocks on first start
 
 **Bridge watchers not connecting:**
-- Zephyr nodes must be healthy first: `make testnet-logs SERVICE=zephyr-node1`
-- Check bridge-watchers logs: `make testnet-logs SERVICE=bridge-watchers`
+- Zephyr nodes must be healthy first: `make testnet-v2-logs SERVICE=zephyr-node1`
+- Check bridge-watchers logs: `make testnet-v2-logs SERVICE=bridge-watchers`

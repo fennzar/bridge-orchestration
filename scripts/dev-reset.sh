@@ -2,90 +2,73 @@
 set -euo pipefail
 
 # ===========================================
-# Coordinated Dev Reset
+# Dev Reset — Coordinated State Reset
 # ===========================================
-# Resets ALL layers to a clean post-init state:
-#   1. Zephyr chain pop (to checkpoint)
-#   2. Anvil wipe + contract redeploy
-#   3. Database reset (Postgres)
-#   4. Redis flush
+# Resets ALL layers to a clean state, then stops everything.
+#
+# Default (no flags):
+#   Resets to post-setup state. Pops Zephyr to checkpoint,
+#   restores Anvil from post-seed snapshot, resets DBs.
+#   Ready for: make dev
+#
+# --hard:
+#   Resets to post-init state. Restores LMDB from init snapshots,
+#   wipes Anvil completely (no snapshot), resets DBs,
+#   removes config/addresses.json.
+#   Ready for: make dev-setup
 #
 # Usage:
-#   ./scripts/dev-reset.sh              # Full coordinated reset (~30s)
-#   ./scripts/dev-reset.sh --zephyr-only  # Zephyr chain only
-#   ./scripts/dev-reset.sh --evm-only     # Anvil + contracts only
-#   ./scripts/dev-reset.sh --db-only      # Postgres + Redis only
+#   ./scripts/dev-reset.sh          # Reset to post-setup state
+#   ./scripts/dev-reset.sh --hard   # Reset to post-init state
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Load environment
+# Load shared libraries
+source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
-
-DC_DEV="docker compose --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml"
+DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml -f $ORCH_DIR/docker/compose.blockscout.yml"
 OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
+ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
 
 # Parse flags
-RESET_ZEPHYR=true
-RESET_EVM=true
-RESET_DB=true
+HARD_RESET=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --zephyr-only)
-            RESET_EVM=false; RESET_DB=false; shift ;;
-        --evm-only)
-            RESET_ZEPHYR=false; RESET_DB=false; shift ;;
-        --db-only)
-            RESET_ZEPHYR=false; RESET_EVM=false; shift ;;
+        --hard)
+            HARD_RESET=true; shift ;;
         -h|--help)
-            echo "Usage: $0 [--zephyr-only|--evm-only|--db-only]"
+            echo "Usage: $0 [--hard]"
             echo ""
-            echo "Full reset (default): Zephyr pop + Anvil wipe + DB reset + Redis flush"
-            echo ""
-            echo "Options:"
-            echo "  --zephyr-only  Pop Zephyr blocks to checkpoint only"
-            echo "  --evm-only     Wipe Anvil state + redeploy contracts only"
-            echo "  --db-only      Reset Postgres + flush Redis only"
+            echo "Default:   Reset to post-setup state (restore Anvil snapshot)"
+            echo "  --hard   Reset to post-init state (wipe Anvil, remove addresses)"
             exit 0 ;;
         *)
             log_error "Unknown option: $1"; exit 1 ;;
     esac
 done
 
-echo "==========================================="
-echo "  Dev Reset"
-echo "==========================================="
-SCOPE=""
-if [ "$RESET_ZEPHYR" = true ]; then SCOPE="$SCOPE Zephyr"; fi
-if [ "$RESET_EVM" = true ]; then SCOPE="$SCOPE EVM"; fi
-if [ "$RESET_DB" = true ]; then SCOPE="$SCOPE DB+Redis"; fi
-echo "  Scope:${SCOPE}"
+if [ "$HARD_RESET" = true ]; then
+    echo "==========================================="
+    echo "  Dev Reset (hard — to post-init state)"
+    echo "==========================================="
+else
+    echo "==========================================="
+    echo "  Dev Reset (to post-setup state)"
+    echo "==========================================="
+fi
 echo ""
 
 # ===========================================
 # Phase 0: Stop apps if running
 # ===========================================
-APPS_WERE_RUNNING=false
 if [ -S "$OVERMIND_SOCK" ]; then
     if overmind status -s "$OVERMIND_SOCK" >/dev/null 2>&1; then
         log_info "Stopping Overmind apps..."
-        APPS_WERE_RUNNING=true
         overmind quit -s "$OVERMIND_SOCK" 2>/dev/null || true
-        # Wait for socket to disappear
         for i in $(seq 1 10); do
             [ ! -S "$OVERMIND_SOCK" ] && break
             sleep 0.5
@@ -95,124 +78,184 @@ if [ -S "$OVERMIND_SOCK" ]; then
     rm -f "$OVERMIND_SOCK"
 fi
 
-# ===========================================
-# Phase 1: Zephyr chain pop
-# ===========================================
-if [ "$RESET_ZEPHYR" = true ]; then
-    log_info "Resetting Zephyr chain..."
+# Clean bridge-web cache to prevent ENOENT errors on restart
+if [ -n "$BRIDGE_REPO_PATH" ] && [ -d "$BRIDGE_REPO_PATH/apps/web/.next" ]; then
+    rm -rf "$BRIDGE_REPO_PATH/apps/web/.next"
+    log_info "Cleaned bridge-web .next cache"
+fi
 
+# ===========================================
+# Phase 1: Start infrastructure temporarily
+# ===========================================
+INFRA_WAS_RUNNING=false
+if $DC_DEV ps --format '{{.Name}}' 2>/dev/null | grep -q zephyr-node1; then
+    INFRA_WAS_RUNNING=true
+    log_info "Infrastructure already running"
+else
+    log_info "Starting infrastructure temporarily..."
+    # Ensure shared zephyr volumes exist (external: true in compose)
+    for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do
+        docker volume create "$v" >/dev/null 2>&1 || true
+    done
+    $DC_DEV up -d
+fi
+
+# Open wallets
+log_info "Opening wallets..."
+"$SCRIPT_DIR/open-wallets.sh"
+echo ""
+
+# ===========================================
+# Phase 2: Zephyr chain reset
+# ===========================================
+log_info "Resetting Zephyr chain..."
+
+if [ "$HARD_RESET" = true ]; then
+    # Hard reset: restore LMDB from init snapshots
+    SNAPSHOT_DIR="$ORCH_DIR/snapshots/chain"
+    if [ ! -f "$SNAPSHOT_DIR/node1-lmdb.tar.gz" ]; then
+        log_error "Chain snapshots not found. Run 'make dev-init' first."
+        $DC_DEV --profile explorer down --remove-orphans
+        exit 1
+    fi
+
+    log_info "Closing bridge/engine/cex wallets (will be recreated by dev-setup)..."
+    "$ZEPHYR_CLI" wallet close bridge 2>/dev/null || true
+    "$ZEPHYR_CLI" wallet close engine 2>/dev/null || true
+    "$ZEPHYR_CLI" wallet close cex 2>/dev/null || true
+    $DC_DEV exec -T wallet-gov sh -c 'rm -f /wallets/bridge /wallets/bridge.keys /wallets/bridge.address.txt /wallets/engine /wallets/engine.keys /wallets/engine.address.txt /wallets/cex /wallets/cex.keys /wallets/cex.address.txt' 2>/dev/null || true
+
+    # Close base wallets before daemon restart
+    "$ZEPHYR_CLI" wallet close gov 2>/dev/null || true
+    "$ZEPHYR_CLI" wallet close miner 2>/dev/null || true
+    "$ZEPHYR_CLI" wallet close test 2>/dev/null || true
+
+    # Stop daemons, restore LMDB from snapshots, restart
+    log_info "Restoring chain from init snapshots..."
+    $DC_DEV stop zephyr-node1 zephyr-node2 2>/dev/null
+    docker run --rm -v zephyr-node1-data:/data -v "$SNAPSHOT_DIR:/snap:ro" alpine \
+        sh -c 'rm -rf /data/lmdb && tar xzf /snap/node1-lmdb.tar.gz -C /data && rm -f /data/lmdb/lock.mdb'
+    docker run --rm -v zephyr-node2-data:/data -v "$SNAPSHOT_DIR:/snap:ro" alpine \
+        sh -c 'rm -rf /data/lmdb && tar xzf /snap/node2-lmdb.tar.gz -C /data && rm -f /data/lmdb/lock.mdb'
+    $DC_DEV start zephyr-node1 zephyr-node2
+
+    # Wait for daemons
+    log_info "Waiting for daemons..."
+    "$ZEPHYR_CLI" wait-daemons
+
+    # Re-open wallets + hard rescan
+    "$SCRIPT_DIR/open-wallets.sh"
+    log_info "Hard-rescanning wallets..."
+    "$ZEPHYR_CLI" rescan all
+    sleep 15
+    # Close wallets to flush rescan results to disk
+    "$ZEPHYR_CLI" wallet close gov 2>/dev/null || true
+    "$ZEPHYR_CLI" wallet close miner 2>/dev/null || true
+    "$ZEPHYR_CLI" wallet close test 2>/dev/null || true
+    sleep 1
+    CHECKPOINT=$("$ZEPHYR_CLI" height)
+    log_success "Chain restored to init height $CHECKPOINT"
+else
+    # Normal reset: pop to setup checkpoint (post-setup state)
     CHECKPOINT=$($DC_DEV exec -T wallet-gov cat /checkpoint/height 2>/dev/null) || true
     if [ -z "$CHECKPOINT" ]; then
         log_error "No checkpoint found. Run 'make dev-init' first."
+        $DC_DEV --profile explorer down --remove-orphans
         exit 1
     fi
-
-    CURRENT=$(curl -sf http://localhost:47767/json_rpc \
-        -d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' | jq -r '.result.height')
+    CURRENT=$("$ZEPHYR_CLI" height)
     BLOCKS_TO_POP=$((CURRENT - CHECKPOINT))
-
     echo "  Current: $CURRENT, Checkpoint: $CHECKPOINT, Popping: $BLOCKS_TO_POP blocks"
 
-    # Stop mining
-    log_info "Stopping mining..."
-    curl -sf http://localhost:47767/stop_mining -d '{}' >/dev/null 2>&1 || true
+    # Stop mining + pop blocks
+    "$ZEPHYR_CLI" mine stop 2>/dev/null || true
     sleep 1
 
-    # Pop blocks on both nodes
-    log_info "Popping blocks on node1..."
-    curl -sf http://localhost:47767/json_rpc \
-        -d "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"pop_blocks\",\"params\":{\"nblocks\":$BLOCKS_TO_POP}}" >/dev/null
-    log_info "Popping blocks on node2..."
-    curl -sf http://localhost:47867/json_rpc \
-        -d "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"pop_blocks\",\"params\":{\"nblocks\":$BLOCKS_TO_POP}}" >/dev/null
+    log_info "Popping blocks on both nodes..."
+    "$ZEPHYR_CLI" pop "$BLOCKS_TO_POP" --all
     sleep 3
 
-    # Rescan wallets
     log_info "Rescanning wallets..."
-    curl -sf http://localhost:48769/json_rpc \
-        -d '{"jsonrpc":"2.0","id":"0","method":"rescan_blockchain","params":{"hard":false}}' >/dev/null 2>&1 || true
-    curl -sf http://localhost:48767/json_rpc \
-        -d '{"jsonrpc":"2.0","id":"0","method":"rescan_blockchain","params":{"hard":false}}' >/dev/null 2>&1 || true
-    curl -sf http://localhost:48768/json_rpc \
-        -d '{"jsonrpc":"2.0","id":"0","method":"rescan_blockchain","params":{"hard":false}}' >/dev/null 2>&1 || true
+    "$ZEPHYR_CLI" rescan all
     sleep 2
+fi
 
-    # Restart mining
+# Restart mining (skip for --hard: dev-setup will handle mining)
+if [ "$HARD_RESET" = false ]; then
     log_info "Restarting mining..."
-    MINER_ADDR=$(curl -sf http://localhost:48767/json_rpc \
-        -d '{"jsonrpc":"2.0","id":"0","method":"get_address","params":{"account_index":0}}' | jq -r '.result.address')
-    curl -sf http://localhost:47767/start_mining \
-        -d "{\"do_background_mining\":false,\"ignore_battery\":true,\"miner_address\":\"$MINER_ADDR\",\"threads_count\":2}" >/dev/null
-
-    log_success "Zephyr chain reset to height $CHECKPOINT"
+    "$ZEPHYR_CLI" mine start --threads 2
+else
+    log_info "Skipping mining restart (hard reset)"
 fi
 
+log_success "Zephyr chain reset to height $CHECKPOINT"
+
 # ===========================================
-# Phase 2: Anvil wipe + contract redeploy
+# Phase 3: Anvil reset
 # ===========================================
-if [ "$RESET_EVM" = true ]; then
-    log_info "Resetting Anvil..."
+log_info "Resetting Anvil..."
+$DC_DEV exec -T anvil rm -f /data/anvil-state.json 2>/dev/null || true
+$DC_DEV restart anvil
 
-    # Wipe state file inside container and restart
-    $DC_DEV exec -T anvil rm -f /data/anvil-state.json 2>/dev/null || true
-    $DC_DEV restart anvil
-
-    # Wait for Anvil to be healthy
-    log_info "Waiting for Anvil..."
-    for i in $(seq 1 30); do
-        if cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
-            break
-        fi
-        sleep 0.5
-    done
-
-    if ! cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
-        log_error "Anvil did not come up. Check: docker logs zephyr-anvil"
-        exit 1
+log_info "Waiting for Anvil..."
+for i in $(seq 1 30); do
+    if cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
+        break
     fi
+    sleep 0.5
+done
 
-    # Redeploy contracts
-    log_info "Deploying contracts..."
-    "$SCRIPT_DIR/deploy-contracts.sh"
-
-    log_success "Anvil reset + contracts deployed"
+if ! cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
+    log_error "Anvil did not come up. Check: docker logs zephyr-anvil"
+    $DC_DEV --profile explorer down --remove-orphans
+    exit 1
 fi
 
-# ===========================================
-# Phase 3: Database + Redis reset
-# ===========================================
-if [ "$RESET_DB" = true ]; then
-    # Postgres: force-reset via Prisma
-    log_info "Resetting bridge database..."
-    cd "$BRIDGE_REPO_PATH/packages/db"
-    DATABASE_URL="$DATABASE_URL_BRIDGE" npx prisma db push --force-reset 2>&1 | tail -1
-    cd "$ORCH_DIR"
-
-    log_info "Resetting engine database..."
-    cd "$ENGINE_REPO_PATH"
-    DATABASE_URL="$DATABASE_URL_ENGINE" pnpm prisma db push --schema=src/infra/prisma/schema.prisma --force-reset --skip-generate 2>&1 | tail -1
-    cd "$ORCH_DIR"
-
-    log_success "Databases reset"
-
-    # Redis flush
-    log_info "Flushing Redis (DB ${REDIS_DB:-6})..."
-    redis-cli -p "${REDIS_PORT:-6380}" -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 || \
-        $DC_DEV exec -T redis redis-cli -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 || true
-
-    log_success "Redis flushed"
+if [ "$HARD_RESET" = true ]; then
+    rm -f "$ORCH_DIR/config/addresses.json"
+    rm -f "$ORCH_DIR/deployed-addresses.json"
+    log_info "Removed config/addresses.json"
+    $DC_DEV exec -T wallet-gov sh -c 'cp /checkpoint/init-height /checkpoint/height' 2>/dev/null || true
 fi
 
+log_success "Anvil reset complete"
+
 # ===========================================
-# Phase 4: Restart apps if they were running
+# Phase 4: Database + Redis reset
 # ===========================================
-if [ "$APPS_WERE_RUNNING" = true ]; then
-    log_info "Restarting Overmind apps..."
-    cd "$ORCH_DIR" && overmind start -D -f "$ORCH_DIR/Procfile.dev" -s "$OVERMIND_SOCK"
-    log_success "Apps restarted"
-fi
+log_info "Resetting bridge database..."
+cd "$BRIDGE_REPO_PATH/packages/db"
+PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="yes" DATABASE_URL="$DATABASE_URL_BRIDGE" npx prisma db push --force-reset 2>&1 | tail -1
+cd "$ORCH_DIR"
+
+log_info "Resetting engine database..."
+cd "$ENGINE_REPO_PATH"
+PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="yes" DATABASE_URL="$DATABASE_URL_ENGINE" pnpm prisma db push --schema=src/infra/prisma/schema.prisma --force-reset --skip-generate 2>&1 | tail -1
+cd "$ORCH_DIR"
+
+log_success "Databases reset"
+
+log_info "Flushing Redis (DB ${REDIS_DB:-6})..."
+redis-cli -p "${REDIS_PORT:-6380}" -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 || \
+    $DC_DEV exec -T redis redis-cli -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 || true
+log_success "Redis flushed"
+
+log_info "Resetting blockscout database..."
+docker volume rm bridge-blockscout-db-data 2>/dev/null || true
+
+# ===========================================
+# Phase 5: Stop infrastructure
+# ===========================================
+log_info "Stopping infrastructure..."
+$DC_DEV --profile explorer down --remove-orphans
 
 echo ""
 echo "==========================================="
-log_success "Reset complete"
+if [ "$HARD_RESET" = true ]; then
+    log_success "Hard reset complete (post-init state)"
+    echo "  Next: make dev-setup"
+else
+    log_success "Reset complete (post-setup state)"
+    echo "  Next: make dev"
+fi
 echo "==========================================="

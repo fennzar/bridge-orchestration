@@ -4,14 +4,19 @@
 
 ```bash
 # One-time prerequisites
-cp .env.example .env                   # Review ROOT path
+make keygen                            # Generate fresh keys → .env
+# Edit .env: set ROOT path + PATH for your system
 ./scripts/sync-zephyr-artifacts.sh     # Vendor Zephyr binaries (once, or after Zephyr repo updates)
 
-# Start (auto-inits on first run — builds, inits chain, deploys, starts everything)
-make dev                               # ~5 min first time, ~10s after
+# First time setup (staged — each step stops when done)
+make dev-init                          # Base Zephyr devnet (~4 min)
+make dev-setup                         # Bridge wallets + contracts + seed (~4 min)
+make dev                               # Start the stack (~10 sec)
+# Blockscout block explorer starts by default at http://localhost:4000
+# To skip: make dev EXPLORER=0
 
-# Between tests (~30 sec)
-make dev-reset                         # Reset all layers to post-init state
+# Between tests
+make dev-reset && make dev             # Reset to post-setup state + restart (~15 sec)
 
 # Stop everything (data preserved for next `make dev`)
 make dev-stop
@@ -20,7 +25,7 @@ make dev-stop
 make dev-delete
 ```
 
-That's it. `make dev` handles everything: on first run it builds Docker images, starts infrastructure, bootstraps the Zephyr chain, deploys EVM contracts, pushes DB schemas, and starts apps. On subsequent runs it just starts infra + apps. You do not need to run `docker compose`, deploy scripts, or DB migrations manually.
+The setup is staged: `dev-init` creates the base Zephyr chain, `dev-setup` adds bridge infrastructure on top, and `dev` just starts. Each init/setup/reset command stops everything when done — `make dev` is always the start command.
 
 ## Selective App Startup
 
@@ -33,16 +38,14 @@ make dev APPS=bridge,engine       # Bridge + engine, no dashboard
 make dev APPS=bridge,dashboard    # Bridge + dashboard
 ```
 
-Infrastructure (Docker Compose) always starts fully regardless of `APPS=`.
+Infrastructure (Docker Compose) always starts fully regardless of `APPS=`. Blockscout is separate — use `EXPLORER=0` to skip it.
 
 ## Daily Workflow
 
 ```bash
-make status                            # Health check (containers, processes, chain heights)
-make dev-reset                         # Reset all layers to post-init state
-make dev-reset-zephyr                  # Zephyr chain only
-make dev-reset-evm                     # Anvil + contracts only
-make dev-reset-db                      # Postgres + Redis only
+make status                            # Pipeline stage, persisted state, all services
+make dev-reset && make dev             # Reset to post-setup state + restart
+make dev-reset-hard && make dev-setup && make dev  # Reset to post-init + re-setup + start
 make set-price PRICE=0.40              # Trigger crisis mode
 make set-scenario SCENARIO=defensive   # Presets: normal, defensive, crisis, recovery, high-rr, volatility
 make fund WALLET=test AMOUNT=1000 ASSET=ZPH
@@ -62,17 +65,18 @@ overmind connect bridge-api -s .overmind-dev.sock  # App process logs (Ctrl-B D 
 | tmux | any | `sudo apt install tmux` (required by Overmind) |
 
 ```bash
-./scripts/verify.sh      # Automated prerequisite check
+make status              # Check environment and service health
 ```
 
 ## Architecture
 
-Two-layer stack:
+Three-layer stack:
 
 - **Docker Compose** (`make dev-infra`): Zephyr nodes, wallets, oracle, orderbook, Redis, Postgres, Anvil
+- **Blockscout** (Docker, explorer profile): Block explorer at :4000 — on by default, `EXPLORER=0` to skip
 - **Overmind** (`make dev-apps`): bridge-web, bridge-api, bridge-watchers, engine-web, engine-watchers, dashboard
 
-`make dev` starts both. `make dev-stop` stops both.
+`make dev` starts all three. `make dev-stop` stops all three.
 
 ## Ports
 
@@ -92,6 +96,7 @@ Two-layer stack:
 | Bridge Wallet | 48770 | Bridge operator |
 | Fake Oracle | 5555 | Controllable price |
 | Fake Orderbook | 5556 | Simulated CEX |
+| Blockscout | 4000 | Block explorer (`EXPLORER=0` to skip) |
 
 ---
 
@@ -99,25 +104,39 @@ Two-layer stack:
 
 Everything below is for understanding what's happening under the hood. You don't need any of this for normal development — `make dev` handles it all.
 
-## What `make dev` Does
+## What Each Command Does
 
-1. Builds Docker images if missing (checks for `zephyr-devnet` image)
-2. Starts Docker Compose infrastructure (Redis, Postgres, Anvil, Zephyr nodes, wallets, oracle, orderbook)
-3. **If first run** (no checkpoint found):
-   - Runs `devnet-init` container — bootstraps fresh Zephyr chain, creates wallets, funds them, starts mining, saves checkpoint
-   - Wipes Anvil state + deploys all EVM contracts (mock tokens, wrapped Zephyr tokens, Uniswap V4 pools)
-   - Pushes Prisma DB schemas for bridge and engine
-4. Starts Overmind app processes
+### `make dev-init` — Base Zephyr devnet, then stop
 
-On subsequent runs, steps 1 and 3 are skipped — it just starts infra + apps.
+Wipes everything (volumes, images), rebuilds Docker images, bootstraps a fresh Zephyr chain with gov/miner/test wallets and minted assets. No bridge/engine wallets, no EVM contracts. **Stops when done.**
 
-## What `make dev-init` Does
+### `make dev-setup` — Bridge infrastructure, then stop
 
-Nuclear option — stops everything, destroys all Docker volumes (chain data, DBs, Redis, Anvil state), rebuilds images, then runs the full initialization sequence unconditionally: starts infrastructure, bootstraps Zephyr chain, deploys EVM contracts, pushes DB schemas, starts apps.
+Requires `dev-init`. Creates bridge/engine wallets, deploys EVM contracts, seeds liquidity through the full bridge wrap flow, saves Anvil snapshot. **Stops when done.**
 
-## What `make dev-delete` Does
+### `make dev` — Start the stack
 
-Stops everything and deletes all containers, volumes, and built Docker images. Does not rebuild or restart anything — leaves a completely clean slate. Run `make dev-init` afterward to set up from scratch.
+Just starts. Checks prerequisites (checkpoint + addresses.json), starts Docker infra + Blockscout + Overmind apps. Blockscout starts unless `EXPLORER=0`. Fast and predictable.
+
+### `make dev-explorer` — Start Blockscout standalone
+
+Starts Blockscout containers (DB, backend, frontend, proxy) when infra is already running. Useful if you started with `EXPLORER=0` and want to add the explorer later.
+
+### `make dev-stop` — Stop the stack
+
+Stops Overmind apps and Docker containers. Volumes persist — `make dev` picks up where you left off.
+
+### `make dev-reset` — Reset to post-setup state, then stop
+
+Pops Zephyr to checkpoint, wipes Anvil, resets DBs + Redis + Blockscout. Ready for `make dev`. **Stops when done.**
+
+### `make dev-reset-hard` — Reset to post-init state, then stop
+
+Restores Zephyr LMDB from init snapshots, wipes Anvil + addresses. Ready for `make dev-setup`. **Stops when done.**
+
+### `make dev-delete` — Full wipe
+
+Stops everything and deletes all containers, volumes, and Docker images. Clean slate — run `make dev-init` to start over.
 
 ## Sync Zephyr Artifacts
 
@@ -153,14 +172,15 @@ Managed by Docker Compose. Created automatically on first `docker compose up`.
 
 | Database | User | Password | Purpose |
 |----------|------|----------|---------|
-| `zephyrbridge_dev` | `zephyr` | `zephyr` | Bridge app |
-| `zephyr_bridge_arb` | `zephyr` | `zephyr` | Engine |
+| `zephyrbridge_dev` | `zephyr` | (from `POSTGRES_PASSWORD` in `.env`) | Bridge app |
+| `zephyr_bridge_arb` | `zephyr` | (from `POSTGRES_PASSWORD` in `.env`) | Engine |
+| `blockscout` | `blockscout` | `blockscout` | Blockscout explorer (auto-wiped on reset) |
 
 Redis runs in Docker on host port 6380 (container 6379, DB 6).
 
 ## EVM Contracts
 
-Deployed automatically by `make dev-init` via `./scripts/deploy-contracts.sh`. Includes:
+Deployed automatically by `make dev-setup` via `./scripts/deploy-contracts.sh`. Includes:
 - Mock stablecoins (USDC, USDT)
 - Wrapped Zephyr tokens (wZEPH, wZSD, wZRS, wZYS)
 - Uniswap V4 stack (PoolManager, routers)
@@ -168,7 +188,7 @@ Deployed automatically by `make dev-init` via `./scripts/deploy-contracts.sh`. I
 
 Addresses saved to `config/addresses.local.json`.
 
-> This project uses a **custom mnemonic** (`EVM_DEV_MNEMONIC` in `.env`), NOT the default Foundry mnemonic. See [metamask.md](../reference/metamask.md) for actual accounts.
+> This project uses a **generated mnemonic** (`EVM_DEV_MNEMONIC` in `.env`, created by `make keygen`), NOT the default Foundry mnemonic. See [metamask.md](../reference/metamask.md) for MetaMask setup.
 
 ## Zephyr Wallets
 
@@ -181,7 +201,7 @@ All managed by Docker Compose, started automatically.
 | Test Wallet | User wrap/unwrap testing | 48768 |
 | Bridge Wallet | Bridge operator | 48770 |
 
-Fund distribution is handled by `make dev-init`. For manual funding:
+Fund distribution is handled by `make dev-init` (base wallets) and `make dev-setup` (bridge/engine wallets + seeding). For manual funding:
 ```bash
 $ZEPHYR_CLI send gov test 1000        # Send 1000 ZPH
 $ZEPHYR_CLI send gov test 100 ZSD     # Send 100 ZSD
@@ -190,17 +210,16 @@ $ZEPHYR_CLI send gov test 100 ZSD     # Send 100 ZSD
 ## Reset Procedures
 
 ```bash
-make dev-reset                         # Full coordinated reset (~30 sec) — use between tests
-make dev-reset-zephyr                  # Zephyr only: pop blocks to checkpoint
-make dev-reset-evm                     # EVM only: wipe Anvil state + redeploy contracts
-make dev-reset-db                      # DB only: Postgres force-reset + Redis flush
-make dev-init                          # Full fresh init (~5 min) — nuclear option
-make dev-delete                        # Delete everything, no rebuild
+make dev-reset                         # Reset to post-setup state (~15 sec) — use between tests
+make dev-reset-hard                    # Reset to post-init state (~10 sec) — after changing EVM contracts
+make dev-delete                        # Delete everything (containers, volumes, images)
 ```
 
-`make dev-reset` coordinates all layers: Zephyr chain pop + Anvil wipe + contract redeploy + DB reset + Redis flush. Use scoped variants when you only need to reset one layer.
+`make dev-reset` pops Zephyr to checkpoint, wipes Anvil, resets DBs + Redis. Ready for `make dev`.
 
-`make dev-delete` is for when you want to free disk space or start completely from zero. It removes containers, volumes, and built images. You'll need `make dev-init` to use the stack again afterward.
+`make dev-reset-hard` restores Zephyr LMDB from init snapshots, wipes Anvil, removes addresses.json. Ready for `make dev-setup`.
+
+`make dev-delete` removes containers, volumes, and images. You'll need `make dev-init` to start over.
 
 ## Manual Bridge Setup
 
@@ -228,7 +247,7 @@ REDIS_HOST=localhost
 REDIS_PORT=6380
 REDIS_DB=6
 ZEPH_WALLET_RPC_PORT=48769
-DATABASE_URL=postgresql://zephyr:zephyr@localhost:5432/zephyrbridge_dev
+DATABASE_URL=postgresql://zephyr:$POSTGRES_PASSWORD@localhost:5432/zephyrbridge_dev
 ```
 
 ## Manual Engine Setup
@@ -252,31 +271,30 @@ ZEPHYR_ENV=local
 RPC_URL_LOCAL=http://127.0.0.1:8545
 ZEPHYR_D_RPC_URL=http://127.0.0.1:47767
 MEXC_PAPER=true
-DATABASE_URL=postgresql://zephyr:zephyr@localhost:5432/zephyr_bridge_arb
+DATABASE_URL=postgresql://zephyr:$POSTGRES_PASSWORD@localhost:5432/zephyr_bridge_arb
 ```
 
 ## Manual Contract Deployment
 
-> `make dev-init` handles this automatically via `make deploy-contracts`.
+> `make dev-setup` handles this automatically via `./scripts/deploy-contracts.sh`.
 
 ```bash
 cd $ROOT/zephyr-eth-foundry
 export RPC_URL=http://127.0.0.1:8545
-export DEPLOYER_KEY=0x860875f05874e1ac2207f147a7a3e2a13d66520936cb598528e9104f2d5ec990
+export DEPLOYER_KEY=$DEPLOYER_PRIVATE_KEY   # From .env (generated by make keygen)
 ./scripts/deploy_all_test_env1.sh
 ```
 
 ## Startup Order
 
-> Handled automatically by `make dev-init` / `make dev`.
+> Handled automatically by `make dev-init` / `make dev-setup` / `make dev`.
 
 1. Redis, PostgreSQL
 2. Anvil
-3. Deploy contracts (if fresh)
-4. Zephyr Node 2 (primary), Node 1 (peer)
-5. Zephyr Wallets (after nodes sync)
-6. Bridge (after infra ready)
-7. Engine (after bridge)
+3. Zephyr nodes + wallets
+4. Deploy contracts (`dev-setup` only)
+5. Bridge + Engine apps
+6. Seed liquidity (`dev-setup` only)
 
 ## Configuration Sync
 

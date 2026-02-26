@@ -2,7 +2,7 @@
 # Zephyr Bridge Stack - Base Infrastructure
 # ===========================================
 # Shared services for all environments (dev, testnet, prod).
-# Extended by compose.dev.yml, compose.testnet.yml, etc.
+# Extended by compose.dev.yml, compose.testnet-v2.yml, compose.testnet-v3.yml, etc.
 #
 # Usage:
 #   docker compose -f docker/compose.base.yml -f docker/compose.dev.yml up -d
@@ -53,7 +53,7 @@ services:
     container_name: zephyr-postgres
     environment:
       POSTGRES_USER: zephyr
-      POSTGRES_PASSWORD: zephyr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: zephyr
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -146,6 +146,14 @@ services:
       - zephyr-wallets:/wallets
       - zephyr-shared:/data
       - zephyr-checkpoint:/checkpoint
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48769/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
     depends_on:
       zephyr-node1:
         condition: service_healthy
@@ -169,6 +177,14 @@ services:
     volumes:
       - zephyr-wallets:/wallets
       - zephyr-shared:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48767/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
     depends_on:
       zephyr-node1:
         condition: service_healthy
@@ -192,6 +208,14 @@ services:
     volumes:
       - zephyr-wallets:/wallets
       - zephyr-shared:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48768/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
     depends_on:
       zephyr-node1:
         condition: service_healthy
@@ -215,6 +239,76 @@ services:
     volumes:
       - zephyr-wallets:/wallets
       - zephyr-shared:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48770/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+  wallet-engine:
+    <<: *zephyr-wallet
+    container_name: zephyr-wallet-engine
+    command:
+      - "--devnet"
+      - "--rpc-bind-port=48771"
+      - "--rpc-bind-ip=0.0.0.0"
+      - "--confirm-external-bind"
+      - "--disable-rpc-login"
+      - "--wallet-dir=/wallets"
+      - "--daemon-address=zephyr-node1:47767"
+      - "--trusted-daemon"
+      - "--shared-ringdb-dir=/data/ringdb"
+      - "--log-level=1"
+    volumes:
+      - zephyr-wallets:/wallets
+      - zephyr-shared:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48771/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+  wallet-cex:
+    <<: *zephyr-wallet
+    container_name: zephyr-wallet-cex
+    command:
+      - "--devnet"
+      - "--rpc-bind-port=48772"
+      - "--rpc-bind-ip=0.0.0.0"
+      - "--confirm-external-bind"
+      - "--disable-rpc-login"
+      - "--wallet-dir=/wallets"
+      - "--daemon-address=zephyr-node1:47767"
+      - "--trusted-daemon"
+      - "--shared-ringdb-dir=/data/ringdb"
+      - "--log-level=1"
+    volumes:
+      - zephyr-wallets:/wallets
+      - zephyr-shared:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48772/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
     depends_on:
       zephyr-node1:
         condition: service_healthy
@@ -233,6 +327,8 @@ services:
     network_mode: "service:zephyr-node1"
     environment:
       ORACLE_PORT: "5555"
+      GOV_WALLET_RPC: "http://wallet-gov:48769"
+      NODE_RPC: "http://127.0.0.1:47767"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5555/status"]
       interval: 5s
@@ -266,12 +362,24 @@ services:
 
 volumes:
   redis-data:
+    name: bridge-redis-data
   postgres-data:
+    name: bridge-postgres-data
   zephyr-node1-data:
+    name: zephyr-node1-data
+    external: true
   zephyr-node2-data:
+    name: zephyr-node2-data
+    external: true
   zephyr-wallets:
+    name: zephyr-wallets
+    external: true
   zephyr-shared:
+    name: zephyr-shared
+    external: true
   zephyr-checkpoint:
+    name: zephyr-checkpoint
+    external: true
 
 networks:
   zephyr-net:

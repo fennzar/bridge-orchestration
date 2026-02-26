@@ -79,6 +79,14 @@ services:
     ports:
       - "48770:48770"
 
+  wallet-engine:
+    ports:
+      - "48771:48771"
+
+  wallet-cex:
+    ports:
+      - "48772:48772"
+
   fake-orderbook:
     ports:
       - "5556:5556"
@@ -86,20 +94,31 @@ services:
   # ===========================================
   # DEVNET Init (profile: init)
   # ===========================================
+  # Uses zephyr-cli devnet init — creates gov/miner/test wallets only.
+  # Bridge/engine/cex wallets are created by dev-setup.sh (not here).
   devnet-init:
     image: zephyr-devnet-init
     container_name: zephyr-devnet-init
     profiles:
       - init
     environment:
-      NODE1_RPC: "http://zephyr-node1:47767"
-      NODE2_RPC: "http://zephyr-node2:47867"
-      GOV_WALLET_RPC: "http://wallet-gov:48769"
-      MINER_WALLET_RPC: "http://wallet-miner:48767"
-      TEST_WALLET_RPC: "http://wallet-test:48768"
-      BRIDGE_WALLET_RPC: "http://wallet-bridge:48770"
-      ORACLE_URL: "http://zephyr-node1:5555"
+      ORACLE_PRICE: "2.0"
+      DEVNET_MODE: "${DEVNET_MODE:-custom}"
+      TARGET_RR: "7.0"
+      ZSD_MINT_LIMIT: "450000"
       CHECKPOINT_FILE: "/checkpoint/height"
+      MINING_THREADS: "2"
+      # Docker hostname overrides (consumed by zephyr-cli config.py env var layer)
+      ZEPHYR_DAEMON_HOST: "zephyr-node1"
+      ZEPHYR_DAEMON_PORT: "47767"
+      ZEPHYR_ORACLE_HOST: "zephyr-node1"
+      ZEPHYR_ORACLE_PORT: "5555"
+      ZEPHYR_WALLET_GOV_HOST: "wallet-gov"
+      ZEPHYR_WALLET_GOV_PORT: "48769"
+      ZEPHYR_WALLET_MINER_HOST: "wallet-miner"
+      ZEPHYR_WALLET_MINER_PORT: "48767"
+      ZEPHYR_WALLET_TEST_HOST: "wallet-test"
+      ZEPHYR_WALLET_TEST_PORT: "48768"
     volumes:
       - zephyr-checkpoint:/checkpoint
     depends_on:
@@ -110,15 +129,14 @@ services:
       fake-oracle:
         condition: service_healthy
       wallet-gov:
-        condition: service_started
+        condition: service_healthy
       wallet-miner:
-        condition: service_started
+        condition: service_healthy
       wallet-test:
-        condition: service_started
-      wallet-bridge:
-        condition: service_started
+        condition: service_healthy
     networks:
       - zephyr-net
 
 volumes:
   anvil-data:
+    name: bridge-anvil-data

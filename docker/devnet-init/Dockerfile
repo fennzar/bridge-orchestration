@@ -1,17 +1,20 @@
-# DEVNET bootstrap container - one-shot init that sets up wallets, mining, and initial state
+# DEVNET bootstrap container — runs zephyr-cli devnet init, then exits.
 #
-# Replaces fresh-devnet's start.sh + setup-state.sh logic using only curl for RPC calls.
-# Runs after all Zephyr services are healthy, then exits.
+# Creates gov/miner/test wallets, runs minting sequence, saves checkpoint.
+# Consumer-specific wallets (bridge, engine, cex) are NOT created here.
 
-FROM ubuntu:24.04
+FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    jq \
-    bc \
     && rm -rf /var/lib/apt/lists/*
 
-COPY init.sh /init.sh
-RUN chmod +x /init.sh
+RUN pip install --no-cache-dir requests
 
-ENTRYPOINT ["/init.sh"]
+COPY tools/zephyr-cli/ /opt/zephyr-cli/
+COPY utils/python-rpc/ /opt/python-rpc/
+
+COPY docker/devnet-init/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /opt/zephyr-cli/cli
+
+ENTRYPOINT ["/entrypoint.sh"]

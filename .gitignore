@@ -8,9 +8,7 @@
 .overmind-dev.sock
 
 # Snapshots (large files)
-snapshots/zephyr/
-snapshots/anvil/*.hex
-snapshots/anvil/state.json
+snapshots/
 
 # Logs
 logs/
@@ -37,11 +35,13 @@ tests/
 # Docker build artifacts (binaries not tracked)
 docker/zephyr/bin/
 
-# Zephyr CLI cache
+# Zephyr CLI cache + vendored python-rpc
 tools/zephyr-cli/zephyr_cli/__pycache__/
+utils/python-rpc/
 
-# Testnet env (contains secrets)
-env/.env.testnet
+# Testnet/prod env (contains secrets)
+env/.env.testnet-v2
+env/.env.testnet-v3
 env/.env.prod
 deployed-addresses.json
 

@@ -35,7 +35,7 @@ export type AppGroup = "bridge" | "engine" | "dashboard";
 // Paths
 export const ORCH_DIR = process.env.ORCHESTRATION_PATH || path.resolve(process.cwd(), "..");
 export const OVERMIND_SOCKET = path.join(ORCH_DIR, ".overmind-dev.sock");
-export const DC_CMD = `docker compose --env-file ${ORCH_DIR}/.env -f ${ORCH_DIR}/docker/compose.base.yml -f ${ORCH_DIR}/docker/compose.dev.yml -f ${ORCH_DIR}/docker/compose.blockscout.yml`;
+export const DC_CMD = `docker compose -p bridge --env-file ${ORCH_DIR}/.env -f ${ORCH_DIR}/docker/compose.base.yml -f ${ORCH_DIR}/docker/compose.dev.yml -f ${ORCH_DIR}/docker/compose.blockscout.yml`;
 
 // RPC ports for direct access
 export const DAEMON_PRIMARY_PORT = 47767;

@@ -6,16 +6,36 @@ import {
   WALLET_MINER_PORT,
   WALLET_TEST_PORT,
   WALLET_BRIDGE_PORT,
+  WALLET_ENGINE_PORT,
 } from "@/lib/constants";
 import type { ChainResponse, WalletBalance } from "@/lib/types";
-import { runDC } from "@/lib/docker";
+import { readCheckpointHeight } from "@/lib/docker";
 import {
   getDaemonInfo,
   getWalletAddress,
   getMultiAssetBalance,
-  oracleGet,
+  oracleGetStatus,
   zephyrRpc,
+  fromAtomic,
 } from "@/lib/rpc";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "Chain State",
+  category: "Chain",
+  description:
+    "Comprehensive Zephyr chain state including node sync status, mining info, wallet balances, oracle price, reserve protocol data, and checkpoint info.",
+  response: [
+    { name: "nodes", type: "{ node1: NodeInfo, node2: NodeInfo }", required: true, description: "Sync status of both Zephyr nodes" },
+    { name: "mining", type: "{ active, threads?, speed? }", required: true, description: "Mining status on primary node" },
+    { name: "checkpoint", type: "{ current, saved }", required: true, description: "Current and saved checkpoint heights" },
+    { name: "oracle", type: "{ price, mode, mirrorSpot?, mirrorLastFetch? }", required: true, description: "Oracle price in USD with mode (manual/mirror)" },
+    { name: "wallets", type: "WalletBalance[]", required: true, description: "All wallet addresses and multi-asset balances (ZPH, ZSD, ZRS, ZYS)" },
+    { name: "reserve", type: "ReserveInfo", description: "Zephyr reserve protocol state (ratios, assets, liabilities)" },
+    { name: "timestamp", type: "string", required: true, description: "ISO 8601 timestamp" },
+  ],
+  curl: "curl localhost:7100/api/chain",
+};
 
 export const dynamic = "force-dynamic";
 
@@ -24,18 +44,19 @@ const WALLETS = [
   { name: "miner", port: WALLET_MINER_PORT },
   { name: "test", port: WALLET_TEST_PORT },
   { name: "bridge", port: WALLET_BRIDGE_PORT },
+  { name: "engine", port: WALLET_ENGINE_PORT },
 ] as const;
 
 export async function GET() {
   // Gather node and chain data in parallel
-  const [node1Info, node2Info, oraclePrice, reserveResp, checkpointRaw, ...walletData] =
+  const [node1Info, node2Info, oracleStatus, reserveResp, savedCheckpoint, ...walletData] =
     await Promise.all([
       getDaemonInfo(DAEMON_PRIMARY_PORT),
       getDaemonInfo(DAEMON_SECONDARY_PORT),
-      oracleGet(),
+      oracleGetStatus(),
       zephyrRpc(DAEMON_PRIMARY_PORT, "get_reserve_info"),
-      runDC("exec -T wallet-gov cat /checkpoint/height"),
-      // Wallet data: address + balances for each wallet (3 wallets = 6 promises)
+      readCheckpointHeight(),
+      // Wallet data: address + balances for each wallet (5 wallets = 10 promises)
       ...WALLETS.flatMap((w) => [
         getWalletAddress(w.port).catch(() => null),
         getMultiAssetBalance(w.port).catch(() => ({
@@ -43,13 +64,6 @@ export async function GET() {
         })),
       ]),
     ]);
-
-  // Parse checkpoint
-  let savedCheckpoint: number | null = null;
-  if (checkpointRaw) {
-    const parsed = parseInt(checkpointRaw, 10);
-    if (!isNaN(parsed)) savedCheckpoint = parsed;
-  }
 
   // Build wallet balances array
   const wallets: WalletBalance[] = WALLETS.map((w, i) => {
@@ -69,7 +83,6 @@ export async function GET() {
   if (reserveResp.result) {
     const r = reserveResp.result;
     const pr = r.pr as Record<string, number> | undefined;
-    const fromAtomic = (v: unknown) => Number(v ?? 0) / 1e12;
 
     reserve = {
       reserveRatio: String(r.reserve_ratio ?? "0"),
@@ -117,7 +130,10 @@ export async function GET() {
       saved: savedCheckpoint,
     },
     oracle: {
-      price: oraclePrice,
+      price: oracleStatus?.price ?? null,
+      mode: oracleStatus?.mode ?? "manual",
+      mirrorSpot: oracleStatus?.mirrorSpot,
+      mirrorLastFetch: oracleStatus?.mirrorLastFetch,
     },
     wallets,
     reserve,

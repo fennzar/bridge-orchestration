@@ -112,9 +112,9 @@ function AppsCard({
     );
   }
 
-  const { running, total } = data.appsSummary;
-  const allRunning = running === total;
-  const pct = total > 0 ? (running / total) * 100 : 0;
+  const { healthy, total } = data.appsSummary;
+  const allHealthy = healthy === total;
+  const pct = total > 0 ? (healthy / total) * 100 : 0;
 
   return (
     <Card>
@@ -125,13 +125,13 @@ function AppsCard({
             <CardTitle className="text-sm">Applications</CardTitle>
           </div>
           <Badge
-            variant={allRunning ? "default" : "secondary"}
-            className={allRunning ? "bg-green-600 hover:bg-green-700" : ""}
+            variant={allHealthy ? "default" : "secondary"}
+            className={allHealthy ? "bg-green-600 hover:bg-green-700" : ""}
           >
-            {allRunning ? (
+            {allHealthy ? (
               <CheckCircle2 className="h-3 w-3 mr-1" />
             ) : null}
-            {running}/{total} running
+            {healthy}/{total} healthy
           </Badge>
         </div>
       </CardHeader>
@@ -139,7 +139,7 @@ function AppsCard({
         <div className="w-full bg-muted rounded-full h-2 mb-2">
           <div
             className={`h-2 rounded-full transition-all ${
-              allRunning ? "bg-green-500" : pct > 50 ? "bg-amber-500" : "bg-red-500"
+              allHealthy ? "bg-green-500" : pct > 50 ? "bg-amber-500" : "bg-red-500"
             }`}
             style={{ width: `${pct}%` }}
           />
@@ -271,6 +271,16 @@ export function OverviewPanel({ data, loading }: OverviewPanelProps) {
           >
             <ExternalLink className="h-4 w-4 mr-2" />
             Bridge Admin
+          </a>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <a
+            href="http://localhost:4000"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <ExternalLink className="h-4 w-4 mr-2" />
+            Explorer (:4000)
           </a>
         </Button>
       </div>

@@ -1,6 +1,25 @@
 import { NextResponse } from "next/server";
 import { DAEMON_PRIMARY_PORT, WALLET_MINER_PORT } from "@/lib/constants";
 import { getWalletAddress, daemonOtherRpc } from "@/lib/rpc";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "Mining Control",
+  category: "Chain",
+  description: "Start or stop mining on the primary Zephyr node.",
+  request: [
+    { name: "action", type: '"start" | "stop"', required: true, description: "Mining action" },
+    { name: "threads", type: "number", description: "Number of mining threads (default: 1)" },
+  ],
+  response: [
+    { name: "success", type: "boolean", required: true, description: "Whether the operation succeeded" },
+    { name: "result", type: "object", description: "RPC result from the daemon" },
+  ],
+  curl: [
+    "curl -X POST localhost:7100/api/chain/mining -H 'Content-Type: application/json' -d '{\"action\":\"start\",\"threads\":1}'",
+    "curl -X POST localhost:7100/api/chain/mining -H 'Content-Type: application/json' -d '{\"action\":\"stop\"}'",
+  ],
+};
 
 interface MiningRequest {
   action: "start" | "stop";

@@ -23,6 +23,7 @@ import {
   Pickaxe,
   Radio,
   HardDrive,
+  Globe,
   ChevronDown,
   ChevronRight,
   RefreshCw,
@@ -32,6 +33,7 @@ import {
 } from "lucide-react";
 import { TerminalView } from "@/components/terminal-view";
 import type { ContainerStatus, InfraResponse } from "@/lib/types";
+import { truncateAddress } from "@/components/shared/copy-address";
 
 function containerIcon(type: string) {
   switch (type) {
@@ -46,6 +48,8 @@ function containerIcon(type: string) {
       return <Radio className="h-4 w-4" />;
     case "evm":
       return <HardDrive className="h-4 w-4" />;
+    case "explorer":
+      return <Globe className="h-4 w-4" />;
     default:
       return <Database className="h-4 w-4" />;
   }
@@ -60,13 +64,9 @@ function containerMetric(container: ContainerStatus) {
     );
   }
   if (container.address && container.balance) {
-    const truncAddr =
-      container.address.length > 12
-        ? container.address.slice(0, 8) + "..." + container.address.slice(-4)
-        : container.address;
     return (
       <span className="text-xs text-muted-foreground font-mono">
-        {truncAddr} | {container.balance.unlocked}
+        {truncateAddress(container.address)} | {container.balance.unlocked}
       </span>
     );
   }

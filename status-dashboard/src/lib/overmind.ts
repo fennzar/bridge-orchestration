@@ -113,3 +113,24 @@ export async function restartProcess(name: string): Promise<boolean> {
     return false;
   }
 }
+
+export async function stopAllProcesses(): Promise<boolean> {
+  try {
+    await execAsync(`overmind quit -s ${OVERMIND_SOCKET} 2>/dev/null || true`, {
+      cwd: ORCH_DIR,
+      timeout: 10000,
+    });
+    // Wait for socket to disappear (up to 5s)
+    for (let i = 0; i < 10; i++) {
+      try {
+        await fs.access(OVERMIND_SOCKET);
+        await new Promise((r) => setTimeout(r, 500));
+      } catch {
+        break; // Socket gone
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -12,42 +12,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   RefreshCw,
-  Copy,
-  Check,
   AlertCircle,
   Droplets,
+  Wallet,
+  Pickaxe,
+  Loader2,
 } from "lucide-react";
 import type { EvmResponse, EvmEnv } from "@/lib/types";
-
-function truncateAddress(addr: string): string {
-  if (addr.length <= 14) return addr;
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
-
-function CopyAddress({ address }: { address: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(address);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="inline-flex items-center gap-1 font-mono text-xs hover:text-foreground transition-colors"
-      title={address}
-    >
-      {truncateAddress(address)}
-      {copied ? (
-        <Check className="h-3 w-3 text-green-500" />
-      ) : (
-        <Copy className="h-3 w-3 text-muted-foreground" />
-      )}
-    </button>
-  );
-}
+import { CopyAddress, truncateAddress } from "@/components/shared/copy-address";
+import { INPUT_CLASS } from "@/lib/styles";
 
 const ENV_OPTIONS: { value: EvmEnv; label: string }[] = [
   { value: "local", label: "Local (Anvil)" },
@@ -60,6 +33,7 @@ export function EvmPanel() {
   const [loading, setLoading] = useState(true);
   const [env, setEnv] = useState<EvmEnv>("local");
   const [envInitialized, setEnvInitialized] = useState(false);
+  const [mining, setMining] = useState(false);
 
   const fetchEvm = useCallback(
     async () => {
@@ -93,9 +67,23 @@ export function EvmPanel() {
     setLoading(true);
   };
 
+  const handleMine = async () => {
+    setMining(true);
+    try {
+      await fetch("/api/evm/mine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocks: 1 }),
+      });
+      await fetchEvm();
+    } catch (err) {
+      console.error("Mine failed:", err);
+    } finally {
+      setMining(false);
+    }
+  };
+
   const isInitialLoad = loading && !data;
-  const inputClass =
-    "flex h-8 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 font-mono";
 
   return (
     <div className="space-y-6">
@@ -126,7 +114,7 @@ export function EvmPanel() {
               <select
                 value={env}
                 onChange={(e) => handleEnvChange(e.target.value as EvmEnv)}
-                className={`${inputClass} w-40`}
+                className={`${INPUT_CLASS} w-40`}
               >
                 {ENV_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -148,6 +136,22 @@ export function EvmPanel() {
                     ? data.blockNumber.toLocaleString()
                     : "?"}
                 </Badge>
+                {env === "local" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={handleMine}
+                    disabled={mining}
+                  >
+                    {mining ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <Pickaxe className="h-3 w-3 mr-1" />
+                    )}
+                    Mine
+                  </Button>
+                )}
                 <span className="text-sm text-muted-foreground">
                   {data.networkName}
                 </span>
@@ -198,6 +202,58 @@ export function EvmPanel() {
           </div>
         </div>
       ) : null}
+
+      {/* Engine Wallet */}
+      {!isInitialLoad && data?.engineWallet && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Wallet className="h-4 w-4" />
+                <CardTitle className="text-sm">Engine Wallet</CardTitle>
+              </div>
+              <Badge
+                variant={
+                  data.seedingStatus === "seeded"
+                    ? "default"
+                    : data.seedingStatus === "partial"
+                      ? "secondary"
+                      : "outline"
+                }
+                className={
+                  data.seedingStatus === "seeded"
+                    ? "bg-green-600 hover:bg-green-700"
+                    : data.seedingStatus === "partial"
+                      ? "bg-amber-500 hover:bg-amber-600"
+                      : ""
+                }
+              >
+                {data.seedingStatus === "seeded"
+                  ? "Seeded"
+                  : data.seedingStatus === "partial"
+                    ? "Partial"
+                    : "Not Seeded"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <CopyAddress address={data.engineWallet.address} />
+            <div className="mt-1 text-lg font-mono font-semibold">
+              {data.engineWallet.ethBalance} ETH
+            </div>
+            {data.engineWallet.tokenBalances.length > 0 && (
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+                {data.engineWallet.tokenBalances.map((t) => (
+                  <div key={t.symbol} className="flex justify-between">
+                    <span className="text-muted-foreground">{t.symbol}</span>
+                    <span className="font-mono">{t.balance}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Deployed Tokens */}
       {isInitialLoad ? (

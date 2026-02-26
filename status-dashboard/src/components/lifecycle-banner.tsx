@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Server, Loader2, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, Server, Loader2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LifecycleState } from "@/lib/types";
 
@@ -31,6 +31,13 @@ const BANNER_CONFIG: Record<
       "Infrastructure only — Docker containers running, Overmind apps not started",
     classes:
       "bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-400",
+  },
+  degraded: {
+    icon: AlertTriangle,
+    label: "Degraded",
+    description: "Some services have issues — check the Apps tab for details",
+    classes:
+      "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400",
   },
   initializing: {
     icon: Loader2,

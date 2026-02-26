@@ -145,13 +145,9 @@ export function computePrice(
 
 // --- Formatting ---
 
+/** @deprecated Use formatTokenAmount(BigInt(weiHex), 18, displayDecimals) */
 export function formatWei(weiHex: string, displayDecimals = 4): string {
-  const wei = BigInt(weiHex);
-  const eth = Number(wei) / 1e18;
-  return eth.toLocaleString(undefined, {
-    minimumFractionDigits: displayDecimals,
-    maximumFractionDigits: displayDecimals,
-  });
+  return formatTokenAmount(BigInt(weiHex), 18, displayDecimals);
 }
 
 export function formatTokenAmount(

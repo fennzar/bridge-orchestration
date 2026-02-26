@@ -2,6 +2,22 @@ import { spawn, ChildProcess } from "child_process";
 import * as path from "path";
 import * as readline from "readline";
 import { ORCH_DIR } from "@/lib/constants";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "Run Tests",
+  category: "Testing",
+  description:
+    "Execute tests and stream results via SSE. Supports running by test IDs, level, L5 sublevel, or category.",
+  sse: true,
+  request: [
+    { name: "testIds", type: "string[]", description: "Specific test IDs to run" },
+    { name: "level", type: "string", description: "Test level: L1, L2, L3, L4, L5, or all" },
+    { name: "sublevel", type: "string", description: "L5 sublevel (e.g. L5.1, L5.2)" },
+    { name: "category", type: "string", description: "L5 category filter (e.g. SEC, RR)" },
+  ],
+  curl: "curl -N -X POST localhost:7100/api/tests/run -H 'Content-Type: application/json' -d '{\"level\":\"L1\"}'",
+};
 
 // Strip ANSI escape codes for reliable parsing
 function stripAnsi(str: string): string {

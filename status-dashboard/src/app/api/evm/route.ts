@@ -7,6 +7,7 @@ import {
   maskRpcUrl,
 } from "@/lib/constants";
 import {
+  ethCall,
   ethChainId,
   ethBlockNumber,
   ethGetBalance,
@@ -24,7 +25,31 @@ import type {
   EvmTokenInfo,
   EvmContractInfo,
   EvmPoolInfo,
+  SeedingStatus,
 } from "@/lib/types";
+import type { RouteMeta } from "@/lib/route-meta";
+
+export const meta: RouteMeta = {
+  title: "EVM State",
+  category: "Status",
+  description:
+    "Full EVM state: chain info, key accounts, deployed tokens (with supply), contracts, Uniswap V4 pool prices/liquidity, engine wallet balances, and seeding status.",
+  response: [
+    { name: "env", type: "string", required: true, description: "EVM environment (devnet, testnet, mainnet)" },
+    { name: "chainId", type: "number | null", required: true, description: "Chain ID" },
+    { name: "blockNumber", type: "number | null", required: true, description: "Latest block number" },
+    { name: "networkName", type: "string", required: true, description: "Human-readable network name" },
+    { name: "rpcUrl", type: "string", required: true, description: "RPC URL (masked)" },
+    { name: "accounts", type: "EvmAccountInfo[]", required: true, description: "Key accounts with ETH balances" },
+    { name: "tokens", type: "EvmTokenInfo[]", required: true, description: "Deployed tokens with total supply" },
+    { name: "contracts", type: "EvmContractInfo[]", required: true, description: "Deployed contract addresses" },
+    { name: "pools", type: "EvmPoolInfo[]", required: true, description: "Uniswap V4 pool state (price, liquidity)" },
+    { name: "engineWallet", type: "{ address, ethBalance, tokenBalances }", description: "Engine wallet EVM balances" },
+    { name: "seedingStatus", type: '"not_seeded" | "partial" | "seeded"', required: true, description: "Liquidity seeding status" },
+    { name: "timestamp", type: "string", required: true, description: "ISO 8601 timestamp" },
+  ],
+  curl: "curl localhost:7100/api/evm",
+};
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +73,19 @@ interface AddressesJson {
       };
     }
   >;
+}
+
+const SEL_BALANCE_OF = "0x70a08231";
+
+async function tokenBalanceOf(
+  rpcUrl: string,
+  tokenAddr: string,
+  account: string
+): Promise<bigint | null> {
+  const padded = account.toLowerCase().replace("0x", "").padStart(64, "0");
+  const hex = await ethCall(rpcUrl, tokenAddr, SEL_BALANCE_OF + padded);
+  if (!hex || hex === "0x") return null;
+  return BigInt(hex);
 }
 
 async function loadAddresses(filePath: string): Promise<AddressesJson | null> {
@@ -77,6 +115,7 @@ export async function GET(request: Request) {
       tokens: [],
       contracts: [],
       pools: [],
+      seedingStatus: "not_seeded",
       timestamp: new Date().toISOString(),
       error: `No RPC URL configured for ${config.networkName}. Set the appropriate env var.`,
     };
@@ -234,6 +273,55 @@ export async function GET(request: Request) {
     }
   }
 
+  // Engine wallet: ETH balance + token balances
+  const engineAddr = EVM_KEY_ACCOUNTS.engine.address;
+  const engineBal = await ethGetBalance(rpcUrl, engineAddr);
+
+  let engineWallet: EvmResponse["engineWallet"];
+  let seedingStatus: SeedingStatus = "not_seeded";
+
+  if (addresses?.tokens) {
+    const tokenEntries = Object.entries(addresses.tokens);
+    const engineTokenBals = await Promise.all(
+      tokenEntries.map(([, t]) =>
+        tokenBalanceOf(rpcUrl, t.address, engineAddr).catch(() => null)
+      )
+    );
+
+    engineWallet = {
+      address: engineAddr,
+      ethBalance: engineBal ? formatWei(engineBal) : "N/A",
+      tokenBalances: tokenEntries.map(([symbol, t], i) => ({
+        symbol,
+        balance:
+          engineTokenBals[i] !== null
+            ? formatTokenAmount(engineTokenBals[i]!, t.decimals)
+            : "0.00",
+        address: t.address,
+      })),
+    };
+
+    // Determine seeding status
+    const hasWrappedTokens = engineTokenBals.some(
+      (b, i) => b !== null && Number(b) > 0 && tokenEntries[i][0].startsWith("w")
+    );
+    const poolsHaveLiquidity =
+      pools.length > 0 &&
+      pools.every((p) => p.liquidity !== null && p.liquidity !== "0");
+
+    if (poolsHaveLiquidity && hasWrappedTokens) {
+      seedingStatus = "seeded";
+    } else if (hasWrappedTokens || poolsHaveLiquidity) {
+      seedingStatus = "partial";
+    }
+  } else {
+    engineWallet = {
+      address: engineAddr,
+      ethBalance: engineBal ? formatWei(engineBal) : "N/A",
+      tokenBalances: [],
+    };
+  }
+
   const resp: EvmResponse = {
     env,
     chainId,
@@ -244,6 +332,8 @@ export async function GET(request: Request) {
     tokens,
     contracts,
     pools,
+    engineWallet,
+    seedingStatus,
     timestamp: new Date().toISOString(),
   };
 

@@ -1,8 +1,6 @@
 # Zephyr node + wallet-rpc (single image, mode selected via ZEPHYR_MODE env)
 #
-# Build:
-#   Copy binaries into docker/zephyr/bin/ first, then:
-#   docker build -t zephyr-devnet docker/zephyr/
+# Build context must be the repo root (compose uses context: ..)
 #
 # Run as node:
 #   docker run -e ZEPHYR_MODE=node zephyr-devnet --devnet --rpc-bind-port=47767 ...
@@ -31,8 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY bin/zephyrd bin/zephyr-wallet-rpc /usr/local/bin/
-COPY entrypoint.sh /entrypoint.sh
+ARG BIN_DIR=build/devnet/bin
+COPY ${BIN_DIR}/zephyrd ${BIN_DIR}/zephyr-wallet-rpc /usr/local/bin/
+COPY docker/zephyr/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /usr/local/bin/zephyrd /usr/local/bin/zephyr-wallet-rpc
 
 ENV ZEPHYR_MODE=node

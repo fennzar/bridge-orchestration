@@ -1,0 +1,206 @@
+# ===========================================
+# Testnet V2 Overrides (Anvil-based)
+# ===========================================
+# Hybrid of dev (Anvil) + testnet (containerized apps, Caddy TLS).
+# Full control over EVM chain with Blockscout explorer.
+#
+# Usage:
+#   docker compose -f docker/compose.base.yml -f docker/compose.testnet-v2.yml -f docker/compose.blockscout.yml --profile full --profile explorer up -d
+#
+# Profiles:
+#   bridge   - Bridge services only
+#   engine   - Engine services only
+#   full     - Everything
+#   explorer - Blockscout block explorer
+#   init     - DEVNET init container
+
+services:
+  # ===========================================
+  # Anvil - Local EVM chain
+  # ===========================================
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: zephyr-anvil
+    entrypoint: ["anvil"]
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--chain-id"
+      - "31337"
+      - "--accounts"
+      - "20"
+      - "--balance"
+      - "10000"
+      - "--mnemonic"
+      - "${EVM_DEV_MNEMONIC:-test test test test test test test test test test test junk}"
+      - "--state"
+      - "/data/anvil-state.json"
+    volumes:
+      - anvil-data:/data
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # App Containers
+  # ===========================================
+  bridge-web:
+    image: zephyr-bridge-web
+    container_name: zephyr-bridge-web
+    profiles: ["bridge", "full"]
+    env_file: ../env/.env.testnet-v2
+    environment:
+      PORT: "7050"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+  bridge-api:
+    image: zephyr-bridge-api
+    container_name: zephyr-bridge-api
+    profiles: ["bridge", "full"]
+    env_file: ../env/.env.testnet-v2
+    environment:
+      PORT: "7051"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+  bridge-watchers:
+    image: zephyr-bridge-watchers
+    container_name: zephyr-bridge-watchers
+    profiles: ["bridge", "full"]
+    env_file: ../env/.env.testnet-v2
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      zephyr-node1:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+  engine-web:
+    image: zephyr-engine-web
+    container_name: zephyr-engine-web
+    profiles: ["engine", "full"]
+    env_file: ../env/.env.testnet-v2
+    environment:
+      PORT: "7000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+  engine-watchers:
+    image: zephyr-engine-watchers
+    container_name: zephyr-engine-watchers
+    profiles: ["engine", "full"]
+    env_file: ../env/.env.testnet-v2
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      fake-orderbook:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+  dashboard:
+    image: zephyr-dashboard
+    container_name: zephyr-dashboard
+    profiles: ["full"]
+    environment:
+      PORT: "7100"
+      ZEPHYR_CHAIN_MODE: "devnet"
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # Caddy (TLS reverse proxy)
+  # ===========================================
+  caddy:
+    image: caddy:2-alpine
+    container_name: zephyr-caddy
+    profiles: ["bridge", "full"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile.testnet-v2:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # DEVNET Init (profile: init)
+  # ===========================================
+  # Uses zephyr-cli devnet init — creates gov/miner/test wallets only.
+  # Bridge/engine/cex wallets are created by dev-setup.sh (not here).
+  devnet-init:
+    image: zephyr-devnet-init
+    container_name: zephyr-devnet-init
+    profiles:
+      - init
+    environment:
+      ORACLE_PRICE: "2.0"
+      DEVNET_MODE: "${DEVNET_MODE:-custom}"
+      TARGET_RR: "7.0"
+      ZSD_MINT_LIMIT: "450000"
+      CHECKPOINT_FILE: "/checkpoint/height"
+      MINING_THREADS: "2"
+      # Docker hostname overrides (consumed by zephyr-cli config.py env var layer)
+      ZEPHYR_DAEMON_HOST: "zephyr-node1"
+      ZEPHYR_DAEMON_PORT: "47767"
+      ZEPHYR_ORACLE_HOST: "zephyr-node1"
+      ZEPHYR_ORACLE_PORT: "5555"
+      ZEPHYR_WALLET_GOV_HOST: "wallet-gov"
+      ZEPHYR_WALLET_GOV_PORT: "48769"
+      ZEPHYR_WALLET_MINER_HOST: "wallet-miner"
+      ZEPHYR_WALLET_MINER_PORT: "48767"
+      ZEPHYR_WALLET_TEST_HOST: "wallet-test"
+      ZEPHYR_WALLET_TEST_PORT: "48768"
+    volumes:
+      - zephyr-checkpoint:/checkpoint
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+      zephyr-node2:
+        condition: service_healthy
+      fake-oracle:
+        condition: service_healthy
+      wallet-gov:
+        condition: service_healthy
+      wallet-miner:
+        condition: service_healthy
+      wallet-test:
+        condition: service_healthy
+    networks:
+      - zephyr-net
+
+volumes:
+  anvil-data:
+    name: bridge-v2-anvil-data
+  caddy-data:
+    name: bridge-v2-caddy-data
+  caddy-config:
+    name: bridge-v2-caddy-config

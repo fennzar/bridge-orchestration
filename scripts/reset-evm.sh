@@ -9,19 +9,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Load environment safely (handles unquoted values like mnemonics)
+# Load shared libraries
+source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
-
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 DC_DEV="docker compose --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml"
 

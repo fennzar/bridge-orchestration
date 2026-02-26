@@ -1,0 +1,28 @@
+# Zephyr Bridge - Testnet V2 Caddy Configuration
+#
+# Replace {$DOMAIN} with your actual domain or use env var.
+# Caddy will auto-provision TLS via Let's Encrypt.
+
+{$DOMAIN:bridge.example.com} {
+	# Bridge API
+	handle /api/* {
+		reverse_proxy bridge-api:7051
+	}
+
+	# Bridge Web UI (default)
+	handle {
+		reverse_proxy bridge-web:7050
+	}
+}
+
+engine.{$DOMAIN:bridge.example.com} {
+	reverse_proxy engine-web:7000
+}
+
+status.{$DOMAIN:bridge.example.com} {
+	reverse_proxy dashboard:7100
+}
+
+explorer.{$DOMAIN:bridge.example.com} {
+	reverse_proxy blockscout-proxy:80
+}

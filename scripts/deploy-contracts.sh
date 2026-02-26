@@ -10,19 +10,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-
-# Load environment safely (handles unquoted values like mnemonics)
+# Load shared libraries
+source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 if ! load_env "$ORCH_DIR/.env"; then
     log_error ".env not found in $ORCH_DIR"
@@ -33,6 +22,7 @@ fi
 : "${FOUNDRY_REPO_PATH:?FOUNDRY_REPO_PATH not set}"
 : "${DEPLOYER_PRIVATE_KEY:?DEPLOYER_PRIVATE_KEY not set}"
 : "${BRIDGE_SIGNER_ADDRESS:?BRIDGE_SIGNER_ADDRESS not set}"
+: "${ENGINE_ADDRESS:?ENGINE_ADDRESS not set}"
 : "${EVM_RPC_HTTP:?EVM_RPC_HTTP not set}"
 
 echo "==========================================="
@@ -42,6 +32,8 @@ echo ""
 echo "RPC:      $EVM_RPC_HTTP"
 echo "Deployer: $DEPLOYER_ADDRESS"
 echo "Signer:   $BRIDGE_SIGNER_ADDRESS"
+echo ""
+log_info "Deploying contracts + empty pools (use 'make seed-engine' for liquidity)"
 echo ""
 
 cd "$FOUNDRY_REPO_PATH"
@@ -83,17 +75,7 @@ log_info "Deploying Zephyr wrapped tokens (wZEPH, wZSD, wZRS, wZYS)..."
 # ===========================================
 # Step 3: Mint initial token supplies
 # ===========================================
-log_info "Minting initial token supplies..."
-
-TOKENS=("wZEPH:200000" "wZSD:200000" "wZYS:50000" "wZRS:50000")
-for TOKEN_AMT in "${TOKENS[@]}"; do
-    TOKEN="${TOKEN_AMT%%:*}"
-    AMOUNT="${TOKEN_AMT##*:}"
-    log_info "  Minting $AMOUNT $TOKEN..."
-    ~/.foundry/bin/forge script script/02_Mint.s.sol:MintByTicker \
-        --sig "run(string,string)" "$TOKEN" "$AMOUNT" \
-        --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --broadcast -vvv
-done
+log_info "Skipping minting (use 'make seed-engine' for token minting via bridge wrap flow)"
 
 # ===========================================
 # Step 4: Deploy Uniswap V4 stack
@@ -116,7 +98,7 @@ fi
     --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --broadcast -vvv
 
 # ===========================================
-# Step 5: Create pools and add liquidity
+# Step 5a: Create pools
 # ===========================================
 MARKETS=("USDT-USDC" "wZSD-USDT" "wZYS-wZSD" "wZEPH-wZSD" "wZRS-wZEPH")
 
@@ -125,14 +107,35 @@ for MARKET in "${MARKETS[@]}"; do
     MARKET="$MARKET" ~/.foundry/bin/forge script script/uniswap/01_CreatePoolFromJson.s.sol:CreatePoolFromJson \
         --sig "run()" \
         --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" -vvv
-
-    log_info "Adding liquidity: $MARKET"
-    MARKET="$MARKET" ~/.foundry/bin/forge script script/uniswap/02_AddLiquidityFromJson.s.sol:AddLiquidityFromJson \
-        --sig "run()" \
-        --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" -vvv
 done
 
+# ===========================================
+# Step 5b: Seed USDT-USDC pool from deployer ($500K/side)
+# ===========================================
+# The deployer already has 1M USDC + 1M USDT from 00_DeployMockUSD.sol.
+# Seed this large stablecoin pool directly — engine doesn't need to waste inventory on it.
+log_info "Seeding USDT-USDC pool from deployer..."
+MARKET="USDT-USDC" ~/.foundry/bin/forge script script/uniswap/02_AddLiquidityFromJson.s.sol:AddLiquidityFromJson \
+    --sig "run()" \
+    --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" -vvv
+log_success "USDT-USDC pool seeded from deployer"
+
+# ===========================================
+# Step 5c: Other pool liquidity
+# ===========================================
+log_info "Skipping other pool liquidity (use 'make seed-engine' for LP via bridge wrap flow)"
+
 log_success "All contracts deployed"
+
+# ===========================================
+# Fund engine + CEX wallets with ETH
+# ===========================================
+log_info "Funding engine wallet with ETH..."
+~/.foundry/bin/cast send "$ENGINE_ADDRESS" --value 10ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
+log_success "Engine wallet funded: $ENGINE_ADDRESS"
+
+log_info "Funding CEX wallet with ETH..."
+~/.foundry/bin/cast send "$CEX_ADDRESS" --value 10ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" 2>/dev/null || log_warn "CEX_ADDRESS not set, skipping CEX ETH"
 
 # ===========================================
 # Sync addresses to other repos

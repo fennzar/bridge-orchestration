@@ -10,17 +10,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-
-# Load master config safely (handles unquoted values like mnemonics)
+# Load shared libraries
+source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 if ! load_env "$ORCH_DIR/.env"; then
     echo "Error: $ORCH_DIR/.env not found"
@@ -95,7 +86,7 @@ BOOTSTRAP_UNISWAP_V4_POSITIONS=0
 BOOTSTRAP_UNISWAP_V4_ACTIVITY=0
 
 # === Admin ===
-ADMIN_TOKEN=supersecret
+ADMIN_TOKEN=${ADMIN_TOKEN}
 EOF
 
 log_success "Created $BRIDGE_REPO_PATH/.env.local"
@@ -142,11 +133,16 @@ RPC_URL_MAINNET_HTTP=
 
 # === Zephyr Daemon ===
 ZEPHYR_D_RPC_URL=${ZEPHYR_D_RPC_URL}
-ZEPHYR_PAPER=true
+ZEPHYR_PAPER=false
 
 # === EVM Wallet ===
-EVM_WALLET_ADDRESS=${DEPLOYER_ADDRESS}
-EVM_PRIVATE_KEY=${DEPLOYER_PRIVATE_KEY#0x}
+EVM_WALLET_ADDRESS=${ENGINE_ADDRESS}
+EVM_PRIVATE_KEY=${ENGINE_PK#0x}
+
+# === Zephyr Wallet ===
+ZEPHYR_WALLET_RPC_URL=http://127.0.0.1:48771/json_rpc
+ZEPHYR_BRIDGE_ADDRESS=$(curl -sf http://localhost:48770/json_rpc \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_address","params":{"account_index":0}}' 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',{}).get('address',''))" 2>/dev/null || echo "")
 
 # === Database ===
 DATABASE_URL=${DATABASE_URL_ENGINE}
@@ -155,6 +151,11 @@ DATABASE_URL=${DATABASE_URL_ENGINE}
 MEXC_PAPER=${MEXC_PAPER}
 MEXC_API_KEY=${MEXC_API_KEY:-}
 MEXC_API_SECRET=${MEXC_API_SECRET:-}
+
+# === CEX Wallets (fake exchange — real wallets for arb deposits/withdrawals) ===
+CEX_ADDRESS=${CEX_ADDRESS}
+CEX_PK=${CEX_PK#0x}
+CEX_WALLET_RPC_URL=http://127.0.0.1:48772/json_rpc
 
 # === App ===
 NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME}
@@ -167,6 +168,17 @@ UNISWAP_V4_START_BLOCK_SEPOLIA=9265810
 # === Worker Ports ===
 EVM_WATCHER_PORT=7010
 MEXC_WATCHER_PORT=7020
+
+# === Deployer (for seed scripts) ===
+DEPLOYER_PRIVATE_KEY=${DEPLOYER_PRIVATE_KEY#0x}
+DEPLOYER_ADDRESS=${DEPLOYER_ADDRESS}
+FOUNDRY_REPO_PATH=${FOUNDRY_REPO_PATH}
+
+# === Bridge API (for seed scripts) ===
+BRIDGE_API_URL=http://127.0.0.1:7051
+
+# === Admin ===
+ADMIN_TOKEN=${ADMIN_TOKEN}
 EOF
 
 log_success "Created $ENGINE_REPO_PATH/.env"
@@ -190,8 +202,23 @@ for k, t in src.get('tokens', {}).items():
     sym, name = META.get(k, (k, k))
     tokens[k] = {'address': t['address'], 'decimals': t['decimals'], 'symbol': sym, 'name': name}
 out = {'version': src.get('version',1), 'chainId': src.get('chainId',31337), 'contracts': src['contracts'], 'tokens': tokens}
+# Pass through seeding config (dynamic amounts from patch-pool-prices.py)
+if 'seeding' in src:
+    out['seeding'] = src['seeding']
+# Convert pools object to array (engine expects PoolConfig[])
+pools_obj = src.get('pools', {})
+if pools_obj:
+    pools = []
+    for name, pool_data in pools_obj.items():
+        entry = {'id': name}
+        if 'plan' in pool_data:
+            entry['plan'] = pool_data['plan']
+        if 'state' in pool_data and 'poolId' in pool_data['state']:
+            entry['address'] = pool_data['state']['poolId']
+        pools.append(entry)
+    out['pools'] = pools
 json.dump(out, open('${ENGINE_REPO_PATH}/src/services/evm/config/addresses.local.json', 'w'), indent=2)
-print('  Engine addresses synced')
+print('  Engine addresses synced (with ' + str(len(pools_obj)) + ' pools)')
 "
 
 # ===========================================

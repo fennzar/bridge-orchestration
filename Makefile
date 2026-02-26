@@ -2,20 +2,33 @@
 # Zephyr Bridge Stack - Unified CLI
 # ===========================================
 #
-# Dev workflow:
-#   make dev          # Main entry point (auto-inits if fresh, then starts)
-#   make dev-reset    # Reset all layers to post-init state (~30 sec)
-#   make dev-init     # Nuclear wipe + rebuild from scratch
-#   make dev-stop     # Stop everything
+# Dev workflow (staged setup):
+#   make dev-init     # Base Zephyr devnet, then stop (~4 min)
+#   make dev-setup    # Bridge infra on top, then stop (~4 min)
+#   make dev          # Start everything (~10 sec)
+#   make dev-stop     # Stop everything, preserves data
+#
+# Reset:
+#   make dev-reset       # Reset to post-setup state, then stop
+#   make dev-reset-hard  # Reset to post-init state, then stop
 #
 # Selective apps:
 #   make dev APPS=bridge          Only bridge processes
 #   make dev APPS=bridge,engine   Bridge + engine (no dashboard)
 #
-# Testnet workflow:
-#   make testnet-build
-#   make testnet-up PROFILE=full
-#   make testnet-down
+# Testnet V2 (Anvil):
+#   make testnet-v2-build
+#   make testnet-v2-up
+#   make testnet-v2-down
+#
+# Testnet V3 (Sepolia):
+#   make testnet-v3-up
+#   make testnet-v3-down
+#
+# Explorer (Blockscout — on by default):
+#   make dev                   Includes Blockscout at :4000
+#   make dev EXPLORER=0        Skip Blockscout
+#   make dev-explorer          Start Blockscout standalone (infra must be running)
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -25,11 +38,15 @@ SHELL := /bin/bash
 # ===========================================
 COMPOSE_BASE := docker/compose.base.yml
 COMPOSE_DEV  := docker/compose.dev.yml
-COMPOSE_TEST := docker/compose.testnet.yml
+COMPOSE_V2   := docker/compose.testnet-v2.yml
+COMPOSE_V3   := docker/compose.testnet-v3.yml
 COMPOSE_PROD := docker/compose.prod.yml
+COMPOSE_BS   := docker/compose.blockscout.yml
 
-DC_DEV  := docker compose --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV)
-DC_TEST := docker compose --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_TEST)
+# Blockscout always in dev/v2 compose chain (profiled — won't start unless activated)
+DC_DEV := docker compose -p bridge --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV) -f $(COMPOSE_BS)
+DC_V2  := docker compose -p bridge-v2 --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_V2) -f $(COMPOSE_BS)
+DC_V3  := docker compose -p bridge-v3 --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_V3)
 
 # Paths (loaded from .env if available)
 # Save system PATH before .env overrides it
@@ -40,26 +57,33 @@ export PATH := $(SYSTEM_PATH)
 ORCH_DIR        := $(CURDIR)
 PROCFILE        := $(ORCH_DIR)/Procfile.dev
 OVERMIND_SOCK   := $(ORCH_DIR)/.overmind-dev.sock
+ZEPHYR_CLI      := $(or $(wildcard tools/zephyr-cli/cli),$(ZEPHYR_REPO_PATH)/tools/zephyr-cli/cli)
 
 
 # ===========================================
 # Build
 # ===========================================
 
-.PHONY: build build-zephyr build-oracle build-orderbook build-init sync-zephyr
+.PHONY: keygen build build-zephyr build-oracle build-orderbook build-init sync-zephyr docs-dashboard docs-dashboard-check
+
+## Generate fresh keys and write to .env
+keygen:
+	./scripts/keygen.py --write-env
 
 ## Build all Docker images
 build: build-zephyr build-oracle build-orderbook build-init
 
 ## Build Zephyr node/wallet image (uses vendored binaries)
+## Usage: make build-zephyr [DEVNET_MODE=mirror]
 build-zephyr:
-	@echo "=== Building zephyr-devnet image ==="
-	@if [ ! -f "docker/zephyr/bin/zephyrd" ]; then \
-		echo "Error: zephyrd not found at docker/zephyr/bin/zephyrd"; \
+	@BIN_DIR=$$([ "$(DEVNET_MODE)" = "mirror" ] && echo "docker/zephyr/bin-mirror" || echo "docker/zephyr/bin"); \
+	echo "=== Building zephyr-devnet image ($$BIN_DIR) ==="; \
+	if [ ! -f "$$BIN_DIR/zephyrd" ]; then \
+		echo "Error: zephyrd not found at $$BIN_DIR/zephyrd"; \
 		echo "Run: ./scripts/sync-zephyr-artifacts.sh"; \
 		exit 1; \
-	fi
-	docker build -t zephyr-devnet docker/zephyr/
+	fi; \
+	docker build --build-arg BIN_DIR=$$BIN_DIR -f docker/zephyr/Dockerfile -t zephyr-devnet .
 
 ## Build fake oracle image (uses vendored oracle files)
 build-oracle:
@@ -70,6 +94,23 @@ build-oracle:
 	fi
 	docker build -t zephyr-fake-oracle docker/fake-oracle/
 
+## Generate dashboard API docs from route meta
+docs-dashboard:
+	node status-dashboard/scripts/generate-api-doc.mjs
+
+## CI check: all routes have meta + docs are up to date
+docs-dashboard-check:
+	@node status-dashboard/scripts/generate-api-doc.mjs
+	@if ! git diff --quiet docs/dashboard-api.md 2>/dev/null; then \
+		echo ""; \
+		echo "ERROR: docs/dashboard-api.md is out of date."; \
+		echo "Run 'make docs-dashboard' and commit the result."; \
+		echo ""; \
+		git diff --stat docs/dashboard-api.md; \
+		exit 1; \
+	fi
+	@echo "Dashboard API docs are up to date."
+
 ## Sync all artifacts from Zephyr repo
 sync-zephyr:
 	./scripts/sync-zephyr-artifacts.sh
@@ -79,66 +120,70 @@ build-orderbook:
 	@echo "=== Building zephyr-fake-orderbook image ==="
 	docker build -t zephyr-fake-orderbook -f docker/fake-orderbook/Dockerfile services/fake-orderbook/
 
-## Build devnet-init image
+## Build devnet-init image (context = repo root so it can COPY tools/zephyr-cli + utils/python-rpc)
 build-init:
 	@echo "=== Building zephyr-devnet-init image ==="
-	docker build -t zephyr-devnet-init docker/devnet-init/
+	docker build -t zephyr-devnet-init -f docker/devnet-init/Dockerfile .
 
 # ===========================================
 # Dev Environment
 # ===========================================
 
-.PHONY: dev dev-init dev-delete dev-apps dev-stop dev-reset dev-reset-zephyr dev-reset-evm dev-reset-db dev-checkpoint status logs clean
+.PHONY: dev dev-start dev-init dev-init-mirror dev-setup dev-delete dev-apps dev-stop dev-explorer dev-reset dev-reset-hard dev-checkpoint status logs clean seed-engine scan-pools
 
-## Main entry point — auto-inits on first run, then starts everything
-dev:
+## Start the stack (no init, no setup — just start)
+dev: dev-start
+dev-start:
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env not found. Run: make keygen"; \
+		exit 1; \
+	fi
+	@if grep -q '<KEYGEN:' .env 2>/dev/null; then \
+		echo "ERROR: .env contains unresolved <KEYGEN:> placeholders."; \
+		echo "Run: make keygen"; \
+		exit 1; \
+	fi
+	@# Check prerequisites
+	@if ! docker volume ls -q --filter name=zephyr-checkpoint | grep -q .; then \
+		echo "ERROR: Chain not initialized. Run: make dev-init"; \
+		exit 1; \
+	fi
+	@if [ ! -f config/addresses.json ]; then \
+		echo "ERROR: Contracts not deployed. Run: make dev-setup"; \
+		exit 1; \
+	fi
 	@# Clean stale Overmind socket if process is dead
 	@if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
 		echo "Cleaning stale Overmind socket..."; \
 		rm -f $(OVERMIND_SOCK); \
 	fi
-	@# Build images if missing
-	@if ! docker image inspect zephyr-devnet >/dev/null 2>&1; then \
-		echo "=== Docker images not found — building ==="; \
-		$(MAKE) build; \
-	fi
-	@# Start infrastructure
+	@# Ensure shared zephyr volumes exist (external: true in compose)
+	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
+		docker volume create $$v >/dev/null 2>&1 || true; \
+	done
+	@# Start infrastructure (Blockscout on by default, EXPLORER=0 to skip)
 	@echo "=== Starting Docker infrastructure ==="
-	@$(DC_DEV) up -d
-	@# Auto-init if chain is uninitialized (first run or wiped volumes)
-	@# Check both: checkpoint file exists AND chain height > 1
-	@NEEDS_INIT=false; \
-	if ! $(DC_DEV) exec -T wallet-gov cat /checkpoint/height >/dev/null 2>&1; then \
-		NEEDS_INIT=true; \
+	@if [ "$(EXPLORER)" = "0" ]; then \
+		$(DC_DEV) up -d; \
 	else \
-		HEIGHT=$$(curl -sf http://127.0.0.1:47767/json_rpc \
-			-d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' 2>/dev/null | \
-			python3 -c "import sys,json; print(json.load(sys.stdin)['result']['height'])" 2>/dev/null || echo "0"); \
-		if [ "$$HEIGHT" -le 1 ] 2>/dev/null; then \
-			echo "  Warning: checkpoint exists but chain is at height $$HEIGHT — re-initializing"; \
-			NEEDS_INIT=true; \
-		fi; \
-	fi; \
-	if [ "$$NEEDS_INIT" = "true" ]; then \
-		echo ""; \
-		echo "=== First run detected — initializing DEVNET ==="; \
-		echo ""; \
-		docker rm zephyr-devnet-init 2>/dev/null || true; \
-		$(DC_DEV) --profile init up devnet-init; \
-		echo ""; \
-		echo "=== Resetting Anvil for fresh deploy ==="; \
-		$(DC_DEV) exec -T anvil rm -f /data/anvil-state.json 2>/dev/null || true; \
-		$(DC_DEV) restart anvil; \
-		echo "  Waiting for Anvil..."; \
-		for i in $$(seq 1 20); do cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break; sleep 0.5; done; \
-		echo "=== Deploying EVM contracts ==="; \
-		$(MAKE) deploy-contracts; \
-		echo ""; \
-		echo "=== Pushing database schemas ==="; \
-		cd $(BRIDGE_REPO_PATH)/packages/db && DATABASE_URL=$(DATABASE_URL_BRIDGE) npx prisma db push 2>&1 | tail -1; \
-		cd $(ENGINE_REPO_PATH) && DATABASE_URL=$(DATABASE_URL_ENGINE) pnpm prisma db push --schema=src/infra/prisma/schema.prisma --skip-generate 2>&1 | tail -1; \
-		echo ""; \
+		$(DC_DEV) --profile explorer up -d; \
 	fi
+	@# Restore Anvil from post-seed snapshot (Anvil --state doesn't persist reliably)
+	@SNAPSHOT="$(ORCH_DIR)/snapshots/anvil/post-seed.hex"; \
+	if [ -f "$$SNAPSHOT" ]; then \
+		for i in $$(seq 1 20); do cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break; sleep 0.5; done; \
+		TMPFILE=$$(mktemp); \
+		printf '{"jsonrpc":"2.0","id":1,"method":"anvil_loadState","params":[' > "$$TMPFILE"; \
+		cat "$$SNAPSHOT" >> "$$TMPFILE"; \
+		printf ']}' >> "$$TMPFILE"; \
+		curl -sf http://127.0.0.1:8545 -H 'Content-Type: application/json' -d @"$$TMPFILE" >/dev/null 2>&1 || true; \
+		rm -f "$$TMPFILE"; \
+	fi
+	@# Open wallets (wallet RPCs don't auto-load after container restart)
+	@./scripts/open-wallets.sh
+	@# Push database schemas (idempotent — applies any pending migrations)
+	@cd $(BRIDGE_REPO_PATH)/packages/db && DATABASE_URL=$(DATABASE_URL_BRIDGE) npx prisma db push 2>&1 | tail -1
+	@cd $(ENGINE_REPO_PATH) && DATABASE_URL=$(DATABASE_URL_ENGINE) pnpm prisma db push --schema=src/infra/prisma/schema.prisma --skip-generate 2>&1 | tail -1
 	@# Start apps
 	@$(MAKE) dev-apps APPS=$(APPS)
 	@echo ""
@@ -148,10 +193,20 @@ dev:
 	@echo "  Bridge API: http://localhost:7051"
 	@echo "  Engine:     http://localhost:7000"
 	@echo "  Dashboard:  http://localhost:7100"
+	@if [ "$(EXPLORER)" != "0" ]; then echo "  Explorer:   http://localhost:4000"; fi
 
-## Nuclear wipe + re-init (destroys all volumes, rebuilds from scratch)
+## Base Zephyr devnet init, then stop (~4 min). Use DEVNET_MODE=mirror for mainnet supply.
 dev-init:
-	@echo "=== Nuclear wipe + re-init ==="
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env not found. Run: make keygen"; \
+		exit 1; \
+	fi
+	@if grep -q '<KEYGEN:' .env 2>/dev/null; then \
+		echo "ERROR: .env contains unresolved <KEYGEN:> placeholders."; \
+		echo "Run: make keygen"; \
+		exit 1; \
+	fi
+	@echo "=== Dev Init — Base Zephyr Devnet ==="
 	@# 1. Stop Overmind
 	@if [ -S "$(OVERMIND_SOCK)" ]; then \
 		echo "  Stopping Overmind..."; \
@@ -161,51 +216,74 @@ dev-init:
 	@rm -f $(OVERMIND_SOCK)
 	@# 2. Tear down containers + volumes
 	@echo "  Removing containers and volumes..."
-	@$(DC_DEV) down -v 2>/dev/null || true
+	@$(DC_DEV) --profile explorer down -v 2>/dev/null || true
 	@# Also remove any orphaned volumes (handles project-name mismatches)
-	@docker volume ls -q --filter name=docker_zephyr | xargs -r docker volume rm 2>/dev/null || true
-	@docker volume ls -q --filter name=docker_redis | xargs -r docker volume rm 2>/dev/null || true
-	@docker volume ls -q --filter name=docker_postgres | xargs -r docker volume rm 2>/dev/null || true
-	@docker volume ls -q --filter name=docker_anvil | xargs -r docker volume rm 2>/dev/null || true
-	@# 3. Rebuild images
-	@$(MAKE) build
-	@# 4. Start infrastructure
+	@docker volume ls -q --filter name=zephyr- | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=bridge-redis | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=bridge-postgres | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=bridge-anvil | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=bridge-blockscout | xargs -r docker volume rm 2>/dev/null || true
+	@# Legacy volumes (pre-migration docker_ prefix)
+	@docker volume ls -q --filter name=docker_ | xargs -r docker volume rm 2>/dev/null || true
+	@# 3. Remove stale addresses (setup not done yet)
+	@rm -f config/addresses.json deployed-addresses.json
+	@# 4. Rebuild images (pass DEVNET_MODE for mirror binary selection)
+	@$(MAKE) build DEVNET_MODE=$(or $(DEVNET_MODE),custom)
+	@# 5. Pre-create shared zephyr volumes (external: true in compose)
+	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
+		docker volume create $$v >/dev/null 2>&1 || true; \
+	done
+	@# 6. Start infrastructure
 	@echo ""
 	@echo "=== Starting Docker infrastructure ==="
 	@$(DC_DEV) up -d
-	@# 5. Run devnet init (unconditionally — this is nuclear)
+	@# 6. Wait for Postgres + push schemas
 	@echo ""
-	@echo "=== Initializing DEVNET ==="
-	@docker rm zephyr-devnet-init 2>/dev/null || true
-	@$(DC_DEV) --profile init up devnet-init
-	@# 6. Reset Anvil + deploy contracts
-	@echo ""
-	@echo "=== Resetting Anvil for fresh deploy ==="
-	@$(DC_DEV) exec -T anvil rm -f /data/anvil-state.json 2>/dev/null || true
-	@$(DC_DEV) restart anvil
-	@echo "  Waiting for Anvil..."
-	@for i in $$(seq 1 20); do cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break; sleep 0.5; done
-	@echo "=== Deploying EVM contracts ==="
-	@$(MAKE) deploy-contracts
-	@# 7. Push database schemas
-	@echo ""
+	@echo "  Waiting for Postgres..."
+	@for i in $$(seq 1 30); do $(DC_DEV) exec -T postgres pg_isready -U postgres >/dev/null 2>&1 && break; sleep 0.5; done
 	@echo "=== Pushing database schemas ==="
 	@cd $(BRIDGE_REPO_PATH)/packages/db && DATABASE_URL=$(DATABASE_URL_BRIDGE) npx prisma db push 2>&1 | tail -1
 	@cd $(ENGINE_REPO_PATH) && DATABASE_URL=$(DATABASE_URL_ENGINE) pnpm prisma db push --schema=src/infra/prisma/schema.prisma --skip-generate 2>&1 | tail -1
-	@# 8. Start apps
+	@# 7. Run devnet init (CLI-based: gov/miner/test wallets only)
 	@echo ""
-	@$(MAKE) dev-apps APPS=$(APPS)
+	@echo "=== Initializing DEVNET (mode: $(or $(DEVNET_MODE),custom)) ==="
+	@docker rm zephyr-devnet-init 2>/dev/null || true
+	@DEVNET_MODE=$(or $(DEVNET_MODE),custom) $(DC_DEV) --profile init up devnet-init
+	@# 8. Stop daemons + save LMDB snapshots (must be stopped for consistent LMDB copy)
 	@echo ""
-	@echo "=== Dev stack running (fresh init) ==="
-	@if [ -n "$(APPS)" ]; then echo "  Apps: $(APPS)"; fi
-	@echo "  Bridge UI:  http://localhost:7050"
-	@echo "  Bridge API: http://localhost:7051"
-	@echo "  Engine:     http://localhost:7000"
-	@echo "  Dashboard:  http://localhost:7100"
+	@echo "=== Saving chain snapshots ==="
+	@mkdir -p snapshots/chain
+	@echo "$(or $(DEVNET_MODE),custom)" > snapshots/chain/mode
+	@$(DC_DEV) stop zephyr-node1 zephyr-node2
+	@docker run --rm -v zephyr-node1-data:/data alpine tar czf - -C /data --exclude='lmdb/lock.mdb' lmdb > snapshots/chain/node1-lmdb.tar.gz
+	@docker run --rm -v zephyr-node2-data:/data alpine tar czf - -C /data --exclude='lmdb/lock.mdb' lmdb > snapshots/chain/node2-lmdb.tar.gz
+	@echo "  Snapshots saved ($$(du -sh snapshots/chain/ | cut -f1))"
+	@# 9. Stop everything (volumes persist)
+	@echo ""
+	@echo "=== Stopping infrastructure ==="
+	@$(DC_DEV) --profile explorer down
+	@echo ""
+	@echo "=== Dev init complete (mode: $(or $(DEVNET_MODE),custom), everything stopped) ==="
+	@echo "  Next: make dev-setup"
+
+## Init in mirror mode (convenience for: make dev-init DEVNET_MODE=mirror)
+dev-init-mirror:
+	$(MAKE) dev-init DEVNET_MODE=mirror
+
+## Bridge infrastructure setup on top of dev-init, then stop (~4 min)
+dev-setup:
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env not found. Run: make keygen"; \
+		exit 1; \
+	fi
+	./scripts/dev-setup.sh
 
 ## Start Docker infrastructure only
 dev-infra:
 	@echo "=== Starting Docker infrastructure ==="
+	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
+		docker volume create $$v >/dev/null 2>&1 || true; \
+	done
 	$(DC_DEV) up -d
 
 ## Start native apps via Overmind (usage: make dev-apps APPS=bridge)
@@ -215,10 +293,14 @@ dev-apps:
 	@if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
 		rm -f $(OVERMIND_SOCK); \
 	fi
+	@# Sync env vars to sub-repos before starting (keygen passwords, etc.)
+	@if [ ! -S "$(OVERMIND_SOCK)" ]; then \
+		./scripts/sync-env.sh; \
+	fi
 	@if [ -S "$(OVERMIND_SOCK)" ]; then \
 		echo "  Overmind already running"; \
 	elif [ -n "$(APPS)" ]; then \
-		FORM="bridge-web=0,bridge-api=0,bridge-watchers=0,engine-web=0,engine-watchers=0,dashboard=0"; \
+		FORM="bridge-web=0,bridge-api=0,bridge-watchers=0,engine-web=0,engine-watchers=0,engine-run=0,dashboard=0"; \
 		IFS=',' read -ra APP_LIST <<< "$(APPS)"; \
 		for grp in "$${APP_LIST[@]}"; do \
 			case "$$grp" in \
@@ -245,8 +327,14 @@ dev-stop:
 	fi
 	@rm -f $(OVERMIND_SOCK)
 	@echo "=== Stopping Docker infrastructure ==="
-	$(DC_DEV) down
+	$(DC_DEV) --profile explorer down
 	@echo "=== Stopped ==="
+
+## Start Blockscout explorer (infra must be running)
+dev-explorer:
+	@echo "=== Starting Blockscout explorer ==="
+	$(DC_DEV) --profile explorer up -d blockscout-db blockscout-backend blockscout-frontend blockscout-proxy
+	@echo "  Explorer: http://localhost:4000"
 
 ## Delete everything — containers, volumes, images. No rebuild, no restart.
 dev-delete:
@@ -260,60 +348,45 @@ dev-delete:
 	@rm -f $(OVERMIND_SOCK)
 	@# Remove containers + volumes
 	@echo "  Removing containers and volumes..."
-	@$(DC_DEV) down -v 2>/dev/null || true
+	@$(DC_DEV) --profile explorer down -v 2>/dev/null || true
+	@docker rm zephyr-devnet-init 2>/dev/null || true
 	@# Remove orphaned volumes (handles project-name mismatches)
-	@docker volume ls -q --filter name=docker_zephyr | xargs -r docker volume rm 2>/dev/null || true
-	@docker volume ls -q --filter name=docker_redis | xargs -r docker volume rm 2>/dev/null || true
-	@docker volume ls -q --filter name=docker_postgres | xargs -r docker volume rm 2>/dev/null || true
-	@docker volume ls -q --filter name=docker_anvil | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=zephyr- | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=bridge-redis | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=bridge-postgres | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=bridge-anvil | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=bridge-blockscout | xargs -r docker volume rm 2>/dev/null || true
+	@# Legacy volumes (pre-migration docker_ prefix)
+	@docker volume ls -q --filter name=docker_ | xargs -r docker volume rm 2>/dev/null || true
+	@# Remove local state files
+	@rm -f config/addresses.json deployed-addresses.json
 	@# Remove built images
 	@echo "  Removing Docker images..."
 	@docker rmi zephyr-devnet zephyr-fake-oracle zephyr-fake-orderbook zephyr-devnet-init 2>/dev/null || true
 	@echo "=== Deleted ==="
 
-## Full coordinated reset: Zephyr + Anvil + DB + Redis (~30 sec)
+## Reset to post-setup state, then stop (~15 sec)
 dev-reset:
 	./scripts/dev-reset.sh
 
-## Reset Zephyr chain only (pop blocks to checkpoint)
-dev-reset-zephyr:
-	./scripts/dev-reset.sh --zephyr-only
-
-## Reset EVM only (Anvil wipe + redeploy contracts)
-dev-reset-evm:
-	./scripts/dev-reset.sh --evm-only
-
-## Reset databases only (Postgres + Redis)
-dev-reset-db:
-	./scripts/dev-reset.sh --db-only
+## Reset to post-init state, then stop (~10 sec)
+dev-reset-hard:
+	./scripts/dev-reset.sh --hard
 
 ## Save current height as checkpoint
 dev-checkpoint:
 	@echo "=== Saving checkpoint ==="
-	@HEIGHT=$$(curl -sf http://localhost:47767/json_rpc \
-		-d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' | jq -r '.result.height') && \
+	@HEIGHT=$$($(ZEPHYR_CLI) height) && \
 	$(DC_DEV) exec -T wallet-gov sh -c "echo $$HEIGHT > /checkpoint/height" && \
 	echo "  Checkpoint saved at height: $$HEIGHT"
 
-## Check health of all services
+## Post-setup sanity check (usage: make sanity-check [PRICE=1.50])
+sanity-check:
+	@python3 ./scripts/sanity-check-post-setup-state.py $(if $(PRICE),--price $(PRICE),)
+
+## Check health of all services and pipeline state
 status:
-	@echo "=== Docker Containers ==="
-	@$(DC_DEV) ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "  No containers running"
-	@echo ""
-	@echo "=== Overmind Processes ==="
-	@if [ -S "$(OVERMIND_SOCK)" ]; then \
-		overmind status -s $(OVERMIND_SOCK) 2>/dev/null || echo "  Not running"; \
-	else \
-		echo "  Not running"; \
-	fi
-	@echo ""
-	@echo "=== Chain Status ==="
-	@printf "  Anvil:  " && curl -sf http://localhost:8545 -X POST \
-		-H 'Content-Type: application/json' \
-		-d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' 2>/dev/null | jq -r '.result' || echo "not running"
-	@printf "  Zephyr: " && curl -sf http://localhost:47767/json_rpc \
-		-d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' 2>/dev/null | jq -r '"height \(.result.height)"' || echo "not running"
-	@printf "  Oracle: " && curl -sf http://localhost:5555/status 2>/dev/null | jq -r '"$$\(.spot / 1000000000000) (running)"' || echo "not running"
+	@./scripts/status.sh
 
 ## Tail logs for a service (usage: make logs SERVICE=zephyr-node1)
 logs:
@@ -323,16 +396,12 @@ logs:
 # Oracle / Scenario Control
 # ===========================================
 
-.PHONY: set-price set-scenario fund
+.PHONY: set-price set-scenario set-ma set-ma-mode supply-sync supply-status fund
 
 ## Set oracle price (usage: make set-price PRICE=1.50)
 set-price:
 	@if [ -z "$(PRICE)" ]; then echo "Usage: make set-price PRICE=<usd>"; exit 1; fi
-	@ATOMIC=$$(echo "$(PRICE)" | awk '{printf "%.0f", $$1 * 1000000000000}') && \
-	echo "Setting oracle price to $(PRICE) USD ($$ATOMIC atomic)" && \
-	curl -sf -X POST http://localhost:5555/set-price \
-		-H 'Content-Type: application/json' \
-		-d "{\"spot\": $$ATOMIC}" | jq .
+	@$(ZEPHYR_CLI) price $(PRICE)
 
 ## Set scenario preset (usage: make set-scenario SCENARIO=crisis)
 set-scenario:
@@ -346,33 +415,33 @@ set-scenario:
 		volatility) PRICE=5.00;  SPREAD=150 ;; \
 		*) echo "Unknown scenario: $(SCENARIO)"; exit 1 ;; \
 	esac && \
-	ATOMIC=$$(echo "$$PRICE" | awk '{printf "%.0f", $$1 * 1000000000000}') && \
 	echo "Setting scenario '$(SCENARIO)': price=$${PRICE} USD, spread=$${SPREAD}bps" && \
-	curl -sf -X POST http://localhost:5555/set-price \
-		-H 'Content-Type: application/json' \
-		-d "{\"spot\": $$ATOMIC}" | jq . && \
+	$(ZEPHYR_CLI) price $$PRICE && \
 	curl -sf -X POST http://localhost:5556/set-spread \
 		-H 'Content-Type: application/json' \
 		-d "{\"spreadBps\": $$SPREAD}" | jq . 2>/dev/null || true
 
+## Set oracle moving average (usage: make set-ma MA=1.50)
+set-ma:
+	@if [ -z "$(MA)" ]; then echo "Usage: make set-ma MA=<usd>"; exit 1; fi
+	@$(ZEPHYR_CLI) oracle ma $(MA)
+
+## Set oracle MA mode (usage: make set-ma-mode MA_MODE=ema [EMA_ALPHA=0.05])
+set-ma-mode:
+	@if [ -z "$(MA_MODE)" ]; then echo "Usage: make set-ma-mode MA_MODE=spot|manual|ema|mirror [EMA_ALPHA=0.1]"; exit 1; fi
+	@$(ZEPHYR_CLI) oracle ma-mode $(MA_MODE) $(if $(EMA_ALPHA),--alpha $(EMA_ALPHA),)
+
+## Enable supply sync mode (mirrors mainnet supply via gov wallet)
+supply-sync:
+	@$(ZEPHYR_CLI) oracle supply-sync
+
+## Check supply sync state
+supply-status:
+	@$(ZEPHYR_CLI) oracle supply-status
+
 ## Fund a wallet (usage: make fund WALLET=test AMOUNT=1000 ASSET=ZPH)
 fund:
-	@WALLET=$${WALLET:-test}; AMOUNT=$${AMOUNT:-1000}; ASSET=$${ASSET:-ZPH}; \
-	ATOMIC=$$(echo "$$AMOUNT" | awk '{printf "%.0f", $$1 * 1000000000000}') && \
-	echo "Funding $$WALLET with $$AMOUNT $$ASSET" && \
-	case "$$WALLET" in \
-		test)  DEST_PORT=48768 ;; \
-		miner) DEST_PORT=48767 ;; \
-		*)     echo "Unknown wallet: $$WALLET (use test or miner)"; exit 1 ;; \
-	esac && \
-	DEST_ADDR=$$(curl -sf http://localhost:$$DEST_PORT/json_rpc \
-		-d '{"jsonrpc":"2.0","id":"0","method":"get_address","params":{"account_index":0}}' | jq -r '.result.address') && \
-	curl -sf http://localhost:48769/json_rpc \
-		-d '{"jsonrpc":"2.0","id":"0","method":"refresh"}' >/dev/null 2>&1 && \
-	sleep 1 && \
-	curl -sf http://localhost:48769/json_rpc \
-		-H 'Content-Type: application/json' \
-		-d "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"transfer\",\"params\":{\"destinations\":[{\"amount\":$$ATOMIC,\"address\":\"$$DEST_ADDR\"}],\"source_asset\":\"$$ASSET\",\"destination_asset\":\"$$ASSET\",\"priority\":0,\"ring_size\":2,\"get_tx_key\":true}}" | jq '.result.tx_hash'
+	@$(ZEPHYR_CLI) send gov $(or $(WALLET),test) $(or $(AMOUNT),1000) $(or $(ASSET),ZPH)
 
 # ===========================================
 # Contract Deployment + Env Sync
@@ -388,11 +457,26 @@ deploy-contracts:
 sync-env:
 	./scripts/sync-env.sh
 
+## Seed liquidity via engine's native pool seeder
+seed-engine:
+	./scripts/seed-via-engine.sh
+
+## Seed liquidity via legacy Python script (fallback)
+seed-engine-legacy:
+	./scripts/seed-liquidity.py
+
+## Trigger bridge-api pool scan (discovers Uniswap V4 pools)
+scan-pools:
+	@curl -sf -X POST http://localhost:7051/admin/uniswap/v4/scan \
+		-H "Content-Type: application/json" \
+		-H "x-admin-token: $(ADMIN_TOKEN)" \
+		-d '{}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'  Scanned: {len(d.get(\"pools\",[]))} pools')"
+
 # ===========================================
 # Test Framework
 # ===========================================
 
-.PHONY: test test-l1 test-l2 test-l3 test-l4 test-l1-l2 test-l3-l4 test-l5 test-l5-lint test-l5-summary test-l5-browser-preflight test-l5-execute test-l5-execute-all test-l5-sec test-l5-runtime test-l5-infra test-l5-asset test-l5-stress test-l5-fe
+.PHONY: test test-l1 test-l2 test-l3 test-l4 test-l1-l2 test-l3-l4 test-l5 test-l5-lint test-l5-summary test-l5-browser-preflight test-l5-execute test-l5-execute-all test-l5-sec test-l5-runtime test-l5-infra test-l5-asset test-l5-stress test-l5-fe test-l5-seed test-engine test-engine-verbose typecheck-tests
 
 ## Run all L1-L4 tests
 test:
@@ -440,17 +524,19 @@ test-l5-browser-preflight:
 
 ## L5 execution pass (runs ready+expand, blocks TBC)
 test-l5-execute:
-	./scripts/run-l5-tests.py --execute --report-json .l5-execution-report.json
+	@mkdir -p reports
+	./scripts/run-l5-tests.py --execute --report-json reports/l5-execution-report.json
 
 ## L5 execution pass including TBC baseline checks
 test-l5-execute-all:
-	./scripts/run-l5-tests.py --execute --execute-tbc --report-json .l5-execution-report.json
+	@mkdir -p reports
+	./scripts/run-l5-tests.py --execute --execute-tbc --report-json reports/l5-execution-report.json
 
 ## L5.1 Security & Contracts (SEC + SC)
 test-l5-sec:
 	./scripts/run-l5-tests.py --execute --sublevel L5.1 --verbose
 
-## L5.2 Runtime & Consistency (CONS + RR + CONC)
+## L5.2 Runtime & Consistency (CONS + RR + CONC + SEED)
 test-l5-runtime:
 	./scripts/run-l5-tests.py --execute --sublevel L5.2 --verbose
 
@@ -470,6 +556,22 @@ test-l5-stress:
 test-l5-fe:
 	./scripts/run-l5-tests.py --execute --sublevel L5.6 --verbose
 
+## SEED checks (part of L5.2, also runnable standalone)
+test-l5-seed:
+	./scripts/run-l5-tests.py --execute --category SEED --verbose
+
+## Run engine strategy tests (332 tests)
+test-engine:
+	python3 scripts/engine_tests/runner.py
+
+## Run engine tests verbose
+test-engine-verbose:
+	python3 scripts/engine_tests/runner.py --verbose
+
+## Type-check test suite with pyright
+typecheck-tests:
+	pyright
+
 # ===========================================
 # Cleanup
 # ===========================================
@@ -480,13 +582,13 @@ test-l5-fe:
 clean: dev-delete
 
 # ===========================================
-# Testnet
+# Testnet V2 (Anvil-based)
 # ===========================================
 
-.PHONY: testnet-build testnet-up testnet-down testnet-logs
+.PHONY: testnet-v2-build testnet-v2-up testnet-v2-down testnet-v2-logs
 
 ## Build all app images for testnet
-testnet-build: build
+testnet-v2-build: build
 	@echo "=== Building app images ==="
 	docker build -t zephyr-bridge-web --target web -f docker/bridge/Dockerfile $(BRIDGE_REPO_PATH)
 	docker build -t zephyr-bridge-api --target api -f docker/bridge/Dockerfile $(BRIDGE_REPO_PATH)
@@ -495,8 +597,43 @@ testnet-build: build
 	docker build -t zephyr-engine-watchers --target watchers -f docker/engine/Dockerfile $(ENGINE_REPO_PATH)
 	docker build -t zephyr-dashboard -f docker/dashboard/Dockerfile status-dashboard/
 
-## Start testnet stack (usage: make testnet-up APPS=bridge or PROFILE=full)
-testnet-up:
+## Start testnet V2 stack (usage: make testnet-v2-up APPS=bridge)
+testnet-v2-up:
+	@if [ -n "$(APPS)" ]; then \
+		PROFILES="--profile explorer"; \
+		IFS=','; for grp in $(APPS); do \
+			case $$grp in \
+				bridge|engine|full) PROFILES="$$PROFILES --profile $$grp" ;; \
+				dashboard) PROFILES="$$PROFILES --profile full"; echo "Note: dashboard only available in 'full' profile" ;; \
+				*) echo "Error: Unknown app group '$$grp'. Valid: bridge, engine, full"; exit 1 ;; \
+			esac; \
+		done; \
+		$(DC_V2) $$PROFILES up -d; \
+	elif [ -n "$(PROFILE)" ]; then \
+		$(DC_V2) --profile $(PROFILE) --profile explorer up -d; \
+	else \
+		$(DC_V2) --profile full --profile explorer up -d; \
+	fi
+
+## Stop testnet V2 stack
+testnet-v2-down:
+	$(DC_V2) --profile full --profile explorer down
+
+## Tail testnet V2 logs
+testnet-v2-logs:
+	$(DC_V2) logs -f $(SERVICE)
+
+# ===========================================
+# Testnet V3 (Sepolia)
+# ===========================================
+
+.PHONY: testnet-v3-build testnet-v3-up testnet-v3-down testnet-v3-logs
+
+## Build testnet V3 images (alias to v2-build, same images)
+testnet-v3-build: testnet-v2-build
+
+## Start testnet V3 stack (usage: make testnet-v3-up APPS=bridge)
+testnet-v3-up:
 	@if [ -n "$(APPS)" ]; then \
 		PROFILES=""; \
 		IFS=','; for grp in $(APPS); do \
@@ -506,20 +643,20 @@ testnet-up:
 				*) echo "Error: Unknown app group '$$grp'. Valid: bridge, engine, full"; exit 1 ;; \
 			esac; \
 		done; \
-		$(DC_TEST) $$PROFILES up -d; \
+		$(DC_V3) $$PROFILES up -d; \
 	elif [ -n "$(PROFILE)" ]; then \
-		$(DC_TEST) --profile $(PROFILE) up -d; \
+		$(DC_V3) --profile $(PROFILE) up -d; \
 	else \
-		$(DC_TEST) --profile full up -d; \
+		$(DC_V3) --profile full up -d; \
 	fi
 
-## Stop testnet stack
-testnet-down:
-	$(DC_TEST) down
+## Stop testnet V3 stack
+testnet-v3-down:
+	$(DC_V3) down
 
-## Tail testnet logs
-testnet-logs:
-	$(DC_TEST) logs -f $(SERVICE)
+## Tail testnet V3 logs
+testnet-v3-logs:
+	$(DC_V3) logs -f $(SERVICE)
 
 # ===========================================
 # Help
@@ -531,51 +668,55 @@ testnet-logs:
 help:
 	@echo "Zephyr Bridge Stack"
 	@echo ""
-	@echo "Dev workflow:"
-	@echo "  make dev              Main entry point (auto-inits if needed, then starts)"
-	@echo "  make dev APPS=bridge  Start specific app groups (bridge,engine,dashboard)"
-	@echo "  make dev-reset        Reset all layers to post-init state (~30 sec)"
-	@echo "  make dev-reset-zephyr   Zephyr chain only (pop to checkpoint)"
-	@echo "  make dev-reset-evm      EVM only (Anvil wipe + redeploy)"
-	@echo "  make dev-reset-db       Databases only (Postgres + Redis)"
-	@echo "  make dev-init         Nuclear wipe + rebuild from scratch"
-	@echo "  make dev-stop         Stop everything (preserves data)"
-	@echo "  make dev-delete       Delete everything (containers, volumes, images)"
-	@echo "  make dev-checkpoint   Save current height as checkpoint"
-	@echo "  make status         Check health of all services"
-	@echo "  make logs SERVICE=x Tail logs for a Docker service"
+	@echo "Dev workflow (staged setup):"
+	@echo "  make dev-init                   Base Zephyr devnet, then stop (~4 min)"
+	@echo "  make dev-init-mirror            Init with mainnet-like supply (~8-15 min)"
+	@echo "  make dev-setup                  Bridge infra on top, then stop (~4 min)"
+	@echo "  make dev                        Start the stack (~10 sec)"
+	@echo "  make dev APPS=bridge            Start specific app groups (bridge,engine,dashboard)"
+	@echo "  make dev EXPLORER=0             Skip Blockscout explorer"
+	@echo "  make dev-stop                   Stop everything (preserves data)"
+	@echo ""
+	@echo "Reset:"
+	@echo "  make dev-reset                  Reset to post-setup state, then stop (~15 sec)"
+	@echo "  make dev-reset-hard             Reset to post-init state, then stop (~10 sec)"
+	@echo ""
+	@echo "Lifecycle:"
+	@echo "  make dev-delete                 Delete everything (containers, volumes, images)"
+	@echo "  make dev-checkpoint             Save current height as checkpoint"
+	@echo "  make dev-explorer               Start Blockscout (infra must be running)"
+	@echo "  make status                     Check health of all services"
+	@echo "  make logs SERVICE=x             Tail logs for a Docker service"
 	@echo ""
 	@echo "Oracle/Scenario:"
 	@echo "  make set-price PRICE=1.50"
 	@echo "  make set-scenario SCENARIO=crisis"
+	@echo "  make set-ma MA=1.20             Set oracle moving average"
+	@echo "  make set-ma-mode MA_MODE=ema    Set MA mode (spot|manual|ema|mirror)"
+	@echo "  make supply-sync                Enable runtime supply sync"
+	@echo "  make supply-status              Check supply sync state"
 	@echo "  make fund WALLET=test AMOUNT=1000 ASSET=ZPH"
 	@echo ""
-	@echo "Other:"
-	@echo "  make deploy-contracts  Deploy EVM contracts"
-	@echo "  make sync-env          Sync .env to sub-repos"
-	@echo "  make sync-zephyr       Copy artifacts from Zephyr repo"
-	@echo "  make test              Run all L1-L4 tests"
-	@echo "  make test-l1           Run L1 infrastructure tests"
-	@echo "  make test-l2           Run L2 smoke tests"
-	@echo "  make test-l3           Run L3 component tests"
-	@echo "  make test-l4           Run L4 E2E tests"
-	@echo "  make test-l1-l2        Run L1+L2 (legacy alias)"
-	@echo "  make test-l3-l4        Run L3+L4 (legacy alias)"
-	@echo "  make test-l5           Run L5 edge framework pass"
-	@echo "  make test-l5-lint      L5 catalog integrity checks"
-	@echo "  make test-l5-summary   L5 catalog counts"
-	@echo "  make test-l5-browser-preflight  Browser lane prerequisites"
-	@echo "  make test-l5-execute   Execute L5 ready/expand checks"
-	@echo "  make test-l5-execute-all  Execute L5 including TBC baseline"
-	@echo "  make test-l5-sec         L5.1 Security & Contracts"
-	@echo "  make test-l5-runtime     L5.2 Runtime & Consistency"
-	@echo "  make test-l5-infra       L5.3 Infra & Watchers"
-	@echo "  make test-l5-asset       L5.4 Asset & DEX"
-	@echo "  make test-l5-stress      L5.5 Privacy & Load"
-	@echo "  make test-l5-fe          L5.6 Frontend"
+	@echo "Testnet V2 (Anvil + Blockscout):"
+	@echo "  make testnet-v2-build           Build all app images"
+	@echo "  make testnet-v2-up              Start full stack (apps + explorer)"
+	@echo "  make testnet-v2-up APPS=bridge  Start specific app groups"
+	@echo "  make testnet-v2-down            Stop everything"
+	@echo "  make testnet-v2-logs SERVICE=x  Tail logs"
 	@echo ""
-	@echo "Testnet:"
-	@echo "  make testnet-build     Build all app images"
-	@echo "  make testnet-up PROFILE=full"
-	@echo "  make testnet-up APPS=bridge,engine"
-	@echo "  make testnet-down"
+	@echo "Testnet V3 (Sepolia):"
+	@echo "  make testnet-v3-build           Build all app images"
+	@echo "  make testnet-v3-up              Start full stack"
+	@echo "  make testnet-v3-up APPS=bridge  Start specific app groups"
+	@echo "  make testnet-v3-down            Stop everything"
+	@echo "  make testnet-v3-logs SERVICE=x  Tail logs"
+	@echo ""
+	@echo "Other:"
+	@echo "  make deploy-contracts           Deploy EVM contracts"
+	@echo "  make seed-engine                Seed liquidity via bridge wrap flow"
+	@echo "  make scan-pools                 Trigger bridge-api pool scan"
+	@echo "  make keygen                     Generate fresh keys and write to .env"
+	@echo "  make sync-env                   Sync .env to sub-repos"
+	@echo "  make sync-zephyr                Copy artifacts from Zephyr repo"
+	@echo "  make test                       Run all L1-L4 tests"
+	@echo "  make test-l5                    Run L5 edge framework pass"

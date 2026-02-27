@@ -73,7 +73,53 @@ echo "  Sync Zephyr Artifacts"
 echo "==========================================="
 echo ""
 echo "Source: $ZEPHYR_REPO"
+echo "Branch: $(cd "$ZEPHYR_REPO" && git branch --show-current 2>/dev/null || echo "unknown")"
 echo "Dest:   $ORCH_DIR"
+echo ""
+
+# ===========================================
+# Validate source tree has expected paths
+# ===========================================
+log_info "Checking source tree..."
+MISSING_SRCS=0
+
+check_source() {
+    local path="$1" label="$2" required="${3:-true}"
+    if [[ -e "$ZEPHYR_REPO/$path" ]]; then
+        echo "  [ok]    $label"
+    elif [[ "$required" == "true" ]]; then
+        echo "  [MISS]  $label  ($ZEPHYR_REPO/$path)"
+        MISSING_SRCS=1
+    fi
+}
+
+check_source "tools/fake-oracle/server.js"    "fake-oracle"
+check_source "tools/fake-oracle/oracle_private.pem" "oracle keys"
+check_source "docker/zephyr"                  "docker/zephyr"
+check_source "docker/devnet-init"             "docker/devnet-init"
+check_source "tools/zephyr-cli/cli"           "zephyr-cli"
+check_source "utils/python-rpc"               "python-rpc"
+check_source "tools/fresh-devnet/run.sh"      "fresh-devnet build script"
+
+# Binaries — informational (will attempt build if missing)
+if [[ -f "$ZEPHYR_REPO/build/devnet/bin/zephyrd" ]]; then
+    echo "  [ok]    devnet binaries (pre-built)"
+else
+    echo "  [    ]  devnet binaries (not built — will attempt build)"
+fi
+
+echo ""
+
+if [[ "$MISSING_SRCS" -eq 1 ]]; then
+    log_error "Source tree is missing required paths."
+    echo "  Are you on the right branch? Expected: fresh-dev-bootstrap"
+    echo "  Current: $(cd "$ZEPHYR_REPO" && git branch --show-current 2>/dev/null || echo "unknown")"
+    echo ""
+    echo "  Fix: cd $ZEPHYR_REPO && git checkout fresh-dev-bootstrap"
+    exit 1
+fi
+
+log_success "Source tree OK"
 echo ""
 
 COPIED=0
@@ -124,10 +170,23 @@ BIN_SRC="$ZEPHYR_REPO/build/devnet/bin"
 
 if [[ ! -f "$BIN_SRC/zephyrd" ]] && [[ "$NO_BUILD" != "true" ]]; then
     log_info "Binaries not built yet, building (this may take a while)..."
-    if [[ -x "$ZEPHYR_REPO/tools/fresh-devnet/run.sh" ]]; then
-        (cd "$ZEPHYR_REPO" && tools/fresh-devnet/run.sh build)
+    if (cd "$ZEPHYR_REPO" && tools/fresh-devnet/run.sh build); then
+        log_success "Build complete"
     else
-        log_error "Cannot build: tools/fresh-devnet/run.sh not found in Zephyr repo"
+        echo ""
+        log_error "Build failed. Likely missing C++ build dependencies."
+        echo ""
+        echo "  On Ubuntu/Debian:"
+        echo "    sudo apt install build-essential cmake pkg-config libssl-dev \\"
+        echo "      libzmq3-dev libunbound-dev libsodium-dev libunwind8-dev liblzma-dev \\"
+        echo "      libreadline6-dev libexpat1-dev libpgm-dev libhidapi-dev libusb-1.0-0-dev \\"
+        echo "      libprotobuf-dev protobuf-compiler libudev-dev libboost-chrono-dev \\"
+        echo "      libboost-date-time-dev libboost-filesystem-dev libboost-locale-dev \\"
+        echo "      libboost-program-options-dev libboost-regex-dev libboost-serialization-dev \\"
+        echo "      libboost-system-dev libboost-thread-dev python3 ccache"
+        echo ""
+        echo "  Or skip building and copy pre-built binaries manually:"
+        echo "    $0 --no-build"
         exit 1
     fi
 fi

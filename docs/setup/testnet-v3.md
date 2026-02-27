@@ -2,7 +2,7 @@
 
 Deploys the bridge stack with Sepolia as the EVM chain for pre-mainnet validation. No local Anvil — contracts must be deployed to Sepolia separately.
 
-> For Anvil-based testing with full EVM control, see [testnet.md](./testnet.md) (Testnet V2).
+> For Anvil-based testing with full EVM control, see [testnet-v2.md](./testnet-v2.md) (Testnet V2).
 
 ## Quick Start
 

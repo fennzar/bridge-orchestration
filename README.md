@@ -259,14 +259,14 @@ export PATH="$HOME/.foundry/bin:$PATH"
 
 ### Anvil State Issues
 ```bash
-# Anvil now persists state across restarts via --state flag.
-# To do a full EVM reset (wipe state + redeploy contracts):
-make dev-reset-evm
+# Reset to post-setup state (restores Anvil snapshot + pops Zephyr chain):
+make dev-reset && make dev
 
-# Nuclear option (destroys all volumes):
-docker compose down -v
-docker compose up -d anvil
-./scripts/deploy-contracts.sh
+# Reset to post-init state (wipes Anvil, need to re-deploy contracts):
+make dev-reset-hard && make dev-setup && make dev
+
+# Nuclear option (destroys everything):
+make dev-delete
 ```
 
 ### Prerequisites Check Failed
@@ -279,8 +279,8 @@ make status
 
 ### Setup
 - **[dev.md](./docs/setup/dev.md)** - Local DEVNET development setup
-- **[testnet.md](./docs/setup/testnet.md)** - Testnet deployment (Sepolia + Caddy TLS)
-- **[mainnet.md](./docs/setup/mainnet.md)** - Mainnet deployment (skeleton, not ready)
+- **[testnet-v2.md](./docs/setup/testnet-v2.md)** - Testnet V2 (production build mode)
+- **[testnet-v3.md](./docs/setup/testnet-v3.md)** - Testnet V3 (Sepolia)
 - **[evm-wallets.md](./docs/reference/evm-wallets.md)** - EVM wallet tooling, Anvil accounts, Cast CLI
 - **[metamask.md](./docs/reference/metamask.md)** - MetaMask test wallet (seed, accounts, funding)
 

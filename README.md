@@ -29,18 +29,25 @@ $ROOT/                       # Parent dev folder (set in .env)
 ## Quick Start
 
 ```bash
-# 1. One-time setup
+# 1. Clone this repo + all sibling repos
+mkdir ~/zephyr-dev && cd ~/zephyr-dev
+git clone git@github.com:fennzar/bridge-orchestration.git
+cd bridge-orchestration
+./scripts/clone-repos.sh               # Check prereqs, clone repos, install deps
+
+# 2. Generate keys + configure paths
 make keygen                            # Generate fresh keys → .env
-# Edit .env: set ROOT path + PATH for your system
+# Edit .env: set ROOT to your parent dir (e.g. /home/you/zephyr-dev)
+#            set PATH to include your node/pnpm/foundry bins
 ./scripts/sync-zephyr-artifacts.sh     # Vendor Zephyr binaries (once)
 
-# 2. Start (auto-inits on first run — builds, inits chain, deploys, starts everything)
+# 3. Start (auto-inits on first run — builds, inits chain, deploys, starts everything)
 make dev                               # ~5 min first time, ~10s after
 
-# 3. Between tests
+# 4. Between tests
 make dev-reset                         # Reset all layers to post-init state (~30 sec)
 
-# 4. Stop
+# 5. Stop
 make dev-stop
 ```
 
@@ -62,6 +69,29 @@ Run `make status` to check your environment. Required:
 | tmux | any | `sudo apt install tmux` |
 
 Plus Zephyr binaries built from the `zephyr` repository.
+
+## Clone Repos
+
+All sibling repos can be cloned and set up in one step:
+
+```bash
+./scripts/clone-repos.sh
+```
+
+The script runs three phases:
+
+1. **Check prerequisites** — verifies all tools above are installed, exits early if any are missing
+2. **Clone repos** — clones into the parent directory (skips existing)
+3. **Install dependencies** — `forge install` for contracts, `pnpm install` for JS/TS repos
+
+| Local Directory | Repository | Deps |
+|-----------------|------------|------|
+| `zephyr-eth-foundry/` | `git@github.com:fennzar/zephyr-uniswap-v4-foundry.git` | `forge install` |
+| `zephyr-bridge/` | `git@github.com:fennzar/zephyr-bridge.git` | `pnpm install` |
+| `zephyr-bridge-engine/` | `git@github.com:fennzar/zephyr-bridge-engine.git` | `pnpm install` |
+| `zephyr/` | `https://github.com/ZephyrProtocol/zephyr` | C++ (see below) |
+
+The script also prints system dependency install commands for building the Zephyr daemon from source (Ubuntu/Debian, Arch, Fedora, openSUSE, macOS).
 
 ## Make Targets
 

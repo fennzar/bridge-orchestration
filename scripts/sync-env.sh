@@ -148,7 +148,7 @@ ZEPHYR_BRIDGE_ADDRESS=$(curl -sf http://localhost:48770/json_rpc \
 DATABASE_URL=${DATABASE_URL_ENGINE}
 
 # === MEXC ===
-MEXC_PAPER=${MEXC_PAPER}
+MEXC_PAPER=${MEXC_PAPER:-true}
 MEXC_API_KEY=${MEXC_API_KEY:-}
 MEXC_API_SECRET=${MEXC_API_SECRET:-}
 
@@ -185,6 +185,7 @@ log_success "Created $ENGINE_REPO_PATH/.env"
 
 # Sync addresses to engine repo
 log_info "Syncing addresses to engine..."
+if [ -f "${ORCHESTRATION_PATH}/config/addresses.local.json" ]; then
 python3 -c "
 import json, sys
 src = json.load(open('${ORCHESTRATION_PATH}/config/addresses.local.json'))
@@ -220,6 +221,9 @@ if pools_obj:
 json.dump(out, open('${ENGINE_REPO_PATH}/src/services/evm/config/addresses.local.json', 'w'), indent=2)
 print('  Engine addresses synced (with ' + str(len(pools_obj)) + ' pools)')
 "
+else
+  log_info "No addresses.local.json yet — skipping engine address sync (run make dev-setup first)"
+fi
 
 # ===========================================
 # Summary

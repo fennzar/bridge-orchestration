@@ -39,15 +39,41 @@ require() {
 require git      "git"      "sudo apt install git"
 require node     "node"     "nvm install 22"
 require pnpm     "pnpm"     "npm install -g pnpm"
-require docker   "docker"   "sudo apt install docker.io docker-compose-plugin"
+require docker   "docker"   "see below: install-docker"
 require forge    "forge"    "curl -L https://foundry.paradigm.xyz | bash && foundryup"
-require overmind "overmind" "https://github.com/DarthSim/overmind#installation"
+require overmind "overmind" "see below: install-overmind"
 require tmux     "tmux"     "sudo apt install tmux"
+
+# Check docker compose plugin separately (docker can exist without it)
+if command -v docker &>/dev/null; then
+    if docker compose version &>/dev/null; then
+        echo "  [ok]    docker-compose  $(docker compose version --short 2>/dev/null)"
+    else
+        echo "  [MISS]  docker-compose  — see below: install-docker"
+        MISSING=1
+    fi
+fi
 
 echo ""
 
 if [ "$MISSING" -eq 1 ]; then
     echo "ERROR: Missing prerequisites. Install the tools above and re-run."
+    echo ""
+    echo "── Install helpers ──────────────────────────"
+    echo ""
+    echo "install-docker (Docker CE + Compose plugin via official repo):"
+    echo ""
+    echo "  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg"
+    echo "  echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" > /etc/apt/sources.list.d/docker.list"
+    echo "  apt update && apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin"
+    echo ""
+    echo "install-overmind (v2.5.1 + tmux dependency):"
+    echo ""
+    echo "  apt install -y tmux"
+    echo "  wget -q https://github.com/DarthSim/overmind/releases/download/v2.5.1/overmind-v2.5.1-linux-amd64.gz"
+    echo "  gunzip overmind-v2.5.1-linux-amd64.gz"
+    echo "  chmod +x overmind-v2.5.1-linux-amd64 && mv overmind-v2.5.1-linux-amd64 /usr/local/bin/overmind"
+    echo ""
     exit 1
 fi
 
@@ -80,7 +106,7 @@ clone_or_skip "zephyr-bridge"        "git@github.com:fennzar/zephyr-bridge.git"
 clone_or_skip "zephyr-bridge-engine" "git@github.com:fennzar/zephyr-bridge-engine.git"
 
 # Public repo (HTTPS, recursive for submodules)
-clone_or_skip "zephyr" "https://github.com/ZephyrProtocol/zephyr" "--recursive"
+clone_or_skip "zephyr" "git@github.com:fennzar/zephyr.git" "--recursive"
 
 echo ""
 
@@ -111,6 +137,7 @@ echo ""
 echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
+echo "  cd $PARENT/zephyr && git checkout fresh-dev-bootstrap"
 echo "  cd $ROOT"
 echo "  make keygen                            # Generate fresh keys → .env"
 echo "  # Edit .env: set ROOT=$PARENT"

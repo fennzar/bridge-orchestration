@@ -1,159 +1,109 @@
-# Zephyr Bridge Stack - Testnet V2 (Anvil)
+# Zephyr Bridge Stack - Testnet V2 (Production Build Mode)
 
-Deploys the bridge stack with a local Anvil EVM chain, containerized apps, Caddy TLS, and Blockscout block explorer. Full control over EVM state with aggressive resets.
+Same infrastructure as dev mode (Docker Compose for infra, Overmind for apps), but apps run from production builds (`pnpm build` -> `pnpm start`) instead of hot-reload dev mode.
+
+Uses a separate Procfile (`Procfile.prod`) and Overmind socket (`.overmind-prod.sock`). Cannot coexist with `make dev` — stop one before starting the other.
 
 > For Sepolia pre-mainnet validation, see [testnet-v3.md](./testnet-v3.md).
 
 ## Quick Start
 
 ```bash
-# 1. Build all images (infra + app containers)
+# 1. First time setup (same as dev)
+make keygen
+make testnet-v2-init                 # Base Zephyr devnet (~4 min)
+make testnet-v2-setup                # Bridge infra + contracts + seed (~4 min)
+
+# 2. Build all apps for production
 make testnet-v2-build
 
-# 2. Configure environment
-cp env/.env.testnet-v2.example env/.env.testnet-v2
-# Edit env/.env.testnet-v2 — fill in domain, keys
-
-# 3. Start the stack (Anvil + apps + Blockscout)
-make testnet-v2-up                    # All services
-make testnet-v2-up APPS=bridge        # Bridge only
-make testnet-v2-up APPS=bridge,engine # Bridge + engine
+# 3. Start the stack
+make testnet-v2                      # All services
+make testnet-v2 APPS=bridge          # Bridge only
+make testnet-v2 APPS=bridge,engine   # Bridge + engine
 ```
 
 ## What's Different from Dev
 
-| Aspect | Dev (`make dev`) | Testnet V2 (`make testnet-v2-up`) |
-|--------|-----------------|----------------------------------|
-| EVM chain | Anvil (local, chain 31337) | Anvil (remote, chain 31337) |
-| Apps run via | Overmind (native, hot-reload) | Docker containers |
-| TLS | None (http://localhost) | Caddy + Let's Encrypt |
-| Ports | All exposed on localhost | Internal only, Caddy on 80/443 |
-| Env file | `.env` (root) | `env/.env.testnet-v2` |
-| Explorer | Blockscout (opt-out via `EXPLORER=0`) | Blockscout (always-on) |
+| Aspect | Dev (`make dev`) | Testnet V2 (`make testnet-v2`) |
+|--------|-----------------|-------------------------------|
+| Procfile | `Procfile.dev` (hot-reload) | `Procfile.prod` (production builds) |
+| Bridge web | `pnpm dev:web` | `pnpm start:web` |
+| Bridge API | `pnpm dev:api` | `pnpm start:api` |
+| Bridge watchers | `pnpm dev:watchers` | `pnpm run "/^start:watcher:.*/"` |
+| Engine web | `pnpm --dir apps/web dev` | `pnpm start:web` |
+| Dashboard | `pnpm dev` | `pnpm start` |
+| Overmind socket | `.overmind-dev.sock` | `.overmind-prod.sock` |
+| Build step | None (hot-reload) | `make testnet-v2-build` required |
 
-## Environment Matrix
-
-| Env | EVM Chain | Apps Run Via | Explorer | Make Targets |
-|-----|-----------|-------------|----------|--------------|
-| **Dev** | Anvil (local) | Overmind (hot-reload) | Blockscout (opt-out) | `make dev` |
-| **Testnet V2** | Anvil (remote) | Docker containers | Blockscout (always-on) | `make testnet-v2-*` |
-| **Testnet V3** | Sepolia RPC | Docker containers | Etherscan (external) | `make testnet-v3-*` |
-
-## Prerequisites
-
-Everything from the [dev setup](./dev.md) plus:
-
-- A server with ports 80/443 open (for Caddy TLS)
-- A domain pointing to the server (e.g. `bridge.example.com`)
-- Subdomains: `engine.`, `status.`, `explorer.` pointing to same server
-
-## Configuration
-
-Copy and fill in the testnet V2 env file:
-
-```bash
-cp env/.env.testnet-v2.example env/.env.testnet-v2
-```
-
-Key values to set:
-
-```bash
-# Domain (Caddy uses this for Let's Encrypt)
-DOMAIN=bridge.example.com
-
-# Keys (from make keygen or generate your own)
-DEPLOYER_ADDRESS=0x...
-DEPLOYER_PRIVATE_KEY=0x...
-BRIDGE_SIGNER_ADDRESS=0x...
-BRIDGE_PK=0x...
-
-# Blockscout (uses domain-based URLs via Caddy)
-BLOCKSCOUT_API_HOST=explorer.bridge.example.com
-BLOCKSCOUT_API_PROTOCOL=https
-```
-
-Infrastructure variables (Redis, Postgres, Zephyr, Anvil) use Docker service names and don't need changing.
+Infrastructure (Docker Compose), ports, volumes, and env file (`.env`) are all identical.
 
 ## Make Targets
 
 ```bash
-make testnet-v2-build                    # Build all images (infra + apps)
-make testnet-v2-up                       # Start full stack + Blockscout
-make testnet-v2-up APPS=bridge           # Bridge services only + Blockscout
-make testnet-v2-up APPS=bridge,engine    # Bridge + engine + Blockscout
-make testnet-v2-down                     # Stop everything
-make testnet-v2-logs SERVICE=bridge-api  # Tail container logs
+# Lifecycle (mirrors dev commands)
+make testnet-v2-init                 # Base Zephyr devnet, then stop
+make testnet-v2-setup                # Bridge infra on top, then stop
+make testnet-v2-build                # Build all apps (pnpm build)
+make testnet-v2                      # Start the stack
+make testnet-v2 APPS=bridge          # Start specific app groups
+make testnet-v2-stop                 # Stop everything (preserves data)
+
+# Reset
+make testnet-v2-reset                # Reset to post-setup state, then stop
+make testnet-v2-reset-hard           # Reset to post-init state, then stop
+
+# Cleanup
+make testnet-v2-delete               # Delete everything (containers, volumes)
+make testnet-v2-logs SERVICE=x       # Tail logs
 ```
 
-## Architecture
-
-```
-                    Internet
-                       |
-                   +-------+
-                   | Caddy  |  :80/:443 (Let's Encrypt)
-                   +---+---+
-          +------------+------------+-----------+
-          |            |            |           |
-    bridge.domain  engine.domain  status.   explorer.
-          |            |          domain    domain
-    +-----+-----+  +--+--+    +------+  +----------+
-    |bridge-web |  |eng- |    |dash- |  |blockscout |
-    |bridge-api |  |ine  |    |board |  |proxy      |
-    |bridge-    |  |     |    |      |  |  +API     |
-    |watchers   |  |     |    |      |  |  +frontend|
-    +-----+-----+  +--+--+    +------+  +----+-----+
-          |            |                      |
-    +-----+------------+----------------------+--+
-    |  Anvil / Redis / Postgres                  |
-    |  Zephyr Nodes/Wallets                      |
-    |  Fake Oracle/Orderbook                     |
-    |  Blockscout DB                             |
-    +--------------------------------------------+
-```
-
-### Compose Profiles
-
-| Profile | Services |
-|---------|----------|
-| `bridge` | bridge-web, bridge-api, bridge-watchers, caddy |
-| `engine` | engine-web, engine-watchers |
-| `full` | All of the above + dashboard |
-| `explorer` | Blockscout (always included in V2) |
-| `init` | devnet-init container (first-time setup) |
-
-### URLs (with Caddy)
-
-| Service | URL |
-|---------|-----|
-| Bridge UI | `https://bridge.example.com` |
-| Bridge API | `https://bridge.example.com/api/*` |
-| Engine | `https://engine.bridge.example.com` |
-| Dashboard | `https://status.bridge.example.com` |
-| Explorer | `https://explorer.bridge.example.com` |
-
-## Updating
+## Default Workflow
 
 ```bash
-# Rebuild app images after code changes
-make testnet-v2-build
+# First time:
+make keygen && make testnet-v2-init && make testnet-v2-setup
+make testnet-v2-build && make testnet-v2
 
-# Restart with new images
-make testnet-v2-down && make testnet-v2-up
+# Between tests:
+make testnet-v2-reset && make testnet-v2
+
+# After code changes:
+make testnet-v2-build && make testnet-v2
+
+# After changing EVM contracts:
+make testnet-v2-reset-hard && make testnet-v2-setup
+make testnet-v2-build && make testnet-v2
+
+# Done for the day:
+make testnet-v2-stop
+
+# Next day:
+make testnet-v2
 ```
+
+## Ports
+
+Same as dev mode — all services run on localhost:
+
+| Service | Port |
+|---------|------|
+| Bridge Web UI | 7050 |
+| Bridge API | 7051 |
+| Engine | 7000 |
+| Dashboard | 7100 |
+| Anvil (EVM) | 8545 |
+| Blockscout | 4000 |
 
 ## Troubleshooting
 
-**Caddy won't start / TLS errors:**
-- Verify domain DNS points to this server (including `explorer.` subdomain)
-- Ports 80 and 443 must be open (no other reverse proxy in front)
-- Check Caddy logs: `make testnet-v2-logs SERVICE=caddy`
+**Apps won't start / "module not found":**
+- Run `make testnet-v2-build` first — production mode requires build output.
 
-**Blockscout not indexing:**
-- Ensure Anvil is healthy: `make testnet-v2-logs SERVICE=anvil`
-- Check Blockscout backend logs: `make testnet-v2-logs SERVICE=blockscout-backend`
-- Blockscout needs a few minutes to index existing blocks on first start
+**Bridge web shows blank page:**
+- The `.next` build directory must exist. If it was cleaned (e.g. by `make dev-reset`), rebuild with `make testnet-v2-build`.
+- Note: `make testnet-v2-reset` preserves the `.next` directory automatically.
 
-**Bridge watchers not connecting:**
-- Zephyr nodes must be healthy first: `make testnet-v2-logs SERVICE=zephyr-node1`
-- Check bridge-watchers logs: `make testnet-v2-logs SERVICE=bridge-watchers`
+**Switching between dev and testnet-v2:**
+- Stop the current mode first (`make dev-stop` or `make testnet-v2-stop`).
+- They share the same Docker infrastructure but use different Overmind sockets.

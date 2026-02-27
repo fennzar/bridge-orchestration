@@ -30,7 +30,7 @@ source "$SCRIPT_DIR/lib/env.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
 DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml -f $ORCH_DIR/docker/compose.blockscout.yml"
-OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
+OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
 ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
 
 # Parse flags
@@ -79,7 +79,8 @@ if [ -S "$OVERMIND_SOCK" ]; then
 fi
 
 # Clean bridge-web cache to prevent ENOENT errors on restart
-if [ -n "$BRIDGE_REPO_PATH" ] && [ -d "$BRIDGE_REPO_PATH/apps/web/.next" ]; then
+# Skip when using prod Procfile — the build output is needed
+if [[ "${PROCFILE:-}" != *"Procfile.prod"* ]] && [ -n "$BRIDGE_REPO_PATH" ] && [ -d "$BRIDGE_REPO_PATH/apps/web/.next" ]; then
     rm -rf "$BRIDGE_REPO_PATH/apps/web/.next"
     log_info "Cleaned bridge-web .next cache"
 fi

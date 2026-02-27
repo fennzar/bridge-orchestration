@@ -41,13 +41,17 @@ make keygen                            # Generate fresh keys → .env
 #            set PATH to include your node/pnpm/foundry bins
 ./scripts/sync-zephyr-artifacts.sh     # Vendor Zephyr binaries (once)
 
-# 3. Start (auto-inits on first run — builds, inits chain, deploys, starts everything)
-make dev                               # ~5 min first time, ~10s after
+# 3. Init + setup (first time only)
+make dev-init                          # Base Zephyr devnet (~4 min)
+make dev-setup                         # Deploy contracts + seed liquidity (~4 min)
 
-# 4. Between tests
-make dev-reset                         # Reset all layers to post-init state (~30 sec)
+# 4. Start
+make dev                               # Start the stack (~10 sec)
 
-# 5. Stop
+# 5. Between tests
+make dev-reset && make dev             # Reset to post-setup state + restart
+
+# 6. Stop
 make dev-stop
 ```
 
@@ -97,16 +101,16 @@ The script also prints system dependency install commands for building the Zephy
 
 | Target | Purpose |
 |--------|---------|
-| `make dev` | Main entry point (auto-inits if fresh, then starts) |
-| `make dev APPS=bridge` | Start with specific app groups (bridge, engine, dashboard) |
-| `make dev-reset` | Reset all layers to post-init state (~30 sec) |
-| `make dev-reset-zephyr` | Reset Zephyr chain only (pop to checkpoint) |
-| `make dev-reset-evm` | Reset EVM only (Anvil wipe + redeploy) |
-| `make dev-reset-db` | Reset databases only (Postgres + Redis) |
-| `make dev-init` | Nuclear wipe + rebuild from scratch |
+| `make dev-init` | Base Zephyr devnet, then stop (~4 min) |
+| `make dev-setup` | Deploy contracts + seed liquidity, then stop (~4 min) |
+| `make dev` | Start the stack (~10 sec) |
+| `make dev APPS=bridge` | Start specific app groups (bridge, engine, dashboard) |
 | `make dev-stop` | Stop everything (apps + infra) |
+| `make dev-reset` | Reset to post-setup state, then stop (~15 sec) |
+| `make dev-reset-hard` | Reset to post-init state, then stop (~10 sec) |
+| `make dev-delete` | Delete everything (containers, volumes, images) |
 | `make dev-checkpoint` | Save current height as checkpoint |
-| `make build` | Build Docker images (auto-run by `dev` if needed) |
+| `make build` | Build Docker images |
 | `make status` | Check health of all services |
 | `make logs SERVICE=x` | Tail logs for a Docker service |
 | `make set-price PRICE=x` | Set fake oracle price |

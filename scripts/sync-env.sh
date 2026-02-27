@@ -99,9 +99,9 @@ if [ -f "$ADDR_SRC" ]; then
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/packages/config/src/addresses/addresses.local.json"
   log_success "Copied addresses to bridge API + config package"
 
-  # Rebuild config package to clear cached dist/
+  # Rebuild config package (and its dependency @zephyr-bridge/types) to clear cached dist/
   log_info "Rebuilding bridge config package..."
-  (cd "$BRIDGE_REPO_PATH" && pnpm --filter @zephyr-bridge/config build 2>/dev/null)
+  (cd "$BRIDGE_REPO_PATH" && pnpm --filter @zephyr-bridge/types --filter @zephyr-bridge/config build 2>/dev/null)
   log_success "Config package rebuilt"
 fi
 

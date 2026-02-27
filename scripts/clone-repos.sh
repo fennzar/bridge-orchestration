@@ -37,6 +37,7 @@ require() {
 }
 
 require git      "git"      "sudo apt install git"
+require python3  "python3"  "sudo apt install python3 python3-pip"
 require node     "node"     "nvm install 22"
 require pnpm     "pnpm"     "npm install -g pnpm"
 require docker   "docker"   "see below: install-docker"
@@ -101,7 +102,7 @@ clone_or_skip() {
 }
 
 # Private repos (SSH)
-clone_or_skip "zephyr-eth-foundry"   "git@github.com:fennzar/zephyr-uniswap-v4-foundry.git"
+clone_or_skip "zephyr-eth-foundry"   "git@github.com:fennzar/zephyr-uniswap-v4-foundry.git" "--recursive"
 clone_or_skip "zephyr-bridge"        "git@github.com:fennzar/zephyr-bridge.git"
 clone_or_skip "zephyr-bridge-engine" "git@github.com:fennzar/zephyr-bridge-engine.git"
 
@@ -117,12 +118,13 @@ echo ""
 echo "=== Installing dependencies ==="
 echo ""
 
-# Foundry (Solidity)
+# Foundry (Solidity — forge-std, openzeppelin, uniswap-hooks, etc.)
 echo "  [forge] zephyr-eth-foundry ..."
-if [ -d "$PARENT/zephyr-eth-foundry/lib/forge-std" ]; then
+if [ -d "$PARENT/zephyr-eth-foundry/lib/forge-std/src" ]; then
     echo "          dependencies already installed"
 else
-    (cd "$PARENT/zephyr-eth-foundry" && forge install --no-commit)
+    echo "          initializing submodules..."
+    (cd "$PARENT/zephyr-eth-foundry" && git submodule update --init --recursive 2>&1 | tail -5)
 fi
 
 # Bridge (pnpm monorepo)
@@ -132,6 +134,14 @@ echo "  [pnpm]  zephyr-bridge ..."
 # Engine
 echo "  [pnpm]  zephyr-bridge-engine ..."
 (cd "$PARENT/zephyr-bridge-engine" && pnpm install 2>&1 | tail -1)
+
+# Python dependencies (zephyr-cli + orchestration scripts)
+echo "  [apt]   python3-requests ..."
+if python3 -c "import requests" 2>/dev/null; then
+    echo "          already installed"
+else
+    sudo apt install -y python3-requests 2>&1 | tail -1
+fi
 
 echo ""
 echo "=== Setup complete ==="

@@ -16,10 +16,10 @@
 #   make dev APPS=bridge          Only bridge processes
 #   make dev APPS=bridge,engine   Bridge + engine (no dashboard)
 #
-# Testnet V2 (Anvil):
+# Testnet V2 (Production Build Mode):
 #   make testnet-v2-build
-#   make testnet-v2-up
-#   make testnet-v2-down
+#   make testnet-v2
+#   make testnet-v2-stop
 #
 # Testnet V3 (Sepolia):
 #   make testnet-v3-up
@@ -38,14 +38,12 @@ SHELL := /bin/bash
 # ===========================================
 COMPOSE_BASE := docker/compose.base.yml
 COMPOSE_DEV  := docker/compose.dev.yml
-COMPOSE_V2   := docker/compose.testnet-v2.yml
 COMPOSE_V3   := docker/compose.testnet-v3.yml
 COMPOSE_PROD := docker/compose.prod.yml
 COMPOSE_BS   := docker/compose.blockscout.yml
 
-# Blockscout always in dev/v2 compose chain (profiled — won't start unless activated)
+# Blockscout always in dev compose chain (profiled — won't start unless activated)
 DC_DEV := docker compose -p bridge --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV) -f $(COMPOSE_BS)
-DC_V2  := docker compose -p bridge-v2 --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_V2) -f $(COMPOSE_BS)
 DC_V3  := docker compose -p bridge-v3 --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_V3)
 
 # Paths (loaded from .env if available)
@@ -55,8 +53,9 @@ SYSTEM_PATH := $(PATH)
 # Restore PATH (the .env PATH uses $PATH which doesn't expand in Make)
 export PATH := $(SYSTEM_PATH)
 ORCH_DIR        := $(CURDIR)
-PROCFILE        := $(ORCH_DIR)/Procfile.dev
-OVERMIND_SOCK   := $(ORCH_DIR)/.overmind-dev.sock
+PROCFILE        ?= $(ORCH_DIR)/Procfile.dev
+OVERMIND_SOCK   ?= $(ORCH_DIR)/.overmind-dev.sock
+export PROCFILE OVERMIND_SOCK
 ZEPHYR_CLI      := $(or $(wildcard tools/zephyr-cli/cli),$(ZEPHYR_REPO_PATH)/tools/zephyr-cli/cli)
 
 
@@ -592,46 +591,56 @@ typecheck-tests:
 clean: dev-delete
 
 # ===========================================
-# Testnet V2 (Anvil-based)
+# Testnet V2 (Production Build Mode)
 # ===========================================
+# Same infra as dev, but apps run from production builds (pnpm build -> pnpm start).
+# Uses Procfile.prod + separate Overmind socket so it can't coexist with dev.
 
-.PHONY: testnet-v2-build testnet-v2-up testnet-v2-down testnet-v2-logs
+.PHONY: testnet-v2-build testnet-v2-init testnet-v2-setup testnet-v2 testnet-v2-stop testnet-v2-reset testnet-v2-reset-hard testnet-v2-delete testnet-v2-logs
 
-## Build all app images for testnet
-testnet-v2-build: build
-	@echo "=== Building app images ==="
-	docker build -t zephyr-bridge-web --target web -f docker/bridge/Dockerfile $(BRIDGE_REPO_PATH)
-	docker build -t zephyr-bridge-api --target api -f docker/bridge/Dockerfile $(BRIDGE_REPO_PATH)
-	docker build -t zephyr-bridge-watchers --target watchers -f docker/bridge/Dockerfile $(BRIDGE_REPO_PATH)
-	docker build -t zephyr-engine-web --target web -f docker/engine/Dockerfile $(ENGINE_REPO_PATH)
-	docker build -t zephyr-engine-watchers --target watchers -f docker/engine/Dockerfile $(ENGINE_REPO_PATH)
-	docker build -t zephyr-dashboard -f docker/dashboard/Dockerfile status-dashboard/
+PROD_PROCFILE := $(ORCH_DIR)/Procfile.prod
+PROD_SOCK     := $(ORCH_DIR)/.overmind-prod.sock
 
-## Start testnet V2 stack (usage: make testnet-v2-up APPS=bridge)
-testnet-v2-up:
-	@if [ -n "$(APPS)" ]; then \
-		PROFILES="--profile explorer"; \
-		IFS=','; for grp in $(APPS); do \
-			case $$grp in \
-				bridge|engine|full) PROFILES="$$PROFILES --profile $$grp" ;; \
-				dashboard) PROFILES="$$PROFILES --profile full"; echo "Note: dashboard only available in 'full' profile" ;; \
-				*) echo "Error: Unknown app group '$$grp'. Valid: bridge, engine, full"; exit 1 ;; \
-			esac; \
-		done; \
-		$(DC_V2) $$PROFILES up -d; \
-	elif [ -n "$(PROFILE)" ]; then \
-		$(DC_V2) --profile $(PROFILE) --profile explorer up -d; \
-	else \
-		$(DC_V2) --profile full --profile explorer up -d; \
-	fi
+## Build all apps for production (pnpm build)
+testnet-v2-build:
+	@echo "=== Building bridge ==="
+	cd $(BRIDGE_REPO_PATH) && pnpm build
+	@echo "=== Building engine ==="
+	cd $(ENGINE_REPO_PATH) && pnpm build
+	@echo "=== Building dashboard ==="
+	cd $(ORCH_DIR)/status-dashboard && pnpm build
+
+## Init base Zephyr devnet (same as dev-init)
+testnet-v2-init:
+	$(MAKE) dev-init
+
+## Setup bridge infra with production Procfile
+testnet-v2-setup:
+	$(MAKE) dev-setup PROCFILE=$(PROD_PROCFILE) OVERMIND_SOCK=$(PROD_SOCK)
+
+## Start stack with production builds
+testnet-v2:
+	$(MAKE) dev PROCFILE=$(PROD_PROCFILE) OVERMIND_SOCK=$(PROD_SOCK) APPS=$(APPS) EXPLORER=$(EXPLORER)
 
 ## Stop testnet V2 stack
-testnet-v2-down:
-	$(DC_V2) --profile full --profile explorer down
+testnet-v2-stop:
+	$(MAKE) dev-stop OVERMIND_SOCK=$(PROD_SOCK)
+
+## Reset to post-setup state
+testnet-v2-reset:
+	$(MAKE) dev-reset PROCFILE=$(PROD_PROCFILE) OVERMIND_SOCK=$(PROD_SOCK)
+
+## Reset to post-init state
+testnet-v2-reset-hard:
+	$(MAKE) dev-reset-hard PROCFILE=$(PROD_PROCFILE) OVERMIND_SOCK=$(PROD_SOCK)
+
+## Delete all testnet V2 state
+testnet-v2-delete:
+	$(MAKE) dev-delete OVERMIND_SOCK=$(PROD_SOCK)
 
 ## Tail testnet V2 logs
 testnet-v2-logs:
-	$(DC_V2) logs -f $(SERVICE)
+	$(MAKE) logs SERVICE=$(SERVICE)
 
 # ===========================================
 # Testnet V3 (Sepolia)
@@ -639,8 +648,15 @@ testnet-v2-logs:
 
 .PHONY: testnet-v3-build testnet-v3-up testnet-v3-down testnet-v3-logs
 
-## Build testnet V3 images (alias to v2-build, same images)
-testnet-v3-build: testnet-v2-build
+## Build testnet V3 Docker images
+testnet-v3-build: build
+	@echo "=== Building app images ==="
+	docker build -t zephyr-bridge-web --target web -f docker/bridge/Dockerfile $(BRIDGE_REPO_PATH)
+	docker build -t zephyr-bridge-api --target api -f docker/bridge/Dockerfile $(BRIDGE_REPO_PATH)
+	docker build -t zephyr-bridge-watchers --target watchers -f docker/bridge/Dockerfile $(BRIDGE_REPO_PATH)
+	docker build -t zephyr-engine-web --target web -f docker/engine/Dockerfile $(ENGINE_REPO_PATH)
+	docker build -t zephyr-engine-watchers --target watchers -f docker/engine/Dockerfile $(ENGINE_REPO_PATH)
+	docker build -t zephyr-dashboard -f docker/dashboard/Dockerfile status-dashboard/
 
 ## Start testnet V3 stack (usage: make testnet-v3-up APPS=bridge)
 testnet-v3-up:
@@ -707,11 +723,16 @@ help:
 	@echo "  make supply-status              Check supply sync state"
 	@echo "  make fund WALLET=test AMOUNT=1000 ASSET=ZPH"
 	@echo ""
-	@echo "Testnet V2 (Anvil + Blockscout):"
-	@echo "  make testnet-v2-build           Build all app images"
-	@echo "  make testnet-v2-up              Start full stack (apps + explorer)"
-	@echo "  make testnet-v2-up APPS=bridge  Start specific app groups"
-	@echo "  make testnet-v2-down            Stop everything"
+	@echo "Testnet V2 (Production Build Mode):"
+	@echo "  make testnet-v2-build           Build all apps (pnpm build)"
+	@echo "  make testnet-v2-init            Init base devnet (same as dev-init)"
+	@echo "  make testnet-v2-setup           Setup bridge infra"
+	@echo "  make testnet-v2                 Start stack with production builds"
+	@echo "  make testnet-v2 APPS=bridge     Start specific app groups"
+	@echo "  make testnet-v2-stop            Stop everything"
+	@echo "  make testnet-v2-reset           Reset to post-setup state"
+	@echo "  make testnet-v2-reset-hard      Reset to post-init state"
+	@echo "  make testnet-v2-delete          Delete everything"
 	@echo "  make testnet-v2-logs SERVICE=x  Tail logs"
 	@echo ""
 	@echo "Testnet V3 (Sepolia):"

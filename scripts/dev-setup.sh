@@ -200,8 +200,10 @@ if [ -S "$OVERMIND_SOCK" ] && ! overmind status -s "$OVERMIND_SOCK" >/dev/null 2
     rm -f "$OVERMIND_SOCK"
 fi
 "$SCRIPT_DIR/sync-env.sh"
+# Always use dev Procfile for setup — prod builds don't exist yet
+SETUP_PROCFILE="$ORCH_DIR/Procfile.dev"
 FORM="bridge-web=1,bridge-api=1,bridge-watchers=1,engine-web=1,engine-watchers=1,dashboard=0"
-cd "$ORCH_DIR" && OVERMIND_FORMATION="$FORM" overmind start -D -f "$PROCFILE" -s "$OVERMIND_SOCK"
+cd "$ORCH_DIR" && OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK"
 log_success "Apps started"
 
 log_info "Waiting for bridge-api health..."

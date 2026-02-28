@@ -194,7 +194,7 @@ else
     # Without this, node1 stays synchronized=False indefinitely in devnet,
     # which blocks all wallet transfer operations ("daemon is busy").
     log_info "Restarting node1 to resync..."
-    $DC_DEV restart zephyr-node1 2>/dev/null
+    docker restart zephyr-node1 >/dev/null 2>&1
     sleep 5
     for i in $(seq 1 20); do
         if curl -sf http://127.0.0.1:47767/json_rpc \
@@ -230,14 +230,6 @@ else
     # Refresh wallets to pick up the warm-up block outputs
     "$ZEPHYR_CLI" rescan all 2>/dev/null || true
     sleep 3
-fi
-
-# Restart mining (skip for --hard: dev-setup will handle mining)
-if [ "$HARD_RESET" = false ]; then
-    log_info "Restarting mining..."
-    "$ZEPHYR_CLI" mine start --threads 2
-else
-    log_info "Skipping mining restart (hard reset)"
 fi
 
 log_success "Zephyr chain reset to height $CHECKPOINT"
@@ -333,9 +325,9 @@ echo ""
 echo "==========================================="
 if [ "$HARD_RESET" = true ]; then
     log_success "Hard reset complete (post-init state)"
-    echo "  Next: make dev-setup"
+    echo "  Next: make dev-setup or make testnet-v2-setup"
 else
     log_success "Reset complete (post-setup state)"
-    echo "  Next: make dev"
+    echo "  Next: make dev or make testnet-v2"
 fi
 echo "==========================================="

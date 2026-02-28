@@ -444,6 +444,20 @@ print_chain_vitals() {
         echo -e "  Zephyr:  ${DIM}not responding${NC}"
     fi
 
+    # Mining status
+    local mining_response
+    mining_response=$(curl -sf -m 2 http://127.0.0.1:47767/mining_status 2>/dev/null) || true
+    if [ -n "${mining_response:-}" ]; then
+        local mining_active mining_threads
+        mining_active=$(echo "$mining_response" | jq -r '.active // false' 2>/dev/null)
+        mining_threads=$(echo "$mining_response" | jq -r '.threads_count // 0' 2>/dev/null)
+        if [ "$mining_active" = "true" ]; then
+            echo -e "  Mining:  ${YELLOW}${BOLD}active${NC} (${mining_threads} threads)"
+        else
+            echo -e "  Mining:  ${DIM}stopped${NC}"
+        fi
+    fi
+
     # Anvil block number
     local anvil_block
     anvil_block=$(curl -sf -m 2 http://127.0.0.1:8545 -X POST \

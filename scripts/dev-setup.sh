@@ -108,7 +108,7 @@ done
 
 log_info "Pushing database schemas (force-reset for clean state)..."
 cd "$BRIDGE_REPO_PATH/packages/db" && PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="yes" DATABASE_URL="$DATABASE_URL_BRIDGE" npx prisma db push --force-reset 2>&1 | tail -1
-cd "$ENGINE_REPO_PATH" && PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="yes" DATABASE_URL="$DATABASE_URL_ENGINE" pnpm prisma db push --schema=src/infra/prisma/schema.prisma --force-reset --skip-generate 2>&1 | tail -1
+cd "$ENGINE_REPO_PATH" && PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="yes" DATABASE_URL="$DATABASE_URL_ENGINE" pnpm prisma db push --schema=src/infra/prisma/schema.prisma --force-reset 2>&1 | tail -1
 cd "$ORCH_DIR"
 # Flush Redis for clean state
 redis-cli -p "${REDIS_PORT:-6380}" -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 || \

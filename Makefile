@@ -603,12 +603,14 @@ PROD_SOCK     := $(ORCH_DIR)/.overmind-prod.sock
 
 ## Build all apps for production (pnpm build)
 testnet-v2-build:
+	@echo "=== Syncing env files ==="
+	./scripts/sync-env.sh
 	@echo "=== Building bridge ==="
-	cd $(BRIDGE_REPO_PATH) && pnpm build
+	source scripts/lib/env.sh && load_env .env && load_env "$(BRIDGE_REPO_PATH)/.env.local" && cd "$(BRIDGE_REPO_PATH)" && pnpm build
 	@echo "=== Building engine ==="
-	cd $(ENGINE_REPO_PATH) && pnpm build
+	source scripts/lib/env.sh && load_env .env && cd "$(ENGINE_REPO_PATH)" && pnpm build:web
 	@echo "=== Building dashboard ==="
-	cd $(ORCH_DIR)/status-dashboard && pnpm build
+	source scripts/lib/env.sh && load_env .env && cd "$(ORCH_DIR)/status-dashboard" && pnpm build
 
 ## Init base Zephyr devnet (same as dev-init)
 testnet-v2-init:

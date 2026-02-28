@@ -131,9 +131,15 @@ fi
 echo "  [pnpm]  zephyr-bridge ..."
 (cd "$PARENT/zephyr-bridge" && pnpm install 2>&1 | tail -1)
 
-# Engine
+# Engine (root + apps/web has separate deps)
 echo "  [pnpm]  zephyr-bridge-engine ..."
 (cd "$PARENT/zephyr-bridge-engine" && pnpm install 2>&1 | tail -1)
+echo "  [pnpm]  zephyr-bridge-engine/apps/web ..."
+(cd "$PARENT/zephyr-bridge-engine/apps/web" && pnpm install 2>&1 | tail -1)
+
+# Dashboard
+echo "  [pnpm]  bridge-orchestration/status-dashboard ..."
+(cd "$ROOT/status-dashboard" && pnpm install 2>&1 | tail -1)
 
 # Python dependencies (zephyr-cli + orchestration scripts)
 echo "  [apt]   python3-requests ..."

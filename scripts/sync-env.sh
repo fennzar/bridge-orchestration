@@ -65,6 +65,7 @@ DATABASE_URL=${DATABASE_URL_BRIDGE}
 
 # === UI Settings ===
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-}
+NEXT_PUBLIC_REOWN_PROJECT_ID=${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-placeholder}
 NEXT_PUBLIC_ENABLE_DEV_CONTROLS=${NEXT_PUBLIC_ENABLE_DEV_CONTROLS}
 NEXT_PUBLIC_ZEPHYR_EXPLORER_BASE=https://explorer.zephyrprotocol.com/tx/
 
@@ -98,12 +99,13 @@ if [ -f "$ADDR_SRC" ]; then
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/apps/api/config/addresses.local.json"
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/packages/config/src/addresses/addresses.local.json"
   log_success "Copied addresses to bridge API + config package"
-
-  # Rebuild config package (and its dependency @zephyr-bridge/types) to clear cached dist/
-  log_info "Rebuilding bridge config package..."
-  (cd "$BRIDGE_REPO_PATH" && pnpm --filter @zephyr-bridge/types --filter @zephyr-bridge/config build 2>/dev/null)
-  log_success "Config package rebuilt"
 fi
+
+# Build all internal packages (types → config → evm → bridge etc.)
+# Required after address changes AND on fresh clones where dist/ doesn't exist yet.
+log_info "Building bridge internal packages..."
+(cd "$BRIDGE_REPO_PATH" && pnpm --filter './packages/*' build 2>/dev/null)
+log_success "Bridge packages built"
 
 # ===========================================
 # Generate zephyr-bridge-engine .env

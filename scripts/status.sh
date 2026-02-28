@@ -41,6 +41,7 @@ DOCKER_SERVICES=(
     "zephyr-wallet-test:wallet-test:48768"
     "zephyr-wallet-bridge:wallet-bridge:48770"
     "zephyr-wallet-engine:wallet-engine:48771"
+    "zephyr-wallet-cex:wallet-cex:48772"
     "zephyr-fake-oracle:fake-oracle:5555"
     "zephyr-fake-orderbook:fake-orderbook:5556"
     "zephyr-blockscout-proxy:blockscout:4000:optional"

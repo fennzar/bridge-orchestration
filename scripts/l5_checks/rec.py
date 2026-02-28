@@ -232,7 +232,7 @@ def check_rec_007(row, probes):
     if not api_up:
         try:
             orch_dir = __import__("os").environ.get("ORCHESTRATION_PATH", "")
-            sock_path = __import__("os").path.join(orch_dir, ".overmind-dev.sock") if orch_dir else ""
+            sock_path = __import__("os").environ.get("OVERMIND_SOCK", __import__("os").path.join(orch_dir, ".overmind-dev.sock")) if orch_dir else ""
             if sock_path and __import__("os").path.exists(sock_path):
                 subprocess.run(
                     ["overmind", "restart", "bridge-api", "-s", sock_path],
@@ -306,7 +306,7 @@ def check_rec_008(row, probes):
     if not api_up:
         try:
             orch_dir = __import__("os").environ.get("ORCHESTRATION_PATH", "")
-            sock_path = __import__("os").path.join(orch_dir, ".overmind-dev.sock") if orch_dir else ""
+            sock_path = __import__("os").environ.get("OVERMIND_SOCK", __import__("os").path.join(orch_dir, ".overmind-dev.sock")) if orch_dir else ""
             if sock_path and __import__("os").path.exists(sock_path):
                 subprocess.run(
                     ["overmind", "restart", "bridge-api", "-s", sock_path],

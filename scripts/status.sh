@@ -58,7 +58,14 @@ OVERMIND_PROCESSES=(
     "dashboard:7100"
 )
 
-OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
+# Check both sockets — dev and prod may use different ones
+if [ -n "${OVERMIND_SOCK:-}" ]; then
+    : # Caller specified which socket to use
+elif [ -S "$ORCH_DIR/.overmind-prod.sock" ]; then
+    OVERMIND_SOCK="$ORCH_DIR/.overmind-prod.sock"
+else
+    OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
+fi
 
 # ===========================================
 # Helper: check if Docker is available

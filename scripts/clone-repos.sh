@@ -44,6 +44,8 @@ require docker   "docker"   "see below: install-docker"
 require forge    "forge"    "curl -L https://foundry.paradigm.xyz | bash && foundryup"
 require overmind "overmind" "see below: install-overmind"
 require tmux     "tmux"     "sudo apt install tmux"
+require jq       "jq"       "sudo apt install jq"
+require bc       "bc"       "sudo apt install bc"
 
 # Check docker compose plugin separately (docker can exist without it)
 if command -v docker &>/dev/null; then

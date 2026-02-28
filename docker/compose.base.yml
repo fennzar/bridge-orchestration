@@ -7,6 +7,12 @@
 # Usage:
 #   docker compose -f docker/compose.base.yml -f docker/compose.dev.yml up -d
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-zephyr-node: &zephyr-node
   image: zephyr-devnet
   environment:
@@ -18,12 +24,14 @@ x-zephyr-node: &zephyr-node
     timeout: 5s
     retries: 12
     start_period: 10s
+  logging: *default-logging
   restart: unless-stopped
 
 x-zephyr-wallet: &zephyr-wallet
   image: zephyr-devnet
   environment:
     ZEPHYR_MODE: wallet
+  logging: *default-logging
   restart: unless-stopped
 
 services:
@@ -41,6 +49,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net
@@ -63,6 +72,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net
@@ -337,6 +347,7 @@ services:
     depends_on:
       zephyr-node1:
         condition: service_healthy
+    logging: *default-logging
     restart: unless-stopped
 
   # ===========================================
@@ -356,6 +367,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net

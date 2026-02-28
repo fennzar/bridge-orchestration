@@ -177,7 +177,7 @@ echo ""
 # Step 8: Reset Anvil + deploy contracts
 # ===========================================
 log_info "Resetting Anvil for fresh deploy..."
-$DC_DEV exec -T anvil rm -f /data/anvil-state.json 2>/dev/null || true
+rm -f "$ORCH_DIR/snapshots/anvil/state.json"
 $DC_DEV restart anvil
 log_info "Waiting for Anvil..."
 for i in $(seq 1 20); do
@@ -250,31 +250,32 @@ log_success "Checkpoint updated: $CHECKPOINT -> $NEW_HEIGHT"
 echo ""
 
 # ===========================================
-# Step 12: Save Anvil snapshot
-# ===========================================
-log_info "Saving Anvil EVM snapshot..."
-# Use anvil_dumpState RPC to capture full EVM state (contracts, balances, pools).
-# State is saved as a JSON-quoted string (e.g. "0x1f8b...") so it can be directly
-# spliced into anvil_loadState JSON payloads by both dev-reset.sh and the Makefile.
-mkdir -p "$ORCH_DIR/snapshots/anvil"
-curl -sf -X POST http://127.0.0.1:8545 \
-    -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","id":1,"method":"anvil_dumpState","params":[]}' \
-    | python3 -c "import sys,json; r=json.load(sys.stdin).get('result'); print(json.dumps(r)) if r else sys.exit(1)" \
-    > "$ORCH_DIR/snapshots/anvil/post-setup.hex" 2>/dev/null
-if [ -s "$ORCH_DIR/snapshots/anvil/post-setup.hex" ]; then
-    log_success "Anvil snapshot saved ($(du -h "$ORCH_DIR/snapshots/anvil/post-setup.hex" | cut -f1))"
-else
-    rm -f "$ORCH_DIR/snapshots/anvil/post-setup.hex"
-    log_warn "Failed to dump Anvil state — dev-reset will start Anvil fresh"
-fi
-echo ""
-
-# ===========================================
-# Step 13: Sanity check
+# Step 12: Sanity check (while services are still running)
 # ===========================================
 log_info "Running post-setup sanity check..."
 python3 "$SCRIPT_DIR/sanity-check-post-setup-state.py" --price "$SETUP_PRICE"
+echo ""
+
+# ===========================================
+# Step 13: Save Anvil snapshot
+# ===========================================
+log_info "Saving Anvil EVM snapshot..."
+# Anvil uses --state (bidirectional) + --preserve-historical-states, so a graceful
+# stop writes the full state (including per-block history) to state.json.
+# We copy that as the checkpoint for dev-reset.
+mkdir -p "$ORCH_DIR/snapshots/anvil"
+$DC_DEV stop anvil
+sleep 2
+if [ -s "$ORCH_DIR/snapshots/anvil/state.json" ]; then
+    /usr/bin/cp "$ORCH_DIR/snapshots/anvil/state.json" "$ORCH_DIR/snapshots/anvil/post-setup.json"
+    log_success "Anvil snapshot saved ($(du -h "$ORCH_DIR/snapshots/anvil/post-setup.json" | cut -f1))"
+else
+    log_warn "Anvil state.json not found after stop — dev-reset will start Anvil fresh"
+fi
+# Clean up legacy snapshots
+rm -f "$ORCH_DIR/snapshots/anvil/post-setup.hex"
+rm -f "$ORCH_DIR/snapshots/anvil/post-deploy.hex"
+rm -f "$ORCH_DIR/snapshots/anvil/post-seed.hex"
 echo ""
 
 # ===========================================

@@ -252,9 +252,10 @@ print_persisted_state() {
 
     # Anvil snapshots
     local anvil_dir="$ORCH_DIR/snapshots/anvil"
-    if ls "$anvil_dir"/*.hex &>/dev/null 2>&1; then
+    if ls "$anvil_dir"/*.json "$anvil_dir"/*.hex &>/dev/null 2>&1; then
         local anvil_list=""
-        for f in "$anvil_dir"/*.hex; do
+        for f in "$anvil_dir"/*.json "$anvil_dir"/*.hex; do
+            [ -f "$f" ] || continue
             local name
             name=$(basename "$f")
             local size
@@ -350,6 +351,56 @@ print_docker_services() {
     done
 
     echo ""
+}
+
+# ===========================================
+# Section 3b: Docker Log Warnings
+# ===========================================
+
+print_docker_warnings() {
+    if ! docker_available; then
+        return
+    fi
+
+    local found_issues=false
+    local warnings=""
+
+    for svc in "${DOCKER_SERVICES[@]}"; do
+        IFS=: read -r container display port flags <<< "$svc"
+
+        # Skip containers that aren't running
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+            continue
+        fi
+
+        # Sample last 50 lines and count error patterns
+        local log_sample
+        log_sample=$(docker logs --tail 50 "$container" 2>&1) || continue
+
+        local error_count=0
+        local sample_line=""
+        while IFS= read -r line; do
+            if echo "$line" | grep -qiE '(error|fatal|panic|ENOSPC|BlockOutOfRange|TransportError|no space left|OOM)'; then
+                error_count=$((error_count + 1))
+                if [ -z "$sample_line" ]; then
+                    sample_line="${line:0:100}"
+                fi
+            fi
+        done <<< "$log_sample"
+
+        if [ "$error_count" -gt 10 ]; then
+            if [ "$found_issues" = false ]; then
+                found_issues=true
+                warnings+="$(echo -e "${CYAN}━━━ Docker Log Warnings ━━━${NC}")\n"
+            fi
+            warnings+="$(warn "$(printf '%-18s' "$display") $error_count errors in last 50 lines")\n"
+            warnings+="$(dim "  ${sample_line}")\n"
+        fi
+    done
+
+    if [ "$found_issues" = true ]; then
+        echo -e "$warnings"
+    fi
 }
 
 # ===========================================
@@ -502,6 +553,7 @@ detect_stage
 print_stage
 print_persisted_state
 print_docker_services
+print_docker_warnings
 print_overmind_processes
 print_chain_vitals
 

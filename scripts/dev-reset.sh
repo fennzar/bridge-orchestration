@@ -243,13 +243,25 @@ if [ "$HARD_RESET" = true ]; then
     # Hard reset: wipe Anvil completely (dev-setup will redeploy)
     rm -f "$ORCH_DIR/config/addresses.json"
     rm -f "$ORCH_DIR/deployed-addresses.json"
-    rm -f "$ORCH_DIR/snapshots/anvil/post-setup.hex"
-    log_info "Removed config/addresses.json + Anvil snapshot"
+    rm -f "$ORCH_DIR/snapshots/anvil/post-setup.json"
+    rm -f "$ORCH_DIR/snapshots/anvil/state.json"
+    log_info "Removed config/addresses.json + Anvil state files"
     $DC_DEV exec -T wallet-gov sh -c 'cp /checkpoint/init-height /checkpoint/height' 2>/dev/null || true
+else
+    # Normal reset: restore Anvil checkpoint (post-setup state)
+    # Anvil uses --state (bidirectional), so we copy the checkpoint over the live state file.
+    if [ -f "$ORCH_DIR/snapshots/anvil/post-setup.json" ]; then
+        $DC_DEV stop anvil 2>/dev/null || true
+        /usr/bin/cp "$ORCH_DIR/snapshots/anvil/post-setup.json" "$ORCH_DIR/snapshots/anvil/state.json"
+        log_info "Restored Anvil state from checkpoint"
+    else
+        log_warn "No Anvil snapshot found — EVM state not restored (run dev-setup to create one)"
+    fi
 fi
 
-# Restart Anvil (always restart to clear in-memory state)
-$DC_DEV restart anvil
+# Restart Anvil — loads from state.json (which is the checkpoint for normal reset,
+# or absent for hard reset = fresh chain).
+$DC_DEV restart anvil 2>/dev/null || $DC_DEV up -d anvil
 
 log_info "Waiting for Anvil..."
 for i in $(seq 1 30); do
@@ -265,32 +277,7 @@ if ! cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
     exit 1
 fi
 
-# Normal reset: restore EVM state from post-setup snapshot
-if [ "$HARD_RESET" = false ] && [ -f "$ORCH_DIR/snapshots/anvil/post-setup.hex" ]; then
-    log_info "Restoring Anvil from post-setup snapshot..."
-    # Build JSON payload with the hex state data via python (avoids shell arg length limits)
-    RESULT=$(python3 -c "
-import json, sys
-with open('$ORCH_DIR/snapshots/anvil/post-setup.hex') as f:
-    state = f.read().strip()
-# Strip surrounding quotes if present (older snapshots may include them)
-if state.startswith('\"') and state.endswith('\"'):
-    state = state[1:-1]
-payload = json.dumps({'jsonrpc':'2.0','id':1,'method':'anvil_loadState','params':[state]})
-sys.stdout.write(payload)
-" | curl -sf -X POST http://127.0.0.1:8545 \
-        -H "Content-Type: application/json" \
-        --data-binary @-)
-    if echo "$RESULT" | python3 -c "import sys,json; r=json.load(sys.stdin); assert r.get('result')" 2>/dev/null; then
-        log_success "Anvil state restored"
-    else
-        log_warn "Failed to restore Anvil state: $RESULT"
-    fi
-elif [ "$HARD_RESET" = false ]; then
-    log_warn "No Anvil snapshot found — EVM state not restored (run dev-setup to create one)"
-fi
-
-log_success "Anvil reset complete"
+log_success "Anvil reset complete (block $(cast block-number --rpc-url http://127.0.0.1:8545 2>/dev/null || echo '?'))"
 
 # ===========================================
 # Phase 4: Database + Redis reset
@@ -312,14 +299,16 @@ redis-cli -p "${REDIS_PORT:-6380}" -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 |
     $DC_DEV exec -T redis redis-cli -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 || true
 log_success "Redis flushed"
 
-log_info "Resetting blockscout database..."
-docker volume rm bridge-blockscout-db-data 2>/dev/null || true
-
 # ===========================================
-# Phase 5: Stop infrastructure
+# Phase 5: Stop infrastructure + wipe Blockscout
 # ===========================================
 log_info "Stopping infrastructure..."
 $DC_DEV --profile explorer down --remove-orphans
+
+# Wipe Blockscout DB so it re-indexes cleanly from the restored Anvil state.
+# Must happen after `down` since the container holds the volume.
+log_info "Resetting blockscout database..."
+docker volume rm bridge-blockscout-db-data 2>/dev/null || true
 
 echo ""
 echo "==========================================="

@@ -14,6 +14,12 @@
 #   explorer - Blockscout block explorer
 #   init     - DEVNET init container
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # ===========================================
   # Anvil - Local EVM chain
@@ -35,6 +41,7 @@ services:
       - "${EVM_DEV_MNEMONIC:-test test test test test test test test test test test junk}"
       - "--state"
       - "/data/anvil-state.json"
+      - "--preserve-historical-states"
     volumes:
       - anvil-data:/data
     healthcheck:
@@ -42,6 +49,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net
@@ -61,6 +69,7 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
@@ -76,6 +85,7 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
@@ -91,6 +101,7 @@ services:
         condition: service_healthy
       zephyr-node1:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
@@ -106,6 +117,7 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
@@ -121,6 +133,7 @@ services:
         condition: service_healthy
       fake-orderbook:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
@@ -131,6 +144,7 @@ services:
     environment:
       PORT: "7100"
       ZEPHYR_CHAIN_MODE: "devnet"
+    logging: *default-logging
     networks:
       - zephyr-net
 
@@ -148,6 +162,7 @@ services:
       - ./caddy/Caddyfile.testnet-v2:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    logging: *default-logging
     networks:
       - zephyr-net
 
@@ -194,6 +209,7 @@ services:
         condition: service_healthy
       wallet-test:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 

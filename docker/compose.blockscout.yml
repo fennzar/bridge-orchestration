@@ -7,6 +7,12 @@
 # Dev:        docker compose -f base -f dev -f blockscout --profile explorer up -d
 # Testnet V2: docker compose -f base -f testnet-v2 -f blockscout --profile full --profile explorer up -d
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # ===========================================
   # Blockscout Postgres (separate from main)
@@ -26,6 +32,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net
@@ -53,8 +60,9 @@ services:
       SUBNETWORK: "Zephyr Devnet"
       CHAIN_ID: "31337"
       COIN: "ETH"
-      # Disable features we don't need
-      INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: "true"
+      # Anvil uses --state + --preserve-historical-states so all historical
+      # block queries (eth_getBalance, eth_getCode at old blocks) work.
+      # Only disable pending tx fetcher (Anvil has no real mempool).
       INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: "true"
       EXCHANGE_RATES_MARKET_CAP_SOURCE: ""
       EXCHANGE_RATES_COINGECKO_COIN_ID: ""
@@ -67,6 +75,7 @@ services:
       SECRET_KEY_BASE: "56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5ulH5MSS7TiqgQRMo"
       ECTO_USE_SSL: "false"
       MIX_ENV: "prod"
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net
@@ -98,6 +107,7 @@ services:
       NEXT_PUBLIC_VISUALIZE_API_HOST: ""
       NEXT_PUBLIC_CONTRACT_INFO_API_HOST: ""
       NEXT_PUBLIC_ADMIN_SERVICE_API_HOST: ""
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net
@@ -116,6 +126,7 @@ services:
       - "${BLOCKSCOUT_PORT:-4000}:80"
     volumes:
       - ../config/blockscout-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net

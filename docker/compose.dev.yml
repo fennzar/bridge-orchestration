@@ -8,6 +8,12 @@
 #   docker compose -f docker/compose.base.yml -f docker/compose.dev.yml up -d
 #   docker compose -f docker/compose.base.yml -f docker/compose.dev.yml --profile init up devnet-init
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # ===========================================
   # Anvil - Local EVM chain
@@ -17,27 +23,29 @@ services:
     container_name: zephyr-anvil
     ports:
       - "8545:8545"
-    entrypoint: ["anvil"]
+    entrypoint: anvil
     command:
-      - "--host"
+      - --host
       - "0.0.0.0"
-      - "--chain-id"
+      - --chain-id
       - "31337"
-      - "--accounts"
+      - --accounts
       - "20"
-      - "--balance"
+      - --balance
       - "10000"
-      - "--mnemonic"
+      - --mnemonic
       - "${EVM_DEV_MNEMONIC:-test test test test test test test test test test test junk}"
-      - "--state"
-      - "/data/anvil-state.json"
+      - --state
+      - /state/state.json
+      - --preserve-historical-states
     volumes:
-      - anvil-data:/data
+      - ../snapshots/anvil:/state
     healthcheck:
       test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - zephyr-net
@@ -134,9 +142,6 @@ services:
         condition: service_healthy
       wallet-test:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
-
-volumes:
-  anvil-data:
-    name: bridge-anvil-data

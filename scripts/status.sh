@@ -58,13 +58,14 @@ OVERMIND_PROCESSES=(
     "dashboard:7100"
 )
 
-# Check both sockets — dev and prod may use different ones
-if [ -n "${OVERMIND_SOCK:-}" ]; then
-    : # Caller specified which socket to use
-elif [ -S "$ORCH_DIR/.overmind-prod.sock" ]; then
+# Auto-detect which overmind socket is active (dev or prod)
+# Prefer an active socket over the Makefile default.
+if [ -S "$ORCH_DIR/.overmind-prod.sock" ] && overmind status -s "$ORCH_DIR/.overmind-prod.sock" &>/dev/null; then
     OVERMIND_SOCK="$ORCH_DIR/.overmind-prod.sock"
-else
+elif [ -S "$ORCH_DIR/.overmind-dev.sock" ] && overmind status -s "$ORCH_DIR/.overmind-dev.sock" &>/dev/null; then
     OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
+else
+    OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
 fi
 
 # ===========================================

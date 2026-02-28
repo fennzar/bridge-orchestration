@@ -241,6 +241,8 @@ log_info "Resetting Anvil..."
 
 if [ "$HARD_RESET" = true ]; then
     # Hard reset: wipe Anvil completely (dev-setup will redeploy)
+    # Stop first so the graceful shutdown writes state.json, THEN delete it.
+    $DC_DEV stop anvil 2>/dev/null || true
     rm -f "$ORCH_DIR/config/addresses.json"
     rm -f "$ORCH_DIR/deployed-addresses.json"
     rm -f "$ORCH_DIR/snapshots/anvil/post-setup.json"
@@ -249,9 +251,9 @@ if [ "$HARD_RESET" = true ]; then
     $DC_DEV exec -T wallet-gov sh -c 'cp /checkpoint/init-height /checkpoint/height' 2>/dev/null || true
 else
     # Normal reset: restore Anvil checkpoint (post-setup state)
-    # Anvil uses --state (bidirectional), so we copy the checkpoint over the live state file.
+    # Stop first so graceful shutdown writes state.json, THEN overwrite it.
+    $DC_DEV stop anvil 2>/dev/null || true
     if [ -f "$ORCH_DIR/snapshots/anvil/post-setup.json" ]; then
-        $DC_DEV stop anvil 2>/dev/null || true
         /usr/bin/cp "$ORCH_DIR/snapshots/anvil/post-setup.json" "$ORCH_DIR/snapshots/anvil/state.json"
         log_info "Restored Anvil state from checkpoint"
     else
@@ -259,9 +261,9 @@ else
     fi
 fi
 
-# Restart Anvil — loads from state.json (which is the checkpoint for normal reset,
+# Start Anvil — loads from state.json (checkpoint for normal reset,
 # or absent for hard reset = fresh chain).
-$DC_DEV restart anvil 2>/dev/null || $DC_DEV up -d anvil
+$DC_DEV start anvil 2>/dev/null || $DC_DEV up -d anvil
 
 log_info "Waiting for Anvil..."
 for i in $(seq 1 30); do

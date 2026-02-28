@@ -177,8 +177,9 @@ echo ""
 # Step 8: Reset Anvil + deploy contracts
 # ===========================================
 log_info "Resetting Anvil for fresh deploy..."
+$DC_DEV stop anvil
 rm -f "$ORCH_DIR/snapshots/anvil/state.json"
-$DC_DEV restart anvil
+$DC_DEV start anvil
 log_info "Waiting for Anvil..."
 for i in $(seq 1 20); do
     cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break

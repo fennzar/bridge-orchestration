@@ -5,6 +5,7 @@ set -euo pipefail
 # Seed Liquidity via Engine's Native Pool Seeder
 # ===========================================
 # Replaces the monolithic seed-liquidity.py with:
+#   0. Fund engine + CEX with ETH   → cast send --value 10ether
 #   1. Fund engine Zephyr wallet    → seed-liquidity.py --fund-only
 #   2. Mint mock USDC/USDT          → cast send mint()
 #   3. Run engine seeder            → pnpm cli setup
@@ -38,6 +39,31 @@ ZEPHYR_CLI="${ZEPHYR_REPO_PATH}/tools/zephyr-cli/cli"
 log_info "Engine EVM:  $ENGINE_ADDR"
 log_info "RPC:         $RPC_URL"
 log_info "Bridge API:  $BRIDGE_API"
+echo ""
+
+# ===========================================
+# Step 0: Fund engine + CEX EVM wallets with ETH (10 each)
+# ===========================================
+log_info "Step 0: Funding EVM wallets with ETH..."
+
+ENGINE_WEI=$($CAST balance "$ENGINE_ADDR" --rpc-url "$RPC_URL" 2>/dev/null | tr -d ' \n' || echo "0")
+if [ "${ENGINE_WEI:-0}" = "0" ]; then
+    $CAST send "$ENGINE_ADDR" --value 10ether \
+        --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" >/dev/null 2>&1
+    log_success "Sent 10 ETH to engine"
+else
+    log_success "Engine already has ETH, skipping"
+fi
+
+CEX_ADDR="${CEX_ADDRESS}"
+CEX_WEI=$($CAST balance "$CEX_ADDR" --rpc-url "$RPC_URL" 2>/dev/null | tr -d ' \n' || echo "0")
+if [ "${CEX_WEI:-0}" = "0" ]; then
+    $CAST send "$CEX_ADDR" --value 10ether \
+        --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" >/dev/null 2>&1
+    log_success "Sent 10 ETH to CEX"
+else
+    log_success "CEX already has ETH, skipping"
+fi
 echo ""
 
 # ===========================================
@@ -102,22 +128,12 @@ fi
 echo ""
 
 # ===========================================
-# Step 2.5: Fund CEX wallets (ZEPH.x + USDT.x + ETH)
+# Step 2.5: Fund CEX wallets (ZEPH.x + USDT)
 # ===========================================
 log_info "Step 2.5: Funding CEX wallets..."
 
-CEX_ADDR="${CEX_ADDRESS}"
+# CEX_ADDR already set in Step 0
 CEX_KEY="${CEX_PK}"
-
-# Send 10 ETH to CEX EVM wallet (from Anvil deployer)
-CEX_ETH_BAL=$($CAST balance "$CEX_ADDR" --rpc-url "$RPC_URL" 2>/dev/null | tr -d ' ' || echo "0")
-if [ "${CEX_ETH_BAL:-0}" = "0" ] 2>/dev/null; then
-    $CAST send "$CEX_ADDR" --value 10ether \
-        --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" >/dev/null 2>&1
-    log_success "Sent 10 ETH to CEX"
-else
-    log_success "CEX already has ETH, skipping"
-fi
 
 # Mint USDT to CEX EVM wallet (10K USDT for ~$10K)
 SEED_CEX_USDT=${SEED_CEX_USDT:-10000}

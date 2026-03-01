@@ -922,21 +922,22 @@ phase_deps() {
     fi
 
     # pnpm: zephyr-bridge
+    # CI=1 prevents pnpm from aborting on no-TTY (background tasks have no TTY)
     if [ -d "$bridge_dir" ]; then
         TASK_NAMES+=("[pnpm]  zephyr-bridge")
-        TASK_CMDS+=("cd '$bridge_dir' && pnpm install --reporter=silent")
+        TASK_CMDS+=("cd '$bridge_dir' && CI=1 pnpm install --reporter=silent")
         TASK_STATES+=("pending")
     fi
 
     # pnpm: zephyr-bridge-engine
     if [ -d "$engine_dir" ]; then
         TASK_NAMES+=("[pnpm]  zephyr-bridge-engine")
-        TASK_CMDS+=("cd '$engine_dir' && pnpm install --reporter=silent")
+        TASK_CMDS+=("cd '$engine_dir' && CI=1 pnpm install --reporter=silent")
         TASK_STATES+=("pending")
 
         if [ -d "$engine_dir/apps/web" ]; then
             TASK_NAMES+=("[pnpm]  engine/apps/web")
-            TASK_CMDS+=("cd '$engine_dir/apps/web' && pnpm install --reporter=silent")
+            TASK_CMDS+=("cd '$engine_dir/apps/web' && CI=1 pnpm install --reporter=silent")
             TASK_STATES+=("pending")
         fi
     fi
@@ -944,7 +945,7 @@ phase_deps() {
     # pnpm: status-dashboard
     if [ -d "$ROOT/status-dashboard" ]; then
         TASK_NAMES+=("[pnpm]  status-dashboard")
-        TASK_CMDS+=("cd '$ROOT/status-dashboard' && pnpm install --reporter=silent")
+        TASK_CMDS+=("cd '$ROOT/status-dashboard' && CI=1 pnpm install --reporter=silent")
         TASK_STATES+=("pending")
     fi
 

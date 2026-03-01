@@ -79,12 +79,12 @@ pad() {
     printf "%-${2:-20}s" "$1"
 }
 
-# Spinner characters
-SPIN='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+# Spinner characters (ASCII — works everywhere)
+SPIN='|/-\'
 
 # Run a command in the background with a spinner on the current line.
 # Usage: spin_while "label" command [args...]
-# Prints: ⠋ label   →   ✓ label   or   ✗ label
+# Prints: | label   →   ✓ label   or   ✗ label
 spin_while() {
     local label="$1"; shift
     local logfile; logfile=$(mktemp)
@@ -135,7 +135,7 @@ run_parallel_tasks() {
             logs+=("")
             TASK_RESULTS+=("skip")
         else
-            echo -e "  ${YELLOW}⠋${NC} $(pad "${TASK_NAMES[$i]}" 35)installing..."
+            echo -e "  ${YELLOW}|${NC} $(pad "${TASK_NAMES[$i]}" 35)installing..."
             local logfile="$tmpdir/$i.log"
             bash -c "${TASK_CMDS[$i]}" >"$logfile" 2>&1 &
             pids+=($!)
@@ -754,7 +754,7 @@ phase_clone() {
     local -a clone_dirs=() clone_urls=() clone_pids=() clone_logs=()
     local -a all_dirs=() all_states=()  # track display order (existing + cloning)
     local tmpdir; tmpdir=$(mktemp -d)
-    local spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local spinner_chars="$SPIN"
 
     # Print initial state for all repos and kick off parallel clones
     for entry in "${REPOS[@]}"; do
@@ -767,7 +767,7 @@ phase_clone() {
             ((existed++)) || true
         else
             all_states+=("cloning")
-            echo -e "  ${YELLOW}⠋${NC} $(pad "$dir" 23)cloning..."
+            echo -e "  ${YELLOW}|${NC} $(pad "$dir" 23)cloning..."
             local logfile="$tmpdir/$dir.log"
             # shellcheck disable=SC2086
             git clone $flags "$url" "$PARENT/$dir" >"$logfile" 2>&1 &

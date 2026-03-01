@@ -974,6 +974,77 @@ phase_deps() {
     echo ""
 }
 
+# ── Phase 5b: Zephyr Build Dependencies ──────
+
+# Core packages to check (subset — if these are present, the rest likely are too)
+ZEPHYR_CHECK_PKGS=(cmake libboost-dev libssl-dev libzmq3-dev libsodium-dev)
+
+# Full install list for Ubuntu/Debian
+ZEPHYR_BUILD_PKGS=(
+    build-essential cmake pkg-config libssl-dev libzmq3-dev
+    libunbound-dev libsodium-dev libunwind8-dev liblzma-dev
+    libreadline6-dev libexpat1-dev libpgm-dev qttools5-dev-tools
+    libhidapi-dev libusb-1.0-0-dev libprotobuf-dev protobuf-compiler
+    libudev-dev libboost-chrono-dev libboost-date-time-dev
+    libboost-filesystem-dev libboost-locale-dev
+    libboost-program-options-dev libboost-regex-dev
+    libboost-serialization-dev libboost-system-dev
+    libboost-thread-dev ccache doxygen graphviz
+)
+
+phase_zephyr_deps() {
+    echo ""
+    echo -e "Zephyr C++ build dependencies ${DIM}(required for devnet)${NC}"
+    echo ""
+
+    if ! [ -d "$PARENT/zephyr" ]; then
+        dim "zephyr repo not cloned — skipping"
+        return 0
+    fi
+
+    # Quick check: are the key packages already installed?
+    local missing_count=0
+    for pkg in "${ZEPHYR_CHECK_PKGS[@]}"; do
+        if ! dpkg -s "$pkg" &>/dev/null; then
+            ((missing_count++)) || true
+        fi
+    done
+
+    if [ "$missing_count" -eq 0 ]; then
+        ok "Zephyr build dependencies already installed"
+        return 0
+    fi
+
+    echo -e "  ${DIM}These are needed to compile the Zephyr daemon from source.${NC}"
+    echo -e "  ${DIM}Required for: make build-zephyr / make dev-init${NC}"
+    echo ""
+
+    if $IS_DEBIAN; then
+        local pkg_list="${ZEPHYR_BUILD_PKGS[*]}"
+        echo -e "  ${DIM}${#ZEPHYR_BUILD_PKGS[@]} packages:${NC}"
+        echo -e "    ${DIM}sudo apt install -y ${pkg_list}${NC}"
+
+        if ask_yn "Install now? (or N to install manually later)"; then
+            echo ""
+            # Install as one batch with a single spinner (all or nothing)
+            if spin_while "Zephyr build dependencies (${#ZEPHYR_BUILD_PKGS[@]} packages)" \
+                sudo apt install -y "${ZEPHYR_BUILD_PKGS[@]}"; then
+                echo ""
+                log_success "Zephyr build dependencies installed"
+            else
+                echo ""
+                log_warn "Some Zephyr build deps failed — you can install them later"
+            fi
+        else
+            echo ""
+            log_skip "Skipped — install later with: sudo apt install -y ${pkg_list}"
+        fi
+    else
+        echo -e "  ${DIM}See docs/setup/dev.md for platform-specific install commands.${NC}"
+        log_skip "Non-Debian system — install manually"
+    fi
+}
+
 # ── Phase 6: Summary + Next Steps ────────────
 
 phase_summary() {
@@ -1001,7 +1072,6 @@ phase_summary() {
     echo "    4. make dev-init && make dev-setup && make dev"
     echo ""
     echo -e "  ${DIM}Docs: docs/setup/dev.md${NC}"
-    echo -e "  ${DIM}Zephyr C++ build deps (if compiling from source): see docs/setup/dev.md${NC}"
     echo "=========================================="
     echo ""
 }
@@ -1014,4 +1084,5 @@ phase_prereqs
 phase_clone
 phase_branches
 phase_deps
+phase_zephyr_deps
 phase_summary

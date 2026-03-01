@@ -228,14 +228,6 @@ check_curl() {
     fi
 }
 
-check_gpg() {
-    if command -v gpg &>/dev/null; then
-        local ver; ver=$(gpg --version 2>/dev/null | head -1 | sed 's/gpg (GnuPG) //')
-        add_result "gpg" "$ver" "ok"
-    else
-        add_result "gpg" "not found" "missing"
-    fi
-}
 
 # ── Install Functions ─────────────────────────
 
@@ -252,13 +244,28 @@ install_apt_batch() {
         return 1
     fi
 
-    if ask_yn "Install now?"; then
+    if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
-        if sudo apt install -y "${pkgs[@]}" 2>&1 | tail -3; then
-            log_success "Installed: $pkg_list"
+        # Install one at a time with per-package feedback
+        local all_ok=true
+        for pkg in "${pkgs[@]}"; do
+            printf "    %-20s " "$pkg"
+            local output rc=0
+            output=$(sudo apt install -y "$pkg" 2>&1) || rc=$?
+            if [ "$rc" -eq 0 ]; then
+                echo -e "${GREEN}✓${NC}"
+            else
+                echo -e "${RED}✗${NC}"
+                echo "$output" | tail -3 | sed 's/^/      /'
+                all_ok=false
+            fi
+        done
+        echo ""
+        if $all_ok; then
+            log_success "All apt packages installed"
             return 0
         else
-            log_error "apt install failed"
+            log_error "Some packages failed to install"
             return 1
         fi
     else
@@ -279,7 +286,7 @@ install_node() {
     echo ""
     echo -e "  ${DIM}Docs: https://github.com/nvm-sh/nvm${NC}"
 
-    if ask_yn "Install now?"; then
+    if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
         echo "  Installing nvm..."
         local nvm_rc=0
@@ -318,7 +325,7 @@ install_pnpm() {
     echo ""
     echo -e "  ${DIM}Docs: https://pnpm.io/installation${NC}"
 
-    if ask_yn "Install now?"; then
+    if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
         local pnpm_output pnpm_rc=0
         pnpm_output=$(npm install -g pnpm 2>&1) || pnpm_rc=$?
@@ -346,16 +353,40 @@ install_docker() {
     section "Missing: docker"
     echo "  Docker CE + Compose plugin is required."
     echo ""
-    echo "  Install commands (Ubuntu/Debian):"
+    echo "  Install commands:"
     echo -e "    ${CYAN}curl -fsSL https://get.docker.com | sh${NC}"
     echo -e "    ${CYAN}sudo usermod -aG docker \$USER${NC}"
-    echo -e "    ${CYAN}newgrp docker${NC}"
     echo ""
     echo -e "  ${DIM}Docs: https://docs.docker.com/engine/install/${NC}"
-    echo -e "  ${DIM}Requires re-login after group change.${NC}"
-    echo ""
-    echo "  Install Docker manually, then: make setup"
-    exit 1
+
+    if ask_yn "Install now? (or N to install manually and re-run)"; then
+        echo ""
+        echo "  Installing Docker CE (this may take a minute)..."
+        local output rc=0
+        output=$(curl -fsSL https://get.docker.com | sh 2>&1) || rc=$?
+        if [ "$rc" -eq 0 ] && command -v docker &>/dev/null; then
+            local ver; ver=$(docker --version 2>/dev/null | sed 's/Docker version \([^,]*\).*/\1/')
+            log_success "Docker $ver installed"
+            # Add current user to docker group
+            if ! groups | grep -q docker; then
+                sudo usermod -aG docker "$USER" 2>/dev/null || true
+                echo ""
+                echo -e "  ${YELLOW}NOTE:${NC} Added $USER to docker group."
+                echo "  You may need to log out and back in (or run 'newgrp docker')"
+                echo "  for group changes to take effect."
+            fi
+        else
+            echo "$output" | tail -5
+            log_error "Docker install failed"
+        fi
+        echo ""
+        echo "  Run 'make setup' to continue."
+        exit 0
+    else
+        echo ""
+        echo "  Run the commands above, then: make setup"
+        exit 1
+    fi
 }
 
 install_docker_compose() {
@@ -368,7 +399,7 @@ install_docker_compose() {
     echo -e "  ${DIM}Docs: https://docs.docker.com/compose/install/${NC}"
 
     if $IS_DEBIAN; then
-        if ask_yn "Install now?"; then
+        if ask_yn "Install now? (or N to install manually and re-run)"; then
             echo ""
             if sudo apt install -y docker-compose-plugin 2>&1 | tail -3; then
                 local ver; ver=$(docker compose version --short 2>/dev/null)
@@ -397,7 +428,7 @@ install_forge() {
     echo ""
     echo -e "  ${DIM}Docs: https://book.getfoundry.sh${NC}"
 
-    if ask_yn "Install now?"; then
+    if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
         echo "  Installing foundryup..."
         local foundry_rc=0
@@ -437,7 +468,7 @@ install_overmind() {
     echo ""
     echo -e "  ${DIM}Docs: https://github.com/DarthSim/overmind${NC}"
 
-    if ask_yn "Install now?"; then
+    if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
         # Ensure tmux is installed first
         if ! command -v tmux &>/dev/null && $IS_DEBIAN; then
@@ -497,7 +528,6 @@ phase_prereqs() {
     check_jq
     check_bc
     check_curl
-    check_gpg
 
     # Display matrix
     local missing_names=()
@@ -536,7 +566,7 @@ phase_prereqs() {
     local -a apt_missing=()
     for name in "${missing_names[@]}"; do
         case "$name" in
-            git|python3|tmux|jq|bc|curl|gpg) apt_missing+=("$name") ;;
+            git|python3|tmux|jq|bc|curl) apt_missing+=("$name") ;;
             # python3 apt package name differs
         esac
     done

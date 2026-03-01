@@ -79,6 +79,133 @@ pad() {
     printf "%-${2:-20}s" "$1"
 }
 
+# Spinner characters
+SPIN='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+
+# Run a command in the background with a spinner on the current line.
+# Usage: spin_while "label" command [args...]
+# Prints: ⠋ label   →   ✓ label   or   ✗ label
+spin_while() {
+    local label="$1"; shift
+    local logfile; logfile=$(mktemp)
+
+    "$@" >"$logfile" 2>&1 &
+    local pid=$!
+    local i=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        local s="${SPIN:$((i % ${#SPIN})):1}"
+        printf "\r  ${YELLOW}%s${NC} %s" "$s" "$label"
+        ((i++)) || true
+        sleep 0.1
+    done
+
+    local rc=0
+    wait "$pid" || rc=$?
+
+    if [ "$rc" -eq 0 ]; then
+        printf "\r  ${GREEN}✓${NC} %-60s\n" "$label"
+    else
+        printf "\r  ${RED}✗${NC} %-60s\n" "$label"
+        cat "$logfile" | tail -5 | sed 's/^/      /'
+    fi
+
+    rm -f "$logfile"
+    return "$rc"
+}
+
+# Run multiple tasks in parallel with docker-compose-style spinners.
+# Populate TASK_NAMES, TASK_CMDS (bash -c strings), TASK_STATES before calling.
+# TASK_STATES: "pending" = will run, "skip" = already done (shown dimmed)
+# After return: TASK_RESULTS array has exit codes ("skip", "0", or non-zero)
+declare -a TASK_NAMES=() TASK_CMDS=() TASK_STATES=() TASK_RESULTS=()
+
+run_parallel_tasks() {
+    local -a pids=() logs=()
+    local tmpdir; tmpdir=$(mktemp -d)
+    local num_lines=${#TASK_NAMES[@]}
+
+    TASK_RESULTS=()
+
+    # Print initial lines and start background jobs
+    for i in "${!TASK_NAMES[@]}"; do
+        if [ "${TASK_STATES[$i]}" = "skip" ]; then
+            echo -e "  ${DIM}-${NC} ${DIM}$(pad "${TASK_NAMES[$i]}" 35)already installed${NC}"
+            pids+=("")
+            logs+=("")
+            TASK_RESULTS+=("skip")
+        else
+            echo -e "  ${YELLOW}⠋${NC} $(pad "${TASK_NAMES[$i]}" 35)installing..."
+            local logfile="$tmpdir/$i.log"
+            bash -c "${TASK_CMDS[$i]}" >"$logfile" 2>&1 &
+            pids+=($!)
+            logs+=("$logfile")
+            TASK_RESULTS+=("")
+        fi
+    done
+
+    # Count pending tasks
+    local total=0
+    for i in "${!pids[@]}"; do [ -n "${pids[$i]}" ] && ((total++)) || true; done
+
+    if [ "$total" -eq 0 ]; then
+        rm -rf "$tmpdir"
+        return 0
+    fi
+
+    # Animate until all done
+    local done_count=0 spin_idx=0 failed=0
+    while [ "$done_count" -lt "$total" ]; do
+        ((spin_idx++)) || true
+        local spin="${SPIN:$((spin_idx % ${#SPIN})):1}"
+
+        # Check for completions
+        for i in "${!pids[@]}"; do
+            [ -z "${pids[$i]}" ] && continue
+            [ -n "${TASK_RESULTS[$i]}" ] && continue
+            if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+                local rc=0
+                wait "${pids[$i]}" || rc=$?
+                TASK_RESULTS[$i]="$rc"
+                ((done_count++)) || true
+                [ "$rc" -ne 0 ] && ((failed++)) || true
+            fi
+        done
+
+        # Redraw all lines
+        printf "\033[%dA" "$num_lines"
+        for i in "${!TASK_NAMES[@]}"; do
+            if [ "${TASK_STATES[$i]}" = "skip" ]; then
+                printf "\r  ${DIM}-${NC} ${DIM}%-35s already installed${NC}%-10s\n" "${TASK_NAMES[$i]}" ""
+            elif [ -n "${TASK_RESULTS[$i]}" ]; then
+                if [ "${TASK_RESULTS[$i]}" -eq 0 ]; then
+                    printf "\r  ${GREEN}✓${NC} %-35s done%-20s\n" "${TASK_NAMES[$i]}" ""
+                else
+                    printf "\r  ${RED}✗${NC} %-35s failed%-18s\n" "${TASK_NAMES[$i]}" ""
+                fi
+            else
+                printf "\r  ${YELLOW}%s${NC} %-35s installing...%-11s\n" "$spin" "${TASK_NAMES[$i]}" ""
+            fi
+        done
+
+        [ "$done_count" -lt "$total" ] && sleep 0.1
+    done
+
+    # Show error details
+    if [ "$failed" -gt 0 ]; then
+        echo ""
+        for i in "${!TASK_NAMES[@]}"; do
+            if [ -n "${TASK_RESULTS[$i]}" ] && [ "${TASK_RESULTS[$i]}" != "skip" ] && [ "${TASK_RESULTS[$i]}" -ne 0 ]; then
+                echo -e "  ${RED}${TASK_NAMES[$i]}:${NC}"
+                cat "${logs[$i]}" 2>/dev/null | tail -5 | sed 's/^/    /'
+            fi
+        done
+    fi
+
+    rm -rf "$tmpdir"
+    return "$failed"
+}
+
 # ── Prereq Check Functions ────────────────────
 # Each sets: _name, _version, _status (ok|missing|outdated), _note
 
@@ -176,7 +303,7 @@ check_docker_compose() {
 
 check_forge() {
     if command -v forge &>/dev/null; then
-        local ver; ver=$(forge --version 2>/dev/null | head -1 | sed 's/forge //')
+        local ver; ver=$(forge --version 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+' || echo "?")
         add_result "forge" "$ver" "ok"
     else
         add_result "forge" "not found" "missing"
@@ -185,7 +312,7 @@ check_forge() {
 
 check_overmind() {
     if command -v overmind &>/dev/null; then
-        local ver; ver=$(overmind --version 2>/dev/null | head -1 | sed 's/.*v//')
+        local ver; ver=$(overmind --version 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+' || echo "?")
         add_result "overmind" "$ver" "ok"
     else
         add_result "overmind" "not found" "missing"
@@ -246,19 +373,10 @@ install_apt_batch() {
 
     if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
-        # Install one at a time with per-package feedback
+        # Install one at a time with spinner per package (apt locks prevent parallel)
         local all_ok=true
         for pkg in "${pkgs[@]}"; do
-            printf "    %-20s " "$pkg"
-            local output rc=0
-            output=$(sudo apt install -y "$pkg" 2>&1) || rc=$?
-            if [ "$rc" -eq 0 ]; then
-                echo -e "${GREEN}✓${NC}"
-            else
-                echo -e "${RED}✗${NC}"
-                echo "$output" | tail -3 | sed 's/^/      /'
-                all_ok=false
-            fi
+            spin_while "$pkg" sudo apt install -y "$pkg" || all_ok=false
         done
         echo ""
         if $all_ok; then
@@ -288,23 +406,24 @@ install_node() {
 
     if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
-        echo "  Installing nvm..."
-        local nvm_rc=0
-        curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" 2>/dev/null | bash 2>&1 | tail -3 || nvm_rc=$?
-        if [ "$nvm_rc" -eq 0 ]; then
-            export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-            # shellcheck disable=SC1091
-            . "$NVM_DIR/nvm.sh" 2>/dev/null || true
-            echo "  Installing node ${NODE_MIN}..."
-            nvm install "$NODE_MIN" 2>&1 | tail -3
-            local ver; ver=$(node --version 2>/dev/null | sed 's/^v//')
-            if [ -n "$ver" ]; then
-                log_success "node $ver installed via nvm"
-                echo ""
-                echo "  Run 'make setup' to continue."
-                exit 0
-            fi
+        # Install nvm
+        spin_while "nvm ${NVM_VERSION}" bash -c "curl -o- 'https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh' 2>/dev/null | bash" || true
+        export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+        # shellcheck disable=SC1091
+        . "$NVM_DIR/nvm.sh" 2>/dev/null || true
+        # Install node via nvm
+        if command -v nvm &>/dev/null; then
+            spin_while "node ${NODE_MIN}" nvm install "$NODE_MIN" || true
         fi
+        local ver; ver=$(node --version 2>/dev/null | sed 's/^v//')
+        if [ -n "$ver" ]; then
+            echo ""
+            log_success "node $ver installed via nvm"
+            echo ""
+            echo "  Run 'make setup' to continue."
+            exit 0
+        fi
+        echo ""
         log_error "nvm/node install failed"
         echo ""
         echo "  Run 'make setup' to retry."
@@ -327,16 +446,15 @@ install_pnpm() {
 
     if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
-        local pnpm_output pnpm_rc=0
-        pnpm_output=$(npm install -g pnpm 2>&1) || pnpm_rc=$?
-        echo "$pnpm_output" | tail -3
-        if [ "$pnpm_rc" -eq 0 ] && command -v pnpm &>/dev/null; then
+        if spin_while "pnpm" npm install -g pnpm && command -v pnpm &>/dev/null; then
             local ver; ver=$(pnpm --version 2>/dev/null)
+            echo ""
             log_success "pnpm $ver installed"
             echo ""
             echo "  Run 'make setup' to continue."
             exit 0
         else
+            echo ""
             log_error "pnpm install failed"
             echo ""
             echo "  Run 'make setup' to retry."
@@ -361,11 +479,9 @@ install_docker() {
 
     if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
-        echo "  Installing Docker CE (this may take a minute)..."
-        local output rc=0
-        output=$(curl -fsSL https://get.docker.com | sh 2>&1) || rc=$?
-        if [ "$rc" -eq 0 ] && command -v docker &>/dev/null; then
+        if spin_while "Docker CE + Compose (this may take a minute)" bash -c "curl -fsSL https://get.docker.com | sh" && command -v docker &>/dev/null; then
             local ver; ver=$(docker --version 2>/dev/null | sed 's/Docker version \([^,]*\).*/\1/')
+            echo ""
             log_success "Docker $ver installed"
             # Add current user to docker group
             if ! groups | grep -q docker; then
@@ -376,7 +492,7 @@ install_docker() {
                 echo "  for group changes to take effect."
             fi
         else
-            echo "$output" | tail -5
+            echo ""
             log_error "Docker install failed"
         fi
         echo ""
@@ -401,10 +517,12 @@ install_docker_compose() {
     if $IS_DEBIAN; then
         if ask_yn "Install now? (or N to install manually and re-run)"; then
             echo ""
-            if sudo apt install -y docker-compose-plugin 2>&1 | tail -3; then
+            if spin_while "docker-compose-plugin" sudo apt install -y docker-compose-plugin; then
                 local ver; ver=$(docker compose version --short 2>/dev/null)
+                echo ""
                 log_success "docker compose $ver installed"
             else
+                echo ""
                 log_error "Install failed"
             fi
             echo ""
@@ -430,20 +548,17 @@ install_forge() {
 
     if ask_yn "Install now? (or N to install manually and re-run)"; then
         echo ""
-        echo "  Installing foundryup..."
-        local foundry_rc=0
-        curl -L https://foundry.paradigm.xyz 2>/dev/null | bash 2>&1 | tail -3 || foundry_rc=$?
-        if [ "$foundry_rc" -eq 0 ]; then
-            export PATH="$HOME/.foundry/bin:$PATH"
-            echo "  Running foundryup..."
-            foundryup 2>&1 | tail -5
-            if command -v forge &>/dev/null; then
-                log_success "forge installed"
-                echo ""
-                echo "  Run 'make setup' to continue."
-                exit 0
-            fi
+        spin_while "foundryup" bash -c "curl -L https://foundry.paradigm.xyz 2>/dev/null | bash" || true
+        export PATH="$HOME/.foundry/bin:$PATH"
+        spin_while "foundryup (downloading toolchain)" foundryup || true
+        if command -v forge &>/dev/null; then
+            echo ""
+            log_success "forge installed"
+            echo ""
+            echo "  Run 'make setup' to continue."
+            exit 0
         fi
+        echo ""
         log_error "foundry install failed"
         echo ""
         echo "  Run 'make setup' to retry."
@@ -472,22 +587,19 @@ install_overmind() {
         echo ""
         # Ensure tmux is installed first
         if ! command -v tmux &>/dev/null && $IS_DEBIAN; then
-            echo "  Installing tmux..."
-            sudo apt install -y tmux 2>&1 | tail -1
+            spin_while "tmux (dependency)" sudo apt install -y tmux || true
         fi
-        echo "  Downloading overmind v${OVERMIND_VERSION}..."
         local tmp; tmp=$(mktemp -d)
-        if curl -fsSL -o "$tmp/overmind.gz" "https://github.com/DarthSim/overmind/releases/download/v${OVERMIND_VERSION}/overmind-v${OVERMIND_VERSION}-linux-amd64.gz" && \
-           gunzip "$tmp/overmind.gz" && \
-           chmod +x "$tmp/overmind" && \
-           sudo mv "$tmp/overmind" /usr/local/bin/overmind; then
+        if spin_while "overmind v${OVERMIND_VERSION}" bash -c "curl -fsSL -o '$tmp/overmind.gz' 'https://github.com/DarthSim/overmind/releases/download/v${OVERMIND_VERSION}/overmind-v${OVERMIND_VERSION}-linux-amd64.gz' && gunzip '$tmp/overmind.gz' && chmod +x '$tmp/overmind' && sudo mv '$tmp/overmind' /usr/local/bin/overmind"; then
             rm -rf "$tmp"
+            echo ""
             log_success "overmind v${OVERMIND_VERSION} installed"
             echo ""
             echo "  Run 'make setup' to continue."
             exit 0
         else
             rm -rf "$tmp"
+            echo ""
             log_error "overmind install failed"
             echo ""
             echo "  Run 'make setup' to retry."
@@ -639,69 +751,98 @@ phase_clone() {
     echo ""
 
     local cloned=0 existed=0 failed=0
-    local -a clone_dirs=() clone_urls=() clone_flags=() clone_pids=() clone_logs=()
+    local -a clone_dirs=() clone_urls=() clone_pids=() clone_logs=()
+    local -a all_dirs=() all_states=()  # track display order (existing + cloning)
     local tmpdir; tmpdir=$(mktemp -d)
+    local spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
-    # Print all repos and kick off parallel clones
+    # Print initial state for all repos and kick off parallel clones
     for entry in "${REPOS[@]}"; do
         IFS='|' read -r dir url flags <<< "$entry"
+        all_dirs+=("$dir")
 
         if [ -d "$PARENT/$dir" ]; then
-            dim "$(pad "$dir" 23)already exists"
+            all_states+=("exists")
+            echo -e "  ${DIM}-${NC} ${DIM}$(pad "$dir" 23)already exists${NC}"
             ((existed++)) || true
         else
-            printf "  %-23s %s\n" "$dir" "$url"
+            all_states+=("cloning")
+            echo -e "  ${YELLOW}⠋${NC} $(pad "$dir" 23)cloning..."
             local logfile="$tmpdir/$dir.log"
             # shellcheck disable=SC2086
             git clone $flags "$url" "$PARENT/$dir" >"$logfile" 2>&1 &
             clone_dirs+=("$dir")
             clone_urls+=("$url")
-            clone_flags+=("$flags")
             clone_pids+=($!)
             clone_logs+=("$logfile")
         fi
     done
 
-    # Wait for parallel clones with live progress
+    # Animate spinners and update lines as clones complete
     if [ ${#clone_pids[@]} -gt 0 ]; then
-        echo ""
-        local total=${#clone_pids[@]} done_count=0
-        local -a clone_done=()
-        for i in "${!clone_pids[@]}"; do clone_done+=(""); done
+        local total=${#clone_pids[@]} done_count=0 spin_idx=0
+        local -a clone_rc=()
+        for i in "${!clone_pids[@]}"; do clone_rc+=(""); done
+        local num_lines=${#all_dirs[@]}
 
-        # Poll until all complete, update counter
         while [ "$done_count" -lt "$total" ]; do
+            spin_idx=$(( (spin_idx + 1) % ${#spinner_chars} ))
+            local spin="${spinner_chars:$spin_idx:1}"
+
+            # Check for newly completed clones
             for i in "${!clone_pids[@]}"; do
-                [ -n "${clone_done[$i]}" ] && continue
+                [ -n "${clone_rc[$i]}" ] && continue
                 if ! kill -0 "${clone_pids[$i]}" 2>/dev/null; then
                     local rc=0
                     wait "${clone_pids[$i]}" || rc=$?
-                    clone_done[$i]="$rc"
+                    clone_rc[$i]="$rc"
                     ((done_count++)) || true
                     if [ "$rc" -eq 0 ]; then
                         ((cloned++)) || true
                     else
                         ((failed++)) || true
                     fi
-                    printf "\r  cloning... [%d/%d] ${GREEN}✓${NC} %s" "$done_count" "$total" "${clone_dirs[$i]}"
-                    # Pad to clear previous longer name
-                    printf "%-20s" ""
                 fi
             done
-            [ "$done_count" -lt "$total" ] && sleep 0.3
-        done
-        printf "\r%-60s\r" ""
 
-        # Final per-repo summary
-        echo ""
-        for i in "${!clone_dirs[@]}"; do
-            if [ "${clone_done[$i]}" -eq 0 ]; then
-                ok "$(pad "${clone_dirs[$i]}" 23)${clone_urls[$i]}"
-            else
-                fail "$(pad "${clone_dirs[$i]}" 23)clone failed"
-                cat "${clone_logs[$i]}" 2>/dev/null | tail -3 | sed 's/^/      /'
-            fi
+            # Move cursor up to first line and redraw all
+            printf "\033[%dA" "$num_lines"
+
+            for j in "${!all_dirs[@]}"; do
+                local dir="${all_dirs[$j]}"
+                if [ "${all_states[$j]}" = "exists" ]; then
+                    printf "\r  ${DIM}-${NC} ${DIM}%-23s already exists${NC}%-20s\n" "$dir" ""
+                else
+                    # Find this dir's index in clone arrays
+                    local ci=""
+                    for k in "${!clone_dirs[@]}"; do
+                        if [ "${clone_dirs[$k]}" = "$dir" ]; then ci=$k; break; fi
+                    done
+                    if [ -n "$ci" ] && [ -n "${clone_rc[$ci]}" ]; then
+                        if [ "${clone_rc[$ci]}" -eq 0 ]; then
+                            printf "\r  ${GREEN}✓${NC} %-23s cloned%-30s\n" "$dir" ""
+                        else
+                            printf "\r  ${RED}✗${NC} %-23s clone failed%-24s\n" "$dir" ""
+                        fi
+                    else
+                        printf "\r  ${YELLOW}%s${NC} %-23s cloning...%-26s\n" "$spin" "$dir" ""
+                    fi
+                fi
+            done
+
+            [ "$done_count" -lt "$total" ] && sleep 0.1
         done
+
+        # Show error details for failures
+        if [ "$failed" -gt 0 ]; then
+            echo ""
+            for i in "${!clone_dirs[@]}"; do
+                if [ "${clone_rc[$i]}" -ne 0 ]; then
+                    echo -e "  ${RED}${clone_dirs[$i]}:${NC}"
+                    cat "${clone_logs[$i]}" 2>/dev/null | tail -3 | sed 's/^/    /'
+                fi
+            done
+        fi
     fi
 
     rm -rf "$tmpdir"
@@ -761,68 +902,75 @@ phase_deps() {
     echo "Installing dependencies..."
     echo ""
 
-    # Helper: run install command, capture exit code
-    run_install() {
-        local output rc=0
-        output=$("$@" 2>&1) || rc=$?
-        if [ "$rc" -ne 0 ]; then
-            echo "FAILED"
-            echo "$output" | tail -5
-            log_warn "Install failed (exit $rc) — continuing"
-        else
-            echo "done"
-        fi
-    }
+    local foundry_dir="$PARENT/zephyr-eth-foundry"
+    local bridge_dir="$PARENT/zephyr-bridge"
+    local engine_dir="$PARENT/zephyr-bridge-engine"
+
+    # Build task lists
+    TASK_NAMES=() TASK_CMDS=() TASK_STATES=()
 
     # Forge submodules
-    local foundry_dir="$PARENT/zephyr-eth-foundry"
     if [ -d "$foundry_dir" ]; then
-        printf "  [forge] zephyr-eth-foundry .......... "
+        TASK_NAMES+=("[forge] zephyr-eth-foundry")
         if [ -d "$foundry_dir/lib/forge-std/src" ]; then
-            echo "already installed"
+            TASK_CMDS+=("true")
+            TASK_STATES+=("skip")
         else
-            echo ""
-            run_install bash -c "cd '$foundry_dir' && git submodule update --init --recursive"
+            TASK_CMDS+=("cd '$foundry_dir' && git submodule update --init --recursive")
+            TASK_STATES+=("pending")
         fi
     fi
 
     # pnpm: zephyr-bridge
-    local bridge_dir="$PARENT/zephyr-bridge"
     if [ -d "$bridge_dir" ]; then
-        printf "  [pnpm]  zephyr-bridge ............... "
-        run_install bash -c "cd '$bridge_dir' && pnpm install --reporter=silent"
+        TASK_NAMES+=("[pnpm]  zephyr-bridge")
+        TASK_CMDS+=("cd '$bridge_dir' && pnpm install --reporter=silent")
+        TASK_STATES+=("pending")
     fi
 
     # pnpm: zephyr-bridge-engine
-    local engine_dir="$PARENT/zephyr-bridge-engine"
     if [ -d "$engine_dir" ]; then
-        printf "  [pnpm]  zephyr-bridge-engine ........ "
-        run_install bash -c "cd '$engine_dir' && pnpm install --reporter=silent"
+        TASK_NAMES+=("[pnpm]  zephyr-bridge-engine")
+        TASK_CMDS+=("cd '$engine_dir' && pnpm install --reporter=silent")
+        TASK_STATES+=("pending")
 
         if [ -d "$engine_dir/apps/web" ]; then
-            printf "  [pnpm]  zephyr-bridge-engine/apps/web  "
-            run_install bash -c "cd '$engine_dir/apps/web' && pnpm install --reporter=silent"
+            TASK_NAMES+=("[pnpm]  engine/apps/web")
+            TASK_CMDS+=("cd '$engine_dir/apps/web' && pnpm install --reporter=silent")
+            TASK_STATES+=("pending")
         fi
     fi
 
     # pnpm: status-dashboard
     if [ -d "$ROOT/status-dashboard" ]; then
-        printf "  [pnpm]  status-dashboard ............ "
-        run_install bash -c "cd '$ROOT/status-dashboard' && pnpm install --reporter=silent"
+        TASK_NAMES+=("[pnpm]  status-dashboard")
+        TASK_CMDS+=("cd '$ROOT/status-dashboard' && pnpm install --reporter=silent")
+        TASK_STATES+=("pending")
     fi
 
     # Python: requests
-    printf "  [pip]   python3-requests ............ "
+    TASK_NAMES+=("[pip]   python3-requests")
     if python3 -c "import requests" 2>/dev/null; then
-        echo "already installed"
+        TASK_CMDS+=("true")
+        TASK_STATES+=("skip")
     else
         if $IS_DEBIAN; then
-            run_install sudo apt install -y python3-requests
+            TASK_CMDS+=("sudo apt install -y python3-requests")
         else
-            run_install pip3 install requests
+            TASK_CMDS+=("pip3 install requests")
         fi
+        TASK_STATES+=("pending")
     fi
 
+    local dep_failed=0
+    run_parallel_tasks || dep_failed=$?
+
+    echo ""
+    if [ "$dep_failed" -gt 0 ]; then
+        log_warn "$dep_failed dependency install(s) failed — review errors above"
+    else
+        log_success "All dependencies installed"
+    fi
     echo ""
 }
 

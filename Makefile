@@ -83,7 +83,42 @@ DC_V3 := docker compose -p bridge-v3 --env-file .env \
 # Build
 # ===========================================
 
-.PHONY: keygen build build-zephyr build-oracle build-orderbook build-init sync-zephyr docs-dashboard docs-dashboard-check
+.PHONY: setup reset keygen build build-zephyr build-oracle build-orderbook build-init sync-zephyr docs-dashboard docs-dashboard-check
+
+## One-time setup: check prereqs, clone repos, install deps
+setup:
+	./scripts/setup.sh
+
+## Full reset: dev-delete + remove cloned repos (interactive)
+reset:
+	@$(MAKE) dev-delete
+	@PARENT="$(dir $(ORCH_DIR))"; \
+	REPOS=""; \
+	for dir in zephyr zephyr-bridge zephyr-bridge-engine zephyr-eth-foundry; do \
+		if [ -d "$$PARENT/$$dir" ]; then \
+			REPOS="$$REPOS  $$PARENT/$$dir\n"; \
+		fi; \
+	done; \
+	if [ -z "$$REPOS" ]; then \
+		echo "No sibling repos found to remove."; \
+	else \
+		echo ""; \
+		echo "The following repos will be permanently deleted:"; \
+		echo -e "$$REPOS"; \
+		printf "Continue? [y/N] "; \
+		read -r ans; \
+		case "$$ans" in \
+			[yY]) \
+				for dir in zephyr zephyr-bridge zephyr-bridge-engine zephyr-eth-foundry; do \
+					if [ -d "$$PARENT/$$dir" ]; then \
+						echo "  Removing $$PARENT/$$dir..."; \
+						rm -rf "$$PARENT/$$dir"; \
+					fi; \
+				done; \
+				echo "=== Reset complete ===" ;; \
+			*) echo "Aborted." ;; \
+		esac; \
+	fi
 
 ## Generate fresh keys and write to .env
 keygen:
@@ -720,6 +755,11 @@ testnet-v3-logs:
 ## Show this help
 help:
 	@echo "Zephyr Bridge Stack"
+	@echo ""
+	@echo "First-time setup:"
+	@echo "  make setup                      Check prereqs, clone repos, install deps"
+	@echo "  make keygen                     Generate fresh EVM keys → .env"
+	@echo "  make reset                      Full reset: dev-delete + remove cloned repos"
 	@echo ""
 	@echo "Dev workflow (staged setup):"
 	@echo "  make dev-init                   Base Zephyr devnet, then stop (~4 min)"

@@ -29,11 +29,11 @@ $ROOT/                       # Parent dev folder (set in .env)
 ## Quick Start
 
 ```bash
-# 1. Clone this repo + all sibling repos
+# 1. Clone this repo + setup
 mkdir ~/zephyr-dev && cd ~/zephyr-dev
 git clone git@github.com:fennzar/bridge-orchestration.git
 cd bridge-orchestration
-./scripts/clone-repos.sh               # Check prereqs, clone repos, install deps
+make setup                             # Check prereqs, clone repos, install deps
 
 # 2. Generate keys + configure paths
 make keygen                            # Generate fresh keys → .env
@@ -74,12 +74,12 @@ Run `make status` to check your environment. Required:
 
 Plus Zephyr binaries built from the `zephyr` repository.
 
-## Clone Repos
+## Setup
 
 All sibling repos can be cloned and set up in one step:
 
 ```bash
-./scripts/clone-repos.sh
+make setup
 ```
 
 The script runs three phases:
@@ -101,6 +101,8 @@ The script also prints system dependency install commands for building the Zephy
 
 | Target | Purpose |
 |--------|---------|
+| `make setup` | Check prereqs, clone repos, install deps (one-time) |
+| `make keygen` | Generate fresh EVM keys + secrets → .env |
 | `make dev-init` | Base Zephyr devnet, then stop (~4 min) |
 | `make dev-setup` | Deploy contracts + seed liquidity, then stop (~4 min) |
 | `make dev` | Start the stack (~10 sec) |

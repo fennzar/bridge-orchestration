@@ -3,9 +3,8 @@
 ## Quick Start
 
 ```bash
-# One-time setup (interactive — installs prereqs, clones repos, deps, Zephyr artifacts)
+# One-time setup (interactive — prereqs, clone, deps, artifacts, keygen)
 make setup
-make keygen                            # Generate fresh keys → .env (auto-detects ROOT + PATH)
 
 # First time setup (staged — each step stops when done)
 make dev-init                          # Base Zephyr devnet (~4 min)
@@ -187,7 +186,7 @@ Deployed automatically by `make dev-setup` via `./scripts/deploy-contracts.sh`. 
 
 Addresses saved to `config/addresses.local.json`.
 
-> This project uses a **generated mnemonic** (`EVM_DEV_MNEMONIC` in `.env`, created by `make keygen`), NOT the default Foundry mnemonic. See [metamask.md](../reference/metamask.md) for MetaMask setup.
+> This project uses a **generated mnemonic** (`EVM_DEV_MNEMONIC` in `.env`, created by `make setup` or `make keygen`), NOT the default Foundry mnemonic. See [metamask.md](../reference/metamask.md) for MetaMask setup.
 
 ## Zephyr Wallets
 

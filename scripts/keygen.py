@@ -180,7 +180,7 @@ def detect_paths() -> dict[str, str]:
     return paths
 
 
-def write_env(keys: dict[str, str], force: bool) -> None:
+def write_env(keys: dict[str, str], force: bool, quiet: bool = False) -> None:
     """Read .env.example, replace <KEYGEN:XXX> placeholders, write .env."""
     if not ENV_EXAMPLE.exists():
         print(f"Error: {ENV_EXAMPLE} not found", file=sys.stderr)
@@ -231,10 +231,11 @@ def write_env(keys: dict[str, str], force: bool) -> None:
         print(f"Warning: {len(remaining)} unresolved placeholders: {remaining}", file=sys.stderr)
 
     ENV_FILE.write_text(output)
-    print(f"Written to {ENV_FILE}")
-    print(f"  ROOT={detected['ROOT']}")
-    print(f"  PATH={detected['PATH']}")
-    print(f"Next: run ./scripts/sync-env.sh to propagate to sub-repos")
+    if not quiet:
+        print(f"Written to {ENV_FILE}")
+        print(f"  ROOT={detected['ROOT']}")
+        print(f"  PATH={detected['PATH']}")
+        print(f"Next: run ./scripts/sync-env.sh to propagate to sub-repos")
 
 
 def main() -> None:
@@ -245,6 +246,8 @@ def main() -> None:
                         help="Write generated keys to .env")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite .env without asking")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Suppress verbose output (for scripted use)")
     args = parser.parse_args()
 
     # Verify cast is available
@@ -256,10 +259,12 @@ def main() -> None:
         sys.exit(1)
 
     keys = generate_keys(args.mode)
-    print_keys(keys, args.mode)
+
+    if not args.quiet:
+        print_keys(keys, args.mode)
 
     if args.write_env:
-        write_env(keys, args.force)
+        write_env(keys, args.force, quiet=args.quiet)
 
 
 if __name__ == "__main__":

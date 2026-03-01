@@ -29,26 +29,23 @@ $ROOT/                       # Parent dev folder (set in .env)
 ## Quick Start
 
 ```bash
-# 1. Clone this repo + setup
+# 1. Clone this repo + setup (includes keygen)
 mkdir ~/zephyr-dev && cd ~/zephyr-dev
 git clone git@github.com:fennzar/bridge-orchestration.git
 cd bridge-orchestration
-make setup                             # Interactive: prereqs, clone repos, deps, Zephyr artifacts
+make setup                             # Interactive: prereqs, clone, deps, artifacts, keygen
 
-# 2. Generate keys
-make keygen                            # Generate fresh keys → .env (auto-detects ROOT + PATH)
-
-# 3. Init + setup (first time only)
+# 2. Init + setup (first time only)
 make dev-init                          # Base Zephyr devnet (~4 min)
 make dev-setup                         # Deploy contracts + seed liquidity (~4 min)
 
-# 4. Start
+# 3. Start
 make dev                               # Start the stack (~10 sec)
 
-# 5. Between tests
+# 4. Between tests
 make dev-reset && make dev             # Reset to post-setup state + restart
 
-# 6. Stop
+# 5. Stop
 make dev-stop
 ```
 
@@ -89,6 +86,7 @@ The script runs through these phases:
 5. **Install dependencies** — parallel `pnpm install` / `forge install` with spinners
 6. **Zephyr build deps** — offers to install C++ build dependencies (Ubuntu/Debian)
 7. **Sync artifacts** — vendors Zephyr binaries, oracle, and CLI into this repo
+8. **Key generation** — generates EVM keys + secrets, writes `.env` (idempotent, skips if already configured)
 
 | Local Directory | Repository | Deps |
 |-----------------|------------|------|
@@ -103,8 +101,8 @@ The script is fully idempotent — safe to re-run at any time.
 
 | Target | Purpose |
 |--------|---------|
-| `make setup` | Interactive prereqs, clone repos, deps, Zephyr artifacts |
-| `make keygen` | Generate fresh EVM keys + secrets → .env (auto-detects ROOT + PATH) |
+| `make setup` | Interactive prereqs, clone repos, deps, Zephyr artifacts, keygen |
+| `make keygen` | Regenerate EVM keys + secrets → .env (standalone, for key rotation) |
 | `make dev-init` | Base Zephyr devnet, then stop (~4 min) |
 | `make dev-setup` | Deploy contracts + seed liquidity, then stop (~4 min) |
 | `make dev` | Start the stack (~10 sec) |
@@ -120,7 +118,7 @@ The script is fully idempotent — safe to re-run at any time.
 | `make set-price PRICE=x` | Set fake oracle price |
 | `make set-scenario SCENARIO=x` | Quick presets: normal, defensive, crisis |
 | `make fund WALLET=x AMOUNT=x ASSET=x` | Transfer funds between wallets |
-| `make keygen` | Generate fresh EVM keys + secrets, write to .env |
+| `make keygen` | Regenerate EVM keys (standalone, included in `make setup`) |
 | `make deploy-contracts` | Deploy all EVM contracts to Anvil |
 | `make sync-env` | Sync .env to sub-repos |
 | `make clean` | Remove all containers and volumes |

@@ -63,8 +63,8 @@ COMPOSE_V2     := docker/compose.testnet-v2.yml
 COMPOSE_V3     := docker/compose.testnet-v3.yml
 COMPOSE_PROD   := docker/compose.prod.yml
 
-# Guard: verify Zephyr base exists
-$(if $(wildcard $(ZEPHYR_BASE)),,$(warning Zephyr compose.yml not found at $(ZEPHYR_BASE). Check ZEPHYR_REPO_PATH in .env))
+# Guard: verify Zephyr base exists (only warn when .env exists — fresh installs haven't run keygen yet)
+$(if $(wildcard .env),$(if $(wildcard $(ZEPHYR_BASE)),,$(warning Zephyr compose.yml not found at $(ZEPHYR_BASE). Check ZEPHYR_REPO_PATH in .env)))
 
 # Compose commands (Blockscout always in chain — profiled, won't start unless activated)
 DC_DEV := docker compose -p bridge-orch --env-file .env \

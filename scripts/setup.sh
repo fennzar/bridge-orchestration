@@ -1083,7 +1083,56 @@ phase_sync_artifacts() {
     fi
 }
 
-# ── Phase 6: Summary + Next Steps ────────────
+# ── Phase 6: Key Generation ───────────────────
+
+# Check if .env exists and has no unresolved <KEYGEN:> placeholders
+env_is_valid() {
+    [ -f "$ROOT/.env" ] && ! grep -q '<KEYGEN:' "$ROOT/.env"
+}
+
+phase_keygen() {
+    echo ""
+    echo "EVM key generation"
+    echo ""
+
+    # Already configured — skip
+    if env_is_valid; then
+        ok ".env already configured"
+        return 0
+    fi
+
+    # cast required for keygen
+    if ! command -v cast &>/dev/null; then
+        dim "cast (Foundry) not found — skipping keygen"
+        echo -e "  ${DIM}Run later: make keygen${NC}"
+        return 0
+    fi
+
+    echo -e "  ${DIM}Generates EVM keys, secrets, and auto-detects ROOT + PATH.${NC}"
+    echo -e "  ${DIM}Writes to .env from .env.example template.${NC}"
+
+    if ask_yn "Generate keys now? (or N to run 'make keygen' later)"; then
+        echo ""
+        spin_while "Generating EVM keys + .env" \
+            python3 "$SCRIPT_DIR/keygen.py" --write-env --force --quiet
+
+        echo ""
+        # Show key summary
+        local root_val; root_val=$(grep '^ROOT=' "$ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+        local deployer; deployer=$(grep '^DEPLOYER_ADDRESS=' "$ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+        local signer; signer=$(grep '^BRIDGE_SIGNER_ADDRESS=' "$ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+        echo -e "  ${DIM}ROOT=${root_val}${NC}"
+        echo -e "  ${DIM}Deployer: ${deployer}${NC}"
+        echo -e "  ${DIM}Bridge signer: ${signer}${NC}"
+
+        log_success ".env generated"
+    else
+        echo ""
+        log_skip "Skipped — run later: make keygen"
+    fi
+}
+
+# ── Phase 7: Summary + Next Steps ────────────
 
 phase_summary() {
     echo "=========================================="
@@ -1104,7 +1153,7 @@ phase_summary() {
     echo ""
     echo "  Next steps:"
     echo ""
-    if [ -f "$ROOT/.env" ]; then
+    if env_is_valid; then
         echo "    1. make dev-init && make dev-setup && make dev"
     else
         echo "    1. make keygen       (generates keys + auto-sets ROOT and PATH)"
@@ -1126,4 +1175,5 @@ phase_branches
 phase_deps
 phase_zephyr_deps
 phase_sync_artifacts
+phase_keygen
 phase_summary

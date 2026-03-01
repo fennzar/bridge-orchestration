@@ -219,6 +219,24 @@ check_bc() {
     fi
 }
 
+check_curl() {
+    if command -v curl &>/dev/null; then
+        local ver; ver=$(curl --version 2>/dev/null | head -1 | sed 's/curl //' | sed 's/ .*//')
+        add_result "curl" "$ver" "ok"
+    else
+        add_result "curl" "not found" "missing"
+    fi
+}
+
+check_gpg() {
+    if command -v gpg &>/dev/null; then
+        local ver; ver=$(gpg --version 2>/dev/null | head -1 | sed 's/gpg (GnuPG) //')
+        add_result "gpg" "$ver" "ok"
+    else
+        add_result "gpg" "not found" "missing"
+    fi
+}
+
 # ── Install Functions ─────────────────────────
 
 install_apt_batch() {
@@ -413,9 +431,9 @@ install_overmind() {
     echo ""
     echo "  Install commands:"
     echo -e "    ${CYAN}sudo apt install -y tmux${NC}"
-    echo -e "    ${CYAN}wget -q https://github.com/DarthSim/overmind/releases/download/v${OVERMIND_VERSION}/overmind-v${OVERMIND_VERSION}-linux-amd64.gz${NC}"
-    echo -e "    ${CYAN}gunzip overmind-v${OVERMIND_VERSION}-linux-amd64.gz${NC}"
-    echo -e "    ${CYAN}chmod +x overmind-v${OVERMIND_VERSION}-linux-amd64 && sudo mv overmind-v${OVERMIND_VERSION}-linux-amd64 /usr/local/bin/overmind${NC}"
+    echo -e "    ${CYAN}curl -fsSL -o /tmp/overmind.gz https://github.com/DarthSim/overmind/releases/download/v${OVERMIND_VERSION}/overmind-v${OVERMIND_VERSION}-linux-amd64.gz${NC}"
+    echo -e "    ${CYAN}gunzip /tmp/overmind.gz${NC}"
+    echo -e "    ${CYAN}chmod +x /tmp/overmind && sudo mv /tmp/overmind /usr/local/bin/overmind${NC}"
     echo ""
     echo -e "  ${DIM}Docs: https://github.com/DarthSim/overmind${NC}"
 
@@ -428,7 +446,7 @@ install_overmind() {
         fi
         echo "  Downloading overmind v${OVERMIND_VERSION}..."
         local tmp; tmp=$(mktemp -d)
-        if wget -q -O "$tmp/overmind.gz" "https://github.com/DarthSim/overmind/releases/download/v${OVERMIND_VERSION}/overmind-v${OVERMIND_VERSION}-linux-amd64.gz" && \
+        if curl -fsSL -o "$tmp/overmind.gz" "https://github.com/DarthSim/overmind/releases/download/v${OVERMIND_VERSION}/overmind-v${OVERMIND_VERSION}-linux-amd64.gz" && \
            gunzip "$tmp/overmind.gz" && \
            chmod +x "$tmp/overmind" && \
            sudo mv "$tmp/overmind" /usr/local/bin/overmind; then
@@ -478,6 +496,8 @@ phase_prereqs() {
     check_tmux
     check_jq
     check_bc
+    check_curl
+    check_gpg
 
     # Display matrix
     local missing_names=()
@@ -516,7 +536,7 @@ phase_prereqs() {
     local -a apt_missing=()
     for name in "${missing_names[@]}"; do
         case "$name" in
-            git|python3|tmux|jq|bc) apt_missing+=("$name") ;;
+            git|python3|tmux|jq|bc|curl|gpg) apt_missing+=("$name") ;;
             # python3 apt package name differs
         esac
     done

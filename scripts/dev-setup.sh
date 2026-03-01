@@ -18,9 +18,10 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 # Load shared libraries
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/compose.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
-DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml -f $ORCH_DIR/docker/compose.blockscout.yml"
+DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
 PROCFILE="${PROCFILE:-$ORCH_DIR/Procfile.dev}"
 ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
@@ -78,10 +79,6 @@ echo ""
 # Step 2: Start infrastructure
 # ===========================================
 log_info "Starting Docker infrastructure..."
-# Ensure shared zephyr volumes exist (external: true in compose)
-for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do
-    docker volume create "$v" >/dev/null 2>&1 || true
-done
 $DC_DEV up -d
 echo ""
 

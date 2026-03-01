@@ -36,15 +36,6 @@ SHELL := /bin/bash
 # ===========================================
 # Configuration
 # ===========================================
-COMPOSE_BASE := docker/compose.base.yml
-COMPOSE_DEV  := docker/compose.dev.yml
-COMPOSE_V3   := docker/compose.testnet-v3.yml
-COMPOSE_PROD := docker/compose.prod.yml
-COMPOSE_BS   := docker/compose.blockscout.yml
-
-# Blockscout always in dev compose chain (profiled — won't start unless activated)
-DC_DEV := docker compose -p bridge --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV) -f $(COMPOSE_BS)
-DC_V3  := docker compose -p bridge-v3 --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_V3)
 
 # Paths (loaded from .env if available)
 # Save system PATH before .env overrides it
@@ -52,12 +43,41 @@ SYSTEM_PATH := $(PATH)
 -include .env
 # Restore PATH (the .env PATH uses $PATH which doesn't expand in Make)
 export PATH := $(SYSTEM_PATH)
+
 ORCH_DIR        := $(CURDIR)
 PROCFILE        ?= $(ORCH_DIR)/Procfile.dev
 OVERMIND_SOCK   ?= $(ORCH_DIR)/.overmind-dev.sock
 export PROCFILE OVERMIND_SOCK
 ZEPHYR_CLI      := $(or $(wildcard tools/zephyr-cli/cli),$(ZEPHYR_REPO_PATH)/tools/zephyr-cli/cli)
 
+# Zephyr base compose files (from Zephyr repo)
+ZEPHYR_BASE   := $(ZEPHYR_REPO_PATH)/docker/compose.yml
+ZEPHYR_PUBLIC := $(ZEPHYR_REPO_PATH)/docker/compose.public.yml
+
+# Bridge-orch compose files
+COMPOSE_BRIDGE := docker/compose.bridge.yml
+COMPOSE_ENGINE := docker/compose.engine.yml
+COMPOSE_DEV    := docker/compose.dev.yml
+COMPOSE_BS     := docker/compose.blockscout.yml
+COMPOSE_V2     := docker/compose.testnet-v2.yml
+COMPOSE_V3     := docker/compose.testnet-v3.yml
+COMPOSE_PROD   := docker/compose.prod.yml
+
+# Guard: verify Zephyr base exists
+$(if $(wildcard $(ZEPHYR_BASE)),,$(warning Zephyr compose.yml not found at $(ZEPHYR_BASE). Check ZEPHYR_REPO_PATH in .env))
+
+# Compose commands (Blockscout always in chain — profiled, won't start unless activated)
+DC_DEV := docker compose -p bridge-orch --env-file .env \
+  -f $(ZEPHYR_BASE) -f $(COMPOSE_BRIDGE) -f $(COMPOSE_ENGINE) \
+  -f $(COMPOSE_DEV) -f $(COMPOSE_BS)
+
+DC_V2 := docker compose -p bridge-orch --env-file .env \
+  -f $(ZEPHYR_BASE) -f $(ZEPHYR_PUBLIC) -f $(COMPOSE_BRIDGE) -f $(COMPOSE_ENGINE) \
+  -f $(COMPOSE_V2) -f $(COMPOSE_BS)
+
+DC_V3 := docker compose -p bridge-v3 --env-file .env \
+  -f $(ZEPHYR_BASE) -f $(ZEPHYR_PUBLIC) -f $(COMPOSE_BRIDGE) -f $(COMPOSE_ENGINE) \
+  -f $(COMPOSE_V3)
 
 # ===========================================
 # Build
@@ -156,10 +176,6 @@ dev-start:
 		echo "Cleaning stale Overmind socket..."; \
 		rm -f $(OVERMIND_SOCK); \
 	fi
-	@# Ensure shared zephyr volumes exist (external: true in compose)
-	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
-		docker volume create $$v >/dev/null 2>&1 || true; \
-	done
 	@# Start infrastructure (Blockscout on by default, EXPLORER=0 to skip)
 	@echo "=== Starting Docker infrastructure ==="
 	@if [ "$(EXPLORER)" = "0" ]; then \
@@ -209,21 +225,18 @@ dev-init:
 	@$(DC_DEV) --profile explorer down -v 2>/dev/null || true
 	@# Also remove any orphaned volumes (handles project-name mismatches)
 	@docker volume ls -q --filter name=zephyr- | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=orch- | xargs -r docker volume rm 2>/dev/null || true
+	@# Legacy volumes (pre-migration prefixes)
 	@docker volume ls -q --filter name=bridge-redis | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-postgres | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-anvil | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-blockscout | xargs -r docker volume rm 2>/dev/null || true
-	@# Legacy volumes (pre-migration docker_ prefix)
 	@docker volume ls -q --filter name=docker_ | xargs -r docker volume rm 2>/dev/null || true
 	@# 3. Remove stale addresses (setup not done yet)
 	@rm -f config/addresses.json deployed-addresses.json
 	@# 4. Rebuild images (pass DEVNET_MODE for mirror binary selection)
 	@$(MAKE) build DEVNET_MODE=$(or $(DEVNET_MODE),custom)
-	@# 5. Pre-create shared zephyr volumes (external: true in compose)
-	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
-		docker volume create $$v >/dev/null 2>&1 || true; \
-	done
-	@# 6. Start infrastructure
+	@# 5. Start infrastructure
 	@echo ""
 	@echo "=== Starting Docker infrastructure ==="
 	@$(DC_DEV) up -d
@@ -271,9 +284,6 @@ dev-setup:
 ## Start Docker infrastructure only
 dev-infra:
 	@echo "=== Starting Docker infrastructure ==="
-	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
-		docker volume create $$v >/dev/null 2>&1 || true; \
-	done
 	$(DC_DEV) up -d
 
 ## Start native apps via Overmind (usage: make dev-apps APPS=bridge)
@@ -342,11 +352,12 @@ dev-delete:
 	@docker rm zephyr-devnet-init 2>/dev/null || true
 	@# Remove orphaned volumes (handles project-name mismatches)
 	@docker volume ls -q --filter name=zephyr- | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=orch- | xargs -r docker volume rm 2>/dev/null || true
+	@# Legacy volumes (pre-migration prefixes)
 	@docker volume ls -q --filter name=bridge-redis | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-postgres | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-anvil | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-blockscout | xargs -r docker volume rm 2>/dev/null || true
-	@# Legacy volumes (pre-migration docker_ prefix)
 	@docker volume ls -q --filter name=docker_ | xargs -r docker volume rm 2>/dev/null || true
 	@# Remove local state files
 	@rm -f config/addresses.json deployed-addresses.json

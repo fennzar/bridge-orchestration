@@ -1,6 +1,6 @@
 # Zephyr Bridge Stack - Production Build Apps
 #
-# Infrastructure runs in Docker (compose.base.yml + compose.dev.yml).
+# Infrastructure runs in Docker (Zephyr base + compose.bridge/engine/dev.yml).
 # This Procfile runs apps from production builds (pnpm build -> pnpm start).
 #
 # Usage:

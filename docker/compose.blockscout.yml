@@ -4,8 +4,8 @@
 # Reusable overlay — all services under profiles: ["explorer"].
 # Include in compose chain; won't start unless --profile explorer is used.
 #
-# Dev:        docker compose -f base -f dev -f blockscout --profile explorer up -d
-# Testnet V2: docker compose -f base -f testnet-v2 -f blockscout --profile full --profile explorer up -d
+# Dev:        docker compose -f base -f bridge -f engine -f dev -f blockscout --profile explorer up -d
+# Testnet V2: docker compose -f base -f bridge -f engine -f testnet-v2 -f blockscout --profile full --profile explorer up -d
 
 x-logging: &default-logging
   driver: json-file
@@ -19,14 +19,14 @@ services:
   # ===========================================
   blockscout-db:
     image: postgres:17-alpine
-    container_name: zephyr-blockscout-db
+    container_name: orch-blockscout-db
     profiles: ["explorer"]
     environment:
       POSTGRES_USER: blockscout
       POSTGRES_PASSWORD: blockscout
       POSTGRES_DB: blockscout
     volumes:
-      - blockscout-db-data:/var/lib/postgresql/data
+      - orch-blockscout-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 5s
@@ -42,7 +42,7 @@ services:
   # ===========================================
   blockscout-backend:
     image: ghcr.io/blockscout/blockscout:latest
-    container_name: zephyr-blockscout-backend
+    container_name: orch-blockscout-backend
     profiles: ["explorer"]
     depends_on:
       blockscout-db:
@@ -64,6 +64,9 @@ services:
       # block queries (eth_getBalance, eth_getCode at old blocks) work.
       # Only disable pending tx fetcher (Anvil has no real mempool).
       INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: "true"
+      # Skip genesis block — Anvil doesn't store block 0 as a historical state,
+      # so coin_balance_catchup queries at block 0 fail with BlockOutOfRangeError.
+      FIRST_BLOCK: "1"
       EXCHANGE_RATES_MARKET_CAP_SOURCE: ""
       EXCHANGE_RATES_COINGECKO_COIN_ID: ""
       ACCOUNT_ENABLED: "false"
@@ -85,7 +88,7 @@ services:
   # ===========================================
   blockscout-frontend:
     image: ghcr.io/blockscout/frontend:latest
-    container_name: zephyr-blockscout-frontend
+    container_name: orch-blockscout-frontend
     profiles: ["explorer"]
     depends_on:
       - blockscout-backend
@@ -117,7 +120,7 @@ services:
   # ===========================================
   blockscout-proxy:
     image: nginx:alpine
-    container_name: zephyr-blockscout-proxy
+    container_name: orch-blockscout-proxy
     profiles: ["explorer"]
     depends_on:
       - blockscout-backend
@@ -132,5 +135,5 @@ services:
       - zephyr-net
 
 volumes:
-  blockscout-db-data:
-    name: bridge-blockscout-db-data
+  orch-blockscout-db-data:
+    name: orch-blockscout-db-data

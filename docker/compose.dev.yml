@@ -1,12 +1,13 @@
 # ===========================================
 # Dev Overrides
 # ===========================================
-# Adds: Anvil, port exposure, devnet-init container.
+# Adds: Anvil, wallet-cex, fake-orderbook, port exposure, devnet-init overrides.
 # Apps run natively via Overmind (Procfile.dev).
 #
-# Usage:
-#   docker compose -f docker/compose.base.yml -f docker/compose.dev.yml up -d
-#   docker compose -f docker/compose.base.yml -f docker/compose.dev.yml --profile init up devnet-init
+# Usage (always combined with Zephyr base + bridge + engine):
+#   docker compose -f $ZEPHYR_BASE \
+#     -f docker/compose.bridge.yml -f docker/compose.engine.yml \
+#     -f docker/compose.dev.yml up -d
 
 x-logging: &default-logging
   driver: json-file
@@ -20,7 +21,7 @@ services:
   # ===========================================
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
-    container_name: zephyr-anvil
+    container_name: orch-anvil
     ports:
       - "8545:8545"
     entrypoint: anvil
@@ -51,16 +52,89 @@ services:
       - zephyr-net
 
   # ===========================================
+  # CEX Wallet (dev/testnet only)
+  # ===========================================
+  wallet-cex:
+    image: zephyr-devnet
+    container_name: orch-wallet-cex
+    ports:
+      - "48772:48772"
+    environment:
+      ZEPHYR_MODE: wallet
+    command:
+      - "--devnet"
+      - "--rpc-bind-port=48772"
+      - "--rpc-bind-ip=0.0.0.0"
+      - "--confirm-external-bind"
+      - "--disable-rpc-login"
+      - "--wallet-dir=/wallets"
+      - "--daemon-address=zephyr-node1:47767"
+      - "--trusted-daemon"
+      - "--shared-ringdb-dir=/data/ringdb"
+      - "--log-level=1"
+    volumes:
+      - wallet-data:/wallets
+      - shared-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48772/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+    logging: *default-logging
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # Fake Orderbook (dev/testnet only)
+  # ===========================================
+  fake-orderbook:
+    image: zephyr-fake-orderbook
+    container_name: orch-fake-orderbook
+    ports:
+      - "5556:5556"
+    environment:
+      FAKE_ORDERBOOK_PORT: "5556"
+      FAKE_ORACLE_URL: "http://zephyr-node1:5555"
+    depends_on:
+      zephyr-fake-oracle:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5556/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # Zephyr Base Service Overrides (dev only)
+  # ===========================================
+
+  # Oracle: add GOV_WALLET_RPC + NODE_RPC env vars for devnet features
+  zephyr-fake-oracle:
+    environment:
+      ORACLE_PORT: "5555"
+      GOV_WALLET_RPC: "http://wallet-gov:48769"
+      NODE_RPC: "http://127.0.0.1:47767"
+
+  # devnet-init: add fake-oracle dependency (base only depends on nodes + wallets)
+  devnet-init:
+    depends_on:
+      zephyr-fake-oracle:
+        condition: service_healthy
+
+  # ===========================================
   # Port Exposure (dev only)
   # ===========================================
-  redis:
-    ports:
-      - "6380:6379"
-
-  postgres:
-    ports:
-      - "5432:5432"
-
   # Oracle shares node1's network namespace, so oracle port is exposed via node1
   zephyr-node1:
     ports:
@@ -91,57 +165,16 @@ services:
     ports:
       - "48771:48771"
 
-  wallet-cex:
+  redis:
     ports:
-      - "48772:48772"
+      - "6380:6379"
 
-  fake-orderbook:
+  postgres:
     ports:
-      - "5556:5556"
+      - "5432:5432"
 
-  # ===========================================
-  # DEVNET Init (profile: init)
-  # ===========================================
-  # Uses zephyr-cli devnet init — creates gov/miner/test wallets only.
-  # Bridge/engine/cex wallets are created by dev-setup.sh (not here).
-  devnet-init:
-    image: zephyr-devnet-init
-    container_name: zephyr-devnet-init
-    profiles:
-      - init
-    environment:
-      ORACLE_PRICE: "2.0"
-      DEVNET_MODE: "${DEVNET_MODE:-custom}"
-      TARGET_RR: "7.0"
-      ZSD_MINT_LIMIT: "450000"
-      CHECKPOINT_FILE: "/checkpoint/height"
-      MINING_THREADS: "2"
-      # Docker hostname overrides (consumed by zephyr-cli config.py env var layer)
-      ZEPHYR_DAEMON_HOST: "zephyr-node1"
-      ZEPHYR_DAEMON_PORT: "47767"
-      ZEPHYR_ORACLE_HOST: "zephyr-node1"
-      ZEPHYR_ORACLE_PORT: "5555"
-      ZEPHYR_WALLET_GOV_HOST: "wallet-gov"
-      ZEPHYR_WALLET_GOV_PORT: "48769"
-      ZEPHYR_WALLET_MINER_HOST: "wallet-miner"
-      ZEPHYR_WALLET_MINER_PORT: "48767"
-      ZEPHYR_WALLET_TEST_HOST: "wallet-test"
-      ZEPHYR_WALLET_TEST_PORT: "48768"
-    volumes:
-      - zephyr-checkpoint:/checkpoint
-    depends_on:
-      zephyr-node1:
-        condition: service_healthy
-      zephyr-node2:
-        condition: service_healthy
-      fake-oracle:
-        condition: service_healthy
-      wallet-gov:
-        condition: service_healthy
-      wallet-miner:
-        condition: service_healthy
-      wallet-test:
-        condition: service_healthy
-    logging: *default-logging
-    networks:
-      - zephyr-net
+volumes:
+  wallet-data:
+    name: zephyr-wallets
+  shared-data:
+    name: zephyr-shared

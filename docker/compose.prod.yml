@@ -1,7 +1,11 @@
 # ===========================================
-# Production (skeleton)
+# Production Overlay
 # ===========================================
 # Real Zephyr mainnet node, no fake services, app containers + Caddy.
+#
+# Usage (combined with Zephyr base + public + bridge):
+#   docker compose -f $ZEPHYR_BASE -f $ZEPHYR_PUBLIC \
+#     -f docker/compose.bridge.yml -f docker/compose.prod.yml up -d
 #
 # TODO: Complete when ready for production deployment.
 
@@ -32,6 +36,7 @@ services:
 
   wallet-bridge:
     image: zephyr-mainnet
+    container_name: orch-wallet-bridge
     environment:
       ZEPHYR_MODE: wallet
     command:
@@ -43,7 +48,7 @@ services:
       - "--trusted-daemon"
       - "--log-level=1"
     volumes:
-      - zephyr-wallets:/wallets
+      - wallet-data:/wallets
     depends_on:
       zephyr-node1:
         condition: service_healthy
@@ -54,6 +59,7 @@ services:
   # App containers (same as testnet)
   bridge-web:
     image: zephyr-bridge-web
+    container_name: orch-bridge-web
     env_file: ../env/.env.prod
     environment:
       PORT: "7050"
@@ -63,6 +69,7 @@ services:
 
   bridge-api:
     image: zephyr-bridge-api
+    container_name: orch-bridge-api
     env_file: ../env/.env.prod
     environment:
       PORT: "7051"
@@ -72,6 +79,7 @@ services:
 
   bridge-watchers:
     image: zephyr-bridge-watchers
+    container_name: orch-bridge-watchers
     env_file: ../env/.env.prod
     logging: *default-logging
     networks:
@@ -80,6 +88,7 @@ services:
   # Engine can be deployed on separate server
   engine-web:
     image: zephyr-engine-web
+    container_name: orch-engine-web
     profiles: ["engine", "full"]
     env_file: ../env/.env.prod
     environment:
@@ -90,6 +99,7 @@ services:
 
   engine-watchers:
     image: zephyr-engine-watchers
+    container_name: orch-engine-watchers
     profiles: ["engine", "full"]
     env_file: ../env/.env.prod
     logging: *default-logging
@@ -98,17 +108,20 @@ services:
 
   caddy:
     image: caddy:2-alpine
+    container_name: orch-caddy
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+      - orch-caddy-data:/data
+      - orch-caddy-config:/config
     logging: *default-logging
     networks:
       - zephyr-net
 
 volumes:
-  caddy-data:
-  caddy-config:
+  wallet-data:
+    name: zephyr-wallets
+  orch-caddy-data:
+  orch-caddy-config:

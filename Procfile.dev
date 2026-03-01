@@ -1,6 +1,6 @@
 # Zephyr Bridge Stack - Dev Hot-Reload Apps
 #
-# Infrastructure runs in Docker (compose.base.yml + compose.dev.yml).
+# Infrastructure runs in Docker (Zephyr base + compose.bridge/engine/dev.yml).
 # This Procfile only runs the native apps that benefit from hot-reload.
 #
 # Usage:

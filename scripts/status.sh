@@ -23,28 +23,27 @@ ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/
 
 # ── Docker Compose command ──────────────────
 
-COMPOSE_BASE="$ORCH_DIR/docker/compose.base.yml"
-COMPOSE_DEV="$ORCH_DIR/docker/compose.dev.yml"
-DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $COMPOSE_BASE -f $COMPOSE_DEV -f $ORCH_DIR/docker/compose.blockscout.yml"
+source "$SCRIPT_DIR/lib/compose.sh"
+DC_DEV=$(get_dc_dev "$ORCH_DIR" 2>/dev/null) || DC_DEV="docker compose -p bridge-orch"
 
 # ── Docker service definitions ──────────────
 # Format: container_name:display_name:port
 
 DOCKER_SERVICES=(
-    "zephyr-redis:redis:6380"
-    "zephyr-postgres:postgres:5432"
-    "zephyr-anvil:anvil:8545"
+    "orch-redis:redis:6380"
+    "orch-postgres:postgres:5432"
+    "orch-anvil:anvil:8545"
     "zephyr-node1:zephyr-node1:47767"
     "zephyr-node2:zephyr-node2:47867"
-    "zephyr-wallet-gov:wallet-gov:48769"
-    "zephyr-wallet-miner:wallet-miner:48767"
-    "zephyr-wallet-test:wallet-test:48768"
-    "zephyr-wallet-bridge:wallet-bridge:48770"
-    "zephyr-wallet-engine:wallet-engine:48771"
-    "zephyr-wallet-cex:wallet-cex:48772"
+    "wallet-gov:wallet-gov:48769"
+    "wallet-miner:wallet-miner:48767"
+    "wallet-test:wallet-test:48768"
+    "orch-wallet-bridge:wallet-bridge:48770"
+    "orch-wallet-engine:wallet-engine:48771"
+    "orch-wallet-cex:wallet-cex:48772"
     "zephyr-fake-oracle:fake-oracle:5555"
-    "zephyr-fake-orderbook:fake-orderbook:5556"
-    "zephyr-blockscout-proxy:blockscout:4000:optional"
+    "orch-fake-orderbook:fake-orderbook:5556"
+    "orch-blockscout-proxy:blockscout:4000:optional"
 )
 
 # ── Overmind process definitions ────────────

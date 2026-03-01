@@ -27,9 +27,10 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 # Load shared libraries
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/compose.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
-DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml -f $ORCH_DIR/docker/compose.blockscout.yml"
+DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
 ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
 
@@ -94,10 +95,6 @@ if $DC_DEV ps --format '{{.Name}}' 2>/dev/null | grep -q zephyr-node1; then
     log_info "Infrastructure already running"
 else
     log_info "Starting infrastructure temporarily..."
-    # Ensure shared zephyr volumes exist (external: true in compose)
-    for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do
-        docker volume create "$v" >/dev/null 2>&1 || true
-    done
     $DC_DEV up -d
 fi
 
@@ -274,7 +271,7 @@ for i in $(seq 1 30); do
 done
 
 if ! cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
-    log_error "Anvil did not come up. Check: docker logs zephyr-anvil"
+    log_error "Anvil did not come up. Check: docker logs orch-anvil"
     $DC_DEV --profile explorer down --remove-orphans
     exit 1
 fi
@@ -310,7 +307,7 @@ $DC_DEV --profile explorer down --remove-orphans
 # Wipe Blockscout DB so it re-indexes cleanly from the restored Anvil state.
 # Must happen after `down` since the container holds the volume.
 log_info "Resetting blockscout database..."
-docker volume rm bridge-blockscout-db-data 2>/dev/null || true
+docker volume rm orch-blockscout-db-data 2>/dev/null || true
 
 echo ""
 echo "==========================================="

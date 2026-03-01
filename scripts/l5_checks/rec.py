@@ -193,12 +193,12 @@ def check_rec_007(row, probes):
     # 2. Restart Postgres container
     try:
         result = subprocess.run(
-            ["docker", "restart", "zephyr-postgres"],
+            ["docker", "restart", "orch-postgres"],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             return _r(row, BLOCKED,
-                      f"docker restart zephyr-postgres failed: {result.stderr.strip()}")
+                      f"docker restart orch-postgres failed: {result.stderr.strip()}")
     except FileNotFoundError:
         return _r(row, BLOCKED, "docker CLI not found")
     except subprocess.TimeoutExpired:
@@ -268,12 +268,12 @@ def check_rec_008(row, probes):
     # 2. Restart Redis container
     try:
         result = subprocess.run(
-            ["docker", "restart", "zephyr-redis"],
+            ["docker", "restart", "orch-redis"],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             return _r(row, BLOCKED,
-                      f"docker restart zephyr-redis failed: {result.stderr.strip()}")
+                      f"docker restart orch-redis failed: {result.stderr.strip()}")
     except FileNotFoundError:
         return _r(row, BLOCKED, "docker CLI not found")
     except subprocess.TimeoutExpired:

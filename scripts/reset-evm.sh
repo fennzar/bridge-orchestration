@@ -12,9 +12,10 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 # Load shared libraries
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/compose.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
-DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml -f $ORCH_DIR/docker/compose.blockscout.yml"
+DC_DEV=$(get_dc_dev "$ORCH_DIR")
 
 echo "==========================================="
 echo "  Reset EVM (Zephyr state preserved)"
@@ -36,7 +37,7 @@ for i in $(seq 1 30); do
 done
 
 if ! cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
-    log_error "Anvil did not come up. Check: docker logs zephyr-anvil"
+    log_error "Anvil did not come up. Check: docker logs orch-anvil"
     exit 1
 fi
 

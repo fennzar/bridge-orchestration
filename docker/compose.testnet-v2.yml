@@ -236,7 +236,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./caddy/Caddyfile.testnet-v2:/etc/caddy/Caddyfile:ro
+      - ${ORCH_DIR}/caddy/Caddyfile.testnet-v2:/etc/caddy/Caddyfile:ro
       - orch-caddy-data:/data
       - orch-caddy-config:/config
     logging: *default-logging

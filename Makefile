@@ -47,7 +47,7 @@ export PATH := $(SYSTEM_PATH)
 ORCH_DIR        := $(CURDIR)
 PROCFILE        ?= $(ORCH_DIR)/Procfile.dev
 OVERMIND_SOCK   ?= $(ORCH_DIR)/.overmind-dev.sock
-export PROCFILE OVERMIND_SOCK
+export PROCFILE OVERMIND_SOCK ORCH_DIR
 ZEPHYR_CLI      := $(or $(wildcard tools/zephyr-cli/cli),$(ZEPHYR_REPO_PATH)/tools/zephyr-cli/cli)
 
 # Zephyr base compose files (from Zephyr repo)

@@ -19,6 +19,9 @@ get_dc_dev() {
         return 1
     fi
 
+    # Export ORCH_DIR so compose files can use ${ORCH_DIR} in bind mount paths
+    export ORCH_DIR="$orch_dir"
+
     echo "docker compose -p bridge-orch --env-file $orch_dir/.env" \
         "-f $zephyr_base" \
         "-f $orch_dir/docker/compose.bridge.yml" \

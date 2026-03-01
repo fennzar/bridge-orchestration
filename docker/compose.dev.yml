@@ -40,7 +40,7 @@ services:
       - /state/state.json
       - --preserve-historical-states
     volumes:
-      - ../snapshots/anvil:/state
+      - ${ORCH_DIR}/snapshots/anvil:/state
     healthcheck:
       test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
       interval: 5s

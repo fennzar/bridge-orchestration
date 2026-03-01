@@ -92,10 +92,10 @@ The script runs through these phases:
 
 | Local Directory | Repository | Deps |
 |-----------------|------------|------|
-| `zephyr-eth-foundry/` | `git@github.com:fennzar/zephyr-uniswap-v4-foundry.git` | `forge install` |
-| `zephyr-bridge/` | `git@github.com:fennzar/zephyr-bridge.git` | `pnpm install` |
-| `zephyr-bridge-engine/` | `git@github.com:fennzar/zephyr-bridge-engine.git` | `pnpm install` |
-| `zephyr/` | `https://github.com/ZephyrProtocol/zephyr` | C++ (build deps offered) |
+| `zephyr-eth-foundry/` | [fennzar/zephyr-uniswap-v4-foundry](https://github.com/fennzar/zephyr-uniswap-v4-foundry) | `forge install` |
+| `zephyr-bridge/` | [fennzar/zephyr-bridge](https://github.com/fennzar/zephyr-bridge) | `pnpm install` |
+| `zephyr-bridge-engine/` | [fennzar/zephyr-bridge-engine](https://github.com/fennzar/zephyr-bridge-engine) | `pnpm install` |
+| `zephyr/` | [fennzar/zephyr](https://github.com/fennzar/zephyr) | C++ (build deps offered) |
 
 The script is fully idempotent — safe to re-run at any time.
 
@@ -289,6 +289,7 @@ make status
 - **[metamask.md](./docs/reference/metamask.md)** - MetaMask test wallet (seed, accounts, funding)
 
 ### Testing
+- **[Testing README](./docs/testing/README.md)** - Quick reference: commands, test levels, where to start
 - **[01-overview.md](./docs/testing/01-overview.md)** - Master test document (L1-L4 levels, test index)
 - **[02-infra-checklist.md](./docs/testing/02-infra-checklist.md)** - Quick infrastructure verification
 - **[03-bridge-scenarios.md](./docs/testing/03-bridge-scenarios.md)** - Wrap/unwrap test flows (API + UI)

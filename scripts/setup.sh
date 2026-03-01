@@ -638,8 +638,11 @@ phase_clone() {
     echo "Cloning repositories..."
     echo ""
 
-    local cloned=0 existed=0
+    local cloned=0 existed=0 failed=0
+    local -a clone_dirs=() clone_urls=() clone_flags=() clone_pids=() clone_logs=()
+    local tmpdir; tmpdir=$(mktemp -d)
 
+    # Print all repos and kick off parallel clones
     for entry in "${REPOS[@]}"; do
         IFS='|' read -r dir url flags <<< "$entry"
 
@@ -647,25 +650,71 @@ phase_clone() {
             dim "$(pad "$dir" 23)already exists"
             ((existed++)) || true
         else
-            local clone_output clone_rc=0
+            printf "  %-23s %s\n" "$dir" "$url"
+            local logfile="$tmpdir/$dir.log"
             # shellcheck disable=SC2086
-            clone_output=$(git clone $flags "$url" "$PARENT/$dir" 2>&1) || clone_rc=$?
-            if [ "$clone_rc" -eq 0 ]; then
-                ok "$(pad "$dir" 23)cloned"
-                ((cloned++)) || true
-            else
-                echo "$clone_output" | tail -3
-                fail "$(pad "$dir" 23)clone failed"
-                echo ""
-                echo -e "  ${DIM}Hint: verify SSH access with: ssh -T git@github.com${NC}"
-                echo ""
-                echo "  Fix SSH access, then: make setup"
-                exit 1
-            fi
+            git clone $flags "$url" "$PARENT/$dir" >"$logfile" 2>&1 &
+            clone_dirs+=("$dir")
+            clone_urls+=("$url")
+            clone_flags+=("$flags")
+            clone_pids+=($!)
+            clone_logs+=("$logfile")
         fi
     done
 
+    # Wait for parallel clones with live progress
+    if [ ${#clone_pids[@]} -gt 0 ]; then
+        echo ""
+        local total=${#clone_pids[@]} done_count=0
+        local -a clone_done=()
+        for i in "${!clone_pids[@]}"; do clone_done+=(""); done
+
+        # Poll until all complete, update counter
+        while [ "$done_count" -lt "$total" ]; do
+            for i in "${!clone_pids[@]}"; do
+                [ -n "${clone_done[$i]}" ] && continue
+                if ! kill -0 "${clone_pids[$i]}" 2>/dev/null; then
+                    local rc=0
+                    wait "${clone_pids[$i]}" || rc=$?
+                    clone_done[$i]="$rc"
+                    ((done_count++)) || true
+                    if [ "$rc" -eq 0 ]; then
+                        ((cloned++)) || true
+                    else
+                        ((failed++)) || true
+                    fi
+                    printf "\r  cloning... [%d/%d] ${GREEN}✓${NC} %s" "$done_count" "$total" "${clone_dirs[$i]}"
+                    # Pad to clear previous longer name
+                    printf "%-20s" ""
+                fi
+            done
+            [ "$done_count" -lt "$total" ] && sleep 0.3
+        done
+        printf "\r%-60s\r" ""
+
+        # Final per-repo summary
+        echo ""
+        for i in "${!clone_dirs[@]}"; do
+            if [ "${clone_done[$i]}" -eq 0 ]; then
+                ok "$(pad "${clone_dirs[$i]}" 23)${clone_urls[$i]}"
+            else
+                fail "$(pad "${clone_dirs[$i]}" 23)clone failed"
+                cat "${clone_logs[$i]}" 2>/dev/null | tail -3 | sed 's/^/      /'
+            fi
+        done
+    fi
+
+    rm -rf "$tmpdir"
+
     echo ""
+    if [ "$failed" -gt 0 ]; then
+        log_error "$failed clone(s) failed"
+        echo ""
+        echo -e "  ${DIM}Hint: verify SSH access with: ssh -T git@github.com${NC}"
+        echo ""
+        echo "  Fix SSH access, then: make setup"
+        exit 1
+    fi
     log_success "$cloned cloned, $existed already existed"
 }
 

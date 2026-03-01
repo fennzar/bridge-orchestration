@@ -232,7 +232,40 @@ dev-init:
 	@docker volume ls -q --filter name=bridge-anvil | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-blockscout | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=docker_ | xargs -r docker volume rm 2>/dev/null || true
-	@# 3. Remove stale addresses (setup not done yet)
+	@# 3. Preflight: check for leftover containers and port conflicts
+	@CONFLICTS=""; STALE_IDS=""; \
+	for cname in $$($(DC_DEV) --profile explorer config 2>/dev/null | grep 'container_name:' | awk '{print $$2}'); do \
+		cid=$$(docker ps -aq --filter "name=^/$${cname}$$" 2>/dev/null | head -1); \
+		if [ -n "$$cid" ]; then \
+			CONFLICTS="$$CONFLICTS  container $$cname ($$cid)\n"; \
+			STALE_IDS="$$STALE_IDS $$cid"; \
+		fi; \
+	done; \
+	for port in $$($(DC_DEV) --profile explorer config 2>/dev/null | grep 'published:' | sed 's/.*published: *"\?\([0-9]*\)"\?.*/\1/' | sort -n | uniq); do \
+		owner=$$(docker ps --format '{{.ID}} {{.Names}}' --filter "publish=$$port" 2>/dev/null | head -1); \
+		if [ -n "$$owner" ]; then \
+			oid=$$(echo "$$owner" | awk '{print $$1}'); \
+			oname=$$(echo "$$owner" | awk '{print $$2}'); \
+			CONFLICTS="$$CONFLICTS  port $$port ← container $$oname ($$oid)\n"; \
+			echo "$$STALE_IDS" | grep -q "$$oid" || STALE_IDS="$$STALE_IDS $$oid"; \
+		elif ss -tlnH 2>/dev/null | awk '{print $$4}' | grep -q ":$$port$$"; then \
+			pid=$$(ss -tlnpH 2>/dev/null | grep ":$$port " | head -1 | sed 's/.*pid=\([0-9]*\).*/\1/'); \
+			pname=$$(ps -p "$$pid" -o comm= 2>/dev/null); \
+			CONFLICTS="$$CONFLICTS  port $$port ← process $${pname:-pid $$pid}\n"; \
+		fi; \
+	done; \
+	if [ -n "$$CONFLICTS" ]; then \
+		echo ""; \
+		echo "ERROR: Conflicts remain after teardown:"; \
+		echo -e "$$CONFLICTS"; \
+		if [ -n "$$STALE_IDS" ]; then \
+			echo "Fix: docker rm -f$$STALE_IDS && make dev-init"; \
+		else \
+			echo "Fix: stop the process(es) above, then re-run make dev-init"; \
+		fi; \
+		exit 1; \
+	fi
+	@# 4. Remove stale addresses (setup not done yet)
 	@rm -f config/addresses.json deployed-addresses.json
 	@# 4. Rebuild images (pass DEVNET_MODE for mirror binary selection)
 	@$(MAKE) build DEVNET_MODE=$(or $(DEVNET_MODE),custom)

@@ -1045,6 +1045,44 @@ phase_zephyr_deps() {
     fi
 }
 
+# ── Phase 5c: Sync Zephyr Artifacts ──────────
+
+phase_sync_artifacts() {
+    echo ""
+    echo "Sync Zephyr artifacts"
+    echo ""
+
+    if ! [ -d "$PARENT/zephyr" ]; then
+        dim "zephyr repo not cloned — skipping"
+        return 0
+    fi
+
+    # Check if artifacts already exist
+    local have_binaries=false have_oracle=false have_cli=false
+    [ -f "$ROOT/docker/zephyr/bin/zephyrd" ] && have_binaries=true
+    [ -f "$ROOT/docker/fake-oracle/server.js" ] && have_oracle=true
+    [ -f "$ROOT/tools/zephyr-cli/cli" ] && have_cli=true
+
+    if $have_binaries && $have_oracle && $have_cli; then
+        ok "Zephyr artifacts already synced"
+        echo -e "  ${DIM}Re-run with: ./scripts/sync-zephyr-artifacts.sh --force${NC}"
+        return 0
+    fi
+
+    echo -e "  ${DIM}Syncs binaries, oracle, CLI, and Docker files from the zephyr repo.${NC}"
+    echo -e "  ${DIM}Will build the Zephyr daemon from source if binaries are not found.${NC}"
+    echo ""
+
+    if ask_yn "Sync now? (or N to do it later with: ./scripts/sync-zephyr-artifacts.sh)"; then
+        echo ""
+        # Run the sync script directly — it has its own verbose output
+        "$SCRIPT_DIR/sync-zephyr-artifacts.sh"
+    else
+        echo ""
+        log_skip "Skipped — run later: ./scripts/sync-zephyr-artifacts.sh"
+    fi
+}
+
 # ── Phase 6: Summary + Next Steps ────────────
 
 phase_summary() {
@@ -1066,10 +1104,12 @@ phase_summary() {
     echo ""
     echo "  Next steps:"
     echo ""
-    echo "    1. make keygen"
-    echo "    2. Edit .env — set ROOT=$PARENT"
-    echo "    3. ./scripts/sync-zephyr-artifacts.sh"
-    echo "    4. make dev-init && make dev-setup && make dev"
+    if [ -f "$ROOT/.env" ]; then
+        echo "    1. make dev-init && make dev-setup && make dev"
+    else
+        echo "    1. make keygen       (generates keys + auto-sets ROOT and PATH)"
+        echo "    2. make dev-init && make dev-setup && make dev"
+    fi
     echo ""
     echo -e "  ${DIM}Docs: docs/setup/dev.md${NC}"
     echo "=========================================="
@@ -1085,4 +1125,5 @@ phase_clone
 phase_branches
 phase_deps
 phase_zephyr_deps
+phase_sync_artifacts
 phase_summary

@@ -33,13 +33,10 @@ $ROOT/                       # Parent dev folder (set in .env)
 mkdir ~/zephyr-dev && cd ~/zephyr-dev
 git clone git@github.com:fennzar/bridge-orchestration.git
 cd bridge-orchestration
-make setup                             # Check prereqs, clone repos, install deps
+make setup                             # Interactive: prereqs, clone repos, deps, Zephyr artifacts
 
-# 2. Generate keys + configure paths
-make keygen                            # Generate fresh keys → .env
-# Edit .env: set ROOT to your parent dir (e.g. /home/you/zephyr-dev)
-#            set PATH to include your node/pnpm/foundry bins
-./scripts/sync-zephyr-artifacts.sh     # Vendor Zephyr binaries (once)
+# 2. Generate keys
+make keygen                            # Generate fresh keys → .env (auto-detects ROOT + PATH)
 
 # 3. Init + setup (first time only)
 make dev-init                          # Base Zephyr devnet (~4 min)
@@ -61,48 +58,53 @@ UIs: [Dashboard](http://localhost:7100) | [Bridge](http://localhost:7050) | [Eng
 
 ## Prerequisites
 
-Run `make status` to check your environment. Required:
+`make setup` checks all prerequisites and offers to install missing ones interactively. Run `make status` to check your environment at any time.
 
 | Tool | Version | Installation |
 |------|---------|--------------|
-| Node.js | 22+ | `nvm install 22` |
+| Node.js | 22+ | via nvm (setup offers to install) |
 | pnpm | 9.x | `npm install -g pnpm` |
-| Docker | latest | `sudo apt install docker.io` |
+| Docker + Compose | latest | via `get.docker.com` |
 | Foundry | latest | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` |
 | Overmind | latest | [GitHub releases](https://github.com/DarthSim/overmind#installation) |
 | tmux | any | `sudo apt install tmux` |
+| curl, jq, bc | any | `sudo apt install curl jq bc` |
 
-Plus Zephyr binaries built from the `zephyr` repository.
+Plus Zephyr binaries built from the `zephyr` repository (vendored by `make setup`).
 
 ## Setup
 
-All sibling repos can be cloned and set up in one step:
+All sibling repos can be cloned and set up interactively:
 
 ```bash
 make setup
 ```
 
-The script runs three phases:
+The script runs through these phases:
 
-1. **Check prerequisites** — verifies all tools above are installed, exits early if any are missing
-2. **Clone repos** — clones into the parent directory (skips existing)
-3. **Install dependencies** — `forge install` for contracts, `pnpm install` for JS/TS repos
+1. **Check prerequisites** — scans all 12 tools, shows a status matrix
+2. **Interactive fix** — offers to install missing tools (apt batch, nvm, Docker, Foundry, Overmind)
+3. **Clone repos** — parallel clones with animated progress (skips existing)
+4. **Show branches** — displays current/remote branches, pauses to verify
+5. **Install dependencies** — parallel `pnpm install` / `forge install` with spinners
+6. **Zephyr build deps** — offers to install C++ build dependencies (Ubuntu/Debian)
+7. **Sync artifacts** — vendors Zephyr binaries, oracle, and CLI into this repo
 
 | Local Directory | Repository | Deps |
 |-----------------|------------|------|
 | `zephyr-eth-foundry/` | `git@github.com:fennzar/zephyr-uniswap-v4-foundry.git` | `forge install` |
 | `zephyr-bridge/` | `git@github.com:fennzar/zephyr-bridge.git` | `pnpm install` |
 | `zephyr-bridge-engine/` | `git@github.com:fennzar/zephyr-bridge-engine.git` | `pnpm install` |
-| `zephyr/` | `https://github.com/ZephyrProtocol/zephyr` | C++ (see below) |
+| `zephyr/` | `https://github.com/ZephyrProtocol/zephyr` | C++ (build deps offered) |
 
-The script also prints system dependency install commands for building the Zephyr daemon from source (Ubuntu/Debian, Arch, Fedora, openSUSE, macOS).
+The script is fully idempotent — safe to re-run at any time.
 
 ## Make Targets
 
 | Target | Purpose |
 |--------|---------|
-| `make setup` | Check prereqs, clone repos, install deps (one-time) |
-| `make keygen` | Generate fresh EVM keys + secrets → .env |
+| `make setup` | Interactive prereqs, clone repos, deps, Zephyr artifacts |
+| `make keygen` | Generate fresh EVM keys + secrets → .env (auto-detects ROOT + PATH) |
 | `make dev-init` | Base Zephyr devnet, then stop (~4 min) |
 | `make dev-setup` | Deploy contracts + seed liquidity, then stop (~4 min) |
 | `make dev` | Start the stack (~10 sec) |

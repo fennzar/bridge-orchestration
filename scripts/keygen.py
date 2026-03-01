@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -148,6 +150,36 @@ def print_keys(keys: dict[str, str], mode: str) -> None:
     print()
 
 
+def detect_paths() -> dict[str, str]:
+    """Auto-detect ROOT and PATH values based on repo layout."""
+    parent = ROOT.parent
+    paths: dict[str, str] = {}
+
+    # ROOT = parent directory containing all sibling repos
+    paths["ROOT"] = str(parent)
+
+    # PATH = include node (via nvm), foundry, and system PATH
+    path_parts: list[str] = []
+
+    # nvm node
+    nvm_dir = Path(os.environ.get("NVM_DIR", Path.home() / ".nvm"))
+    if nvm_dir.exists():
+        # Find the current node version directory
+        node_bin = shutil.which("node")
+        if node_bin:
+            path_parts.append(str(Path(node_bin).parent))
+
+    # foundry
+    foundry_bin = Path.home() / ".foundry" / "bin"
+    if foundry_bin.exists():
+        path_parts.append(str(foundry_bin))
+
+    path_parts.append("$PATH")
+    paths["PATH"] = ":".join(path_parts)
+
+    return paths
+
+
 def write_env(keys: dict[str, str], force: bool) -> None:
     """Read .env.example, replace <KEYGEN:XXX> placeholders, write .env."""
     if not ENV_EXAMPLE.exists():
@@ -172,6 +204,27 @@ def write_env(keys: dict[str, str], force: bool) -> None:
 
     output = re.sub(r"<KEYGEN:(\w+)>", replacer, template)
 
+    # Auto-detect and set ROOT and PATH
+    detected = detect_paths()
+
+    # Replace ROOT placeholder
+    output = re.sub(
+        r"^ROOT=.*$",
+        f"ROOT={detected['ROOT']}",
+        output,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+    # Replace PATH line
+    output = re.sub(
+        r"^PATH=.*$",
+        f"PATH={detected['PATH']}",
+        output,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
     # Verify no unresolved placeholders remain
     remaining = re.findall(r"<KEYGEN:\w+>", output)
     if remaining:
@@ -179,6 +232,8 @@ def write_env(keys: dict[str, str], force: bool) -> None:
 
     ENV_FILE.write_text(output)
     print(f"Written to {ENV_FILE}")
+    print(f"  ROOT={detected['ROOT']}")
+    print(f"  PATH={detected['PATH']}")
     print(f"Next: run ./scripts/sync-env.sh to propagate to sub-repos")
 
 

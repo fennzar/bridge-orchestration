@@ -545,88 +545,76 @@ scan-pools:
 # Test Framework
 # ===========================================
 
-.PHONY: test test-l1 test-l2 test-l3 test-l4 test-l1-l2 test-l3-l4 test-l5 test-l5-lint test-l5-summary test-l5-browser-preflight test-l5-execute test-l5-execute-all test-l5-sec test-l5-runtime test-l5-infra test-l5-asset test-l5-stress test-l5-fe test-l5-seed test-engine test-engine-verbose typecheck-tests
+.PHONY: precheck test test-seed test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-engine test-engine-verbose typecheck-tests
 
-## Run all L1-L4 tests
+## Health probes — is everything alive? (~2 min, read-only)
+precheck:
+	./scripts/run-tests.py --tier precheck
+
+## Integration tests — does the bridge work? (~8-12 min, moves funds)
 test:
+	./scripts/run-tests.py --tier integration
+
+## Seed verification — is the stack bootstrapped? (~2 min, read-only)
+test-seed:
+	./scripts/run-tests.py --tier seed
+
+## All tiers: precheck + integration + seed
+test-all:
 	./scripts/run-tests.py
 
-## Run L1 infrastructure tests only
-test-l1:
-	./scripts/run-tests.py --level L1
-
-## Run L2 smoke tests only
-test-l2:
-	./scripts/run-tests.py --level L2
-
-## Run L3 component tests only
-test-l3:
-	./scripts/run-tests.py --level L3
-
-## Run L4 E2E tests only
-test-l4:
-	./scripts/run-tests.py --level L4
-
-## Run L1/L2 infrastructure + smoke tests (legacy, delegates to run-tests.py)
-test-l1-l2:
-	./scripts/run-tests.py --level L1 --level L2
-
-## Run L3/L4 component + e2e tests (legacy, delegates to run-tests.py)
-test-l3-l4:
-	./scripts/run-tests.py --level L3 --level L4
-
-## Run L5 edge-case framework default pass (summary + lint + logical)
-test-l5:
+## Edge-case framework default pass (summary + lint + logical)
+test-edge:
 	./scripts/run-l5-tests.py
 
-## L5 catalog lint
-test-l5-lint:
+## Edge catalog lint
+test-edge-lint:
 	./scripts/run-l5-tests.py --lint
 
-## L5 catalog summary
-test-l5-summary:
+## Edge catalog summary
+test-edge-summary:
 	./scripts/run-l5-tests.py --summary
 
-## L5 browser lane preflight
-test-l5-browser-preflight:
+## Edge browser lane preflight
+test-edge-browser-preflight:
 	./scripts/run-l5-tests.py --browser-preflight
 
-## L5 execution pass (runs ready+expand, blocks TBC)
-test-l5-execute:
+## Edge execution pass (runs ready+expand, blocks TBC)
+test-edge-execute:
 	@mkdir -p reports
 	./scripts/run-l5-tests.py --execute --report-json reports/l5-execution-report.json
 
-## L5 execution pass including TBC baseline checks
-test-l5-execute-all:
+## Edge execution pass including TBC baseline checks
+test-edge-execute-all:
 	@mkdir -p reports
 	./scripts/run-l5-tests.py --execute --execute-tbc --report-json reports/l5-execution-report.json
 
-## L5.1 Security & Contracts (SEC + SC)
-test-l5-sec:
+## Edge L5.1 Security & Contracts (SEC + SC)
+test-edge-sec:
 	./scripts/run-l5-tests.py --execute --sublevel L5.1 --verbose
 
-## L5.2 Runtime & Consistency (CONS + RR + CONC + SEED)
-test-l5-runtime:
+## Edge L5.2 Runtime & Consistency (CONS + RR + CONC + SEED)
+test-edge-runtime:
 	./scripts/run-l5-tests.py --execute --sublevel L5.2 --verbose
 
-## L5.3 Infra & Watchers (WATCH + CONF + REC)
-test-l5-infra:
+## Edge L5.3 Infra & Watchers (WATCH + CONF + REC)
+test-edge-infra:
 	./scripts/run-l5-tests.py --execute --sublevel L5.3 --verbose
 
-## L5.4 Asset & DEX (ASSET + DEX)
-test-l5-asset:
+## Edge L5.4 Asset & DEX (ASSET + DEX)
+test-edge-asset:
 	./scripts/run-l5-tests.py --execute --sublevel L5.4 --verbose
 
-## L5.5 Privacy & Load (PRIV + LOAD + TIME)
-test-l5-stress:
+## Edge L5.5 Privacy & Load (PRIV + LOAD + TIME)
+test-edge-stress:
 	./scripts/run-l5-tests.py --execute --sublevel L5.5 --verbose
 
-## L5.6 Frontend (FE)
-test-l5-fe:
+## Edge L5.6 Frontend (FE)
+test-edge-fe:
 	./scripts/run-l5-tests.py --execute --sublevel L5.6 --verbose
 
-## SEED checks (part of L5.2, also runnable standalone)
-test-l5-seed:
+## SEED edge checks (part of L5.2, also runnable standalone)
+test-edge-seed:
 	./scripts/run-l5-tests.py --execute --category SEED --verbose
 
 ## Run engine strategy tests (332 tests)

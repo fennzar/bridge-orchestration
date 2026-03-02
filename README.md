@@ -231,17 +231,22 @@ $ZEPHYR_CLI price
 ## Testing
 
 ```bash
-# Bridge tests
-cd ../zephyr-bridge && pnpm test
+# Health probes (read-only, ~2 min)
+make precheck
 
-# Engine tests
-cd ../zephyr-bridge-engine && pnpm test
-
-# Foundry tests
-cd ../zephyr-eth-foundry && forge test
-
-# E2E tests
+# Integration tests — wrap, unwrap, transfers (~8-12 min)
 make test
+
+# Seed verification — pools, inventory (~2 min)
+make test-seed
+
+# All tiers
+make test-all
+
+# Repo unit tests
+cd ../zephyr-bridge && pnpm test
+cd ../zephyr-bridge-engine && pnpm test
+cd ../zephyr-eth-foundry && forge test
 ```
 
 ## Common Issues

@@ -6,46 +6,48 @@ Quick reference for the Zephyr Bridge test suite. For detailed test specs, see t
 
 | Command | What it does |
 |---------|-------------|
-| `make test` | Run all L1-L4 tests |
-| `make test-l1` | Infrastructure checks (~2 min) |
-| `make test-l2` | Component smoke tests (~5 min) |
-| `make test-l5-execute` | L5 edge-case automated checks |
+| `make precheck` | Health probes — is everything alive? (~2 min, read-only) |
+| `make test` | Integration tests — does the bridge work? (~8-12 min, moves funds) |
+| `make test-seed` | Seed verification — is the stack bootstrapped? (~2 min) |
+| `make test-all` | All tiers: precheck + integration + seed |
 | `make test-engine` | Engine strategy tests (332 tests) |
+| `make test-edge` | Edge-case framework (automated checks) |
 | `make status` | Health check all services |
 | `make dev-reset && make dev` | Reset to clean state between test runs |
 | `make set-price PRICE=x` | Change oracle price for RR testing |
 
-## Test Levels
+## Test Tiers
 
-| Level | Purpose | Time | Command | Details |
-|-------|---------|------|---------|---------|
-| **L1** | Services running, ports reachable | ~2 min | `make test-l1` | [01-overview.md](./01-overview.md#l1-infrastructure-tests) |
-| **L2** | Basic functionality per component | ~5 min | `make test-l2` | [01-overview.md](./01-overview.md#l2-component-smoke-tests) |
-| **L3** | Detailed feature testing | ~15 min | `make test-l3` | [03-bridge-scenarios.md](./03-bridge-scenarios.md), [04-full-stack-scenarios.md](./04-full-stack-scenarios.md) |
-| **L4** | Cross-system E2E flows | ~30+ min | `make test-l4` | [05-devnet-scenarios.md](./05-devnet-scenarios.md), [06-engine-strategies.md](./06-engine-strategies.md) |
-| **L5** | Edge cases, security, chaos | varies | `make test-l5-execute` | [00-edge-case-scope.md](./00-edge-case-scope.md), [08-edge-framework.md](./08-edge-framework.md) |
-| **Engine** | Strategy unit tests (332) | ~2 min | `make test-engine` | [engine-test-scope.md](./engine-test-scope.md) |
+| Tier | Purpose | Mutates | Time | Command | Details |
+|------|---------|---------|------|---------|---------|
+| **Precheck** | Services alive, endpoints respond | No | ~2 min | `make precheck` | 29 read-only health probes |
+| **Integration** | Bridge flows: transfer, wrap, unwrap | Yes | ~8-12 min | `make test` | 8 tests exercising real fund movement |
+| **Seed** | Stack fully bootstrapped (pools, inventory) | No | ~2 min | `make test-seed` | 9 verification checks |
+| **Engine** | Strategy unit tests (332) | No | ~5 min | `make test-engine` | [engine-test-scope.md](./engine-test-scope.md) |
+| **Edge** | Security, race conditions, chaos | Mixed | ~10+ min | `make test-edge` | [00-edge-case-scope.md](./00-edge-case-scope.md), [08-edge-framework.md](./08-edge-framework.md) |
 
 ## Where to Start
 
-- **First time** — `make test-l1` (verify infra is healthy)
-- **After changes** — `make test` (runs L1-L4)
-- **Deep validation** — `make test-l5-execute` (automated edge-case checks)
+- **First time** — `make precheck` (verify infra is healthy)
+- **After changes** — `make test` (exercises wrap/unwrap pipeline)
+- **Full validation** — `make test-all` (precheck + integration + seed)
+- **Deep edge cases** — `make test-edge-execute` (automated edge-case checks)
 - **Engine strategies** — `make test-engine` (332 unit tests)
 
 ## Running Specific Tests
 
 ```bash
 # By test ID
-./scripts/run-tests.py INFRA-01 SMOKE-01
+./scripts/run-tests.py INFRA-01 WRAP-01
 
-# By level
-make test-l1                          # or test-l2, test-l3, test-l4
+# By tier
+make precheck                        # or test, test-seed
+./scripts/run-tests.py --tier precheck --tier seed  # multiple tiers
 
-# L5 by category
+# Edge by category
 ./scripts/run-l5-tests.py --execute --category SEC --verbose
 
-# L5 by sublevel
+# Edge by sublevel
 ./scripts/run-l5-tests.py --execute --sublevel L5.1 --verbose
 
 # Engine by module
@@ -61,18 +63,18 @@ python3 scripts/engine_tests/runner.py --list
 make test-engine-verbose
 ```
 
-## L5 Edge Categories
+## Edge Categories
 
 168 tests across 16 categories, grouped into 6 sublevels:
 
 | Sublevel | Make target | Categories | Tests |
 |----------|------------|------------|------:|
-| **L5.1** Security & Contracts | `make test-l5-sec` | SEC, SC | 24 |
-| **L5.2** Runtime & Consistency | `make test-l5-runtime` | CONS, RR, CONC, SEED, ARB | 58 |
-| **L5.3** Infra & Watchers | `make test-l5-infra` | WATCH, CONF, REC | 32 |
-| **L5.4** Asset & DEX | `make test-l5-asset` | ASSET, DEX | 20 |
-| **L5.5** Privacy & Load | `make test-l5-stress` | PRIV, LOAD, TIME | 22 |
-| **L5.6** Frontend | `make test-l5-fe` | FE | 12 |
+| **L5.1** Security & Contracts | `make test-edge-sec` | SEC, SC | 24 |
+| **L5.2** Runtime & Consistency | `make test-edge-runtime` | CONS, RR, CONC, SEED, ARB | 58 |
+| **L5.3** Infra & Watchers | `make test-edge-infra` | WATCH, CONF, REC | 32 |
+| **L5.4** Asset & DEX | `make test-edge-asset` | ASSET, DEX | 20 |
+| **L5.5** Privacy & Load | `make test-edge-stress` | PRIV, LOAD, TIME | 22 |
+| **L5.6** Frontend | `make test-edge-fe` | FE | 12 |
 
 | Category | Count | Description |
 |----------|------:|-------------|
@@ -98,12 +100,12 @@ make test-engine-verbose
 | File | Purpose |
 |------|---------|
 | [README.md](./README.md) | This file — testing quick reference |
-| [01-overview.md](./01-overview.md) | Master test doc: L1-L4 specs, test IDs, checkpoint state |
+| [01-overview.md](./01-overview.md) | Master test doc: test specs, checkpoint state |
 | [02-infra-checklist.md](./02-infra-checklist.md) | Quick infrastructure verification checklist |
 | [03-bridge-scenarios.md](./03-bridge-scenarios.md) | Bridge wrap/unwrap test flows (API + UI) |
 | [04-full-stack-scenarios.md](./04-full-stack-scenarios.md) | DEX, engine, admin, faucets, SSE |
 | [05-devnet-scenarios.md](./05-devnet-scenarios.md) | DEVNET mode, RR transitions, oracle control |
 | [06-engine-strategies.md](./06-engine-strategies.md) | Strategy-specific evaluation tests |
-| [08-edge-framework.md](./08-edge-framework.md) | L5 execution framework and browser lane workflow |
-| [00-edge-case-scope.md](./00-edge-case-scope.md) | Full L5 edge-case catalog (168 tests) |
+| [08-edge-framework.md](./08-edge-framework.md) | Edge execution framework and browser lane workflow |
+| [00-edge-case-scope.md](./00-edge-case-scope.md) | Full edge-case catalog (168 tests) |
 | [engine-test-scope.md](./engine-test-scope.md) | Engine test cases (332 tests, 12 modules) |

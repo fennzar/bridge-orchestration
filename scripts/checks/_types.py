@@ -1,4 +1,4 @@
-"""Shared types for L1-L4 test modules."""
+"""Shared types for the tiered test framework."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,9 +11,11 @@ from test_common import ExecutionResult
 class TestDef:
     test_id: str
     title: str
-    level: str  # "L1".."L4"
+    level: str          # grouping within a tier (e.g. "infra", "smoke", "bridge")
+    tier: str            # "precheck", "integration", "seed"
     lane: str
     check: Callable[[dict[str, bool]], ExecutionResult]
+    depends_on: tuple[str, ...] = ()  # test IDs that must PASS first
 
 
 def _r(test_id: str, level: str, lane: str, result: str, detail: str, priority: str = "P0") -> ExecutionResult:

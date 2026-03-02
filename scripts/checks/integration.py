@@ -1,4 +1,4 @@
-"""Integration tier: bridge product flow tests (8 tests).
+"""Integration tier: bridge product flow tests (5 tests).
 
 These tests move real funds and exercise the core wrap/unwrap pipeline.
 CleanupContext should be used when running this tier.
@@ -11,10 +11,10 @@ from pathlib import Path
 
 from test_common import (
     ANVIL_URL, ATOMIC, BRIDGE_API_URL, ExecutionResult,
-    FAIL, GOV_W, NODE1_RPC, ORACLE_URL,
-    PASS, SKIP, TEST_W,
-    _jget, _post, _rpc,
-    set_oracle_price, TK,
+    FAIL,
+    PASS, SKIP,
+    _post,
+    TK,
 )
 from ._types import TestDef, _r
 
@@ -41,105 +41,7 @@ from lib.seed_helpers import (
 )
 
 
-# ── Migrated tests ───────────────────────────────────────────────────
-
-
-def check_xfer_01(probes: dict[str, bool]) -> ExecutionResult:
-    """Transfer Gov -> Test wallet (3 retries for ring construction)."""
-    tid, lvl, lane = "XFER-01", "transfer", "integration"
-
-    result, err = _rpc(TEST_W, "get_address", {"account_index": 0}, timeout=10.0)
-    if err:
-        return _r(tid, lvl, lane, FAIL, f"Could not get test wallet address: {err}")
-
-    test_addr = (result or {}).get("address")
-    if not test_addr:
-        return _r(tid, lvl, lane, FAIL, "Could not get test wallet address")
-
-    for attempt in range(1, 4):
-        _rpc(GOV_W, "refresh", timeout=10.0)
-
-        transfer_result, err = _rpc(GOV_W, "transfer", {
-            "destinations": [{"amount": 100_000_000_000_000, "address": test_addr}],
-        }, timeout=10.0)
-
-        if err is None and transfer_result:
-            tx_hash = transfer_result.get("tx_hash")
-            if tx_hash:
-                _time.sleep(10)
-                _rpc(TEST_W, "refresh", timeout=10.0)
-                bal_result, _ = _rpc(TEST_W, "get_balance", {"account_index": 0}, timeout=10.0)
-                test_bal = int((bal_result or {}).get("balance", 0))
-                bal_str = f" (balance: {test_bal / ATOMIC:.4f} ZPH)" if test_bal > 0 else ""
-                return _r(tid, lvl, lane, PASS, f"Transfer submitted - tx={tx_hash}{bal_str}")
-
-        err_msg = str(err) if err else "unknown error"
-        if "ring" in err_msg.lower() and attempt < 3:
-            _time.sleep(15)
-            continue
-
-        return _r(tid, lvl, lane, FAIL, f"Transfer failed - {err_msg}")
-
-    return _r(tid, lvl, lane, FAIL, "Transfer failed after 3 retries")
-
-
-def check_oracle_01(probes: dict[str, bool]) -> ExecutionResult:
-    """Oracle price control: set/verify/restore."""
-    tid, lvl, lane = "ORACLE-01", "oracle", "integration"
-
-    data, err = _jget(f"{ORACLE_URL}/status", timeout=10.0)
-    if err:
-        return _r(tid, lvl, lane, FAIL, f"Could not get oracle status: {err}")
-
-    before = (data or {}).get("spot")
-    if not before or before == "null":
-        return _r(tid, lvl, lane, FAIL, "Could not get oracle status")
-
-    set_oracle_price(2.00)
-    _time.sleep(3)
-
-    data2, err2 = _jget(f"{ORACLE_URL}/status", timeout=10.0)
-    after = (data2 or {}).get("spot") if not err2 else None
-
-    # Restore
-    set_oracle_price(1.50)
-
-    if after == 2000000000000:
-        return _r(tid, lvl, lane, PASS, "Price control works (changed to $2.00 and restored)")
-    return _r(tid, lvl, lane, FAIL, f"Price change failed - before={before}, after={after}")
-
-
-def check_rr_01(probes: dict[str, bool]) -> ExecutionResult:
-    """RR mode transitions via oracle price change."""
-    tid, lvl, lane = "RR-01", "rr", "integration"
-
-    result, err = _rpc(NODE1_RPC, "get_reserve_info", timeout=10.0)
-    if err:
-        return _r(tid, lvl, lane, FAIL, f"Could not get reserve info: {err}")
-
-    current_rr = (result or {}).get("reserve_ratio", "0")
-
-    set_oracle_price(0.60)
-    _time.sleep(5)
-
-    result2, err2 = _rpc(NODE1_RPC, "get_reserve_info", timeout=10.0)
-    new_rr = (result2 or {}).get("reserve_ratio", "0") if not err2 else "0"
-
-    # Restore price
-    set_oracle_price(1.50)
-    _time.sleep(2)
-
-    try:
-        rr_num = int(float(new_rr))
-    except (ValueError, TypeError):
-        rr_num = 999
-
-    if rr_num < 7:
-        return _r(tid, lvl, lane, PASS, f"RR responded to oracle change ({current_rr} -> {new_rr})")
-    return _r(tid, lvl, lane, FAIL, f"RR did not change as expected ({current_rr} -> {new_rr})")
-
-
-# ── New bridge flow tests ────────────────────────────────────────────
+# ── Bridge flow tests ───────────────────────────────────────────────
 
 
 def check_wallet_01(probes: dict[str, bool]) -> ExecutionResult:
@@ -157,6 +59,33 @@ def check_wallet_01(probes: dict[str, bool]) -> ExecutionResult:
         return _r(tid, lvl, lane, FAIL, "No subaddress returned")
 
     return _r(tid, lvl, lane, PASS, f"Bridge account created, subaddress={sub_addr[:16]}...")
+
+
+def _fund_eth_if_needed(address: str, min_eth: float = 0.1) -> tuple[bool, str | None]:
+    """Ensure EVM address has enough ETH for gas, funding from deployer if needed."""
+    stdout, err = _seed_cast(["balance", address, "--rpc-url", ANVIL_URL])
+    if err or stdout is None:
+        return False, f"Failed to check balance: {err}"
+    try:
+        bal_wei = int(stdout.strip())
+    except (ValueError, TypeError):
+        bal_wei = 0
+    min_wei = int(min_eth * 1e18)
+    if bal_wei >= min_wei:
+        return True, None
+    # Fund from deployer
+    deployer_pk = os.environ.get("DEPLOYER_PRIVATE_KEY", "")
+    if not deployer_pk:
+        return False, "DEPLOYER_PRIVATE_KEY not set, cannot fund test account"
+    _, err = _seed_cast([
+        "send", address,
+        "--value", "1ether",
+        "--private-key", deployer_pk,
+        "--rpc-url", ANVIL_URL,
+    ])
+    if err:
+        return False, f"Failed to fund test account: {err}"
+    return True, None
 
 
 def _wrap_flow(
@@ -177,6 +106,23 @@ def _wrap_flow(
     token_addr = TK.get(token_symbol, "")
     if not token_addr:
         return _r(test_id, lvl, lane, SKIP, f"{token_symbol} address not found in config")
+
+    # 0a. Verify token contract is deployed
+    from test_common import _jpost
+    code_resp, code_err = _jpost(
+        ANVIL_URL,
+        {"jsonrpc": "2.0", "method": "eth_getCode", "params": [token_addr, "latest"], "id": 1},
+        timeout=5.0,
+    )
+    code = (code_resp or {}).get("result", "0x") if not code_err else "0x"
+    if not code or code == "0x" or len(code) < 10:
+        return _r(test_id, lvl, lane, FAIL,
+                  f"{token_symbol} contract not deployed at {token_addr} (run make dev-setup first)")
+
+    # 0b. Ensure test account has ETH for gas
+    ok, err = _fund_eth_if_needed(test_addr)
+    if not ok:
+        return _r(test_id, lvl, lane, FAIL, f"Cannot fund test account with ETH: {err}")
 
     # 1. Get initial balance
     initial = evm_token_balance(token_addr, test_addr, ANVIL_URL)
@@ -246,6 +192,11 @@ def _unwrap_flow(
     if not token_addr:
         return _r(test_id, lvl, lane, SKIP, f"{token_symbol} address not found in config")
 
+    # Ensure test account has ETH for gas
+    ok, fund_err = _fund_eth_if_needed(test_addr)
+    if not ok:
+        return _r(test_id, lvl, lane, FAIL, f"Cannot fund test account with ETH: {fund_err}")
+
     # Check wToken balance — skip if insufficient
     bal = evm_token_balance(token_addr, test_addr, ANVIL_URL)
     min_balance = amount_atomic
@@ -269,7 +220,7 @@ def _unwrap_flow(
     import json
     prep_status, prep_body, prep_err = _post(
         f"{BRIDGE_API_URL}/unwraps/prepare",
-        {"evmAddress": test_addr, "token": token_symbol, "amount": str(amount_atomic), "zephyrAddress": zephyr_dest},
+        {"token": token_addr, "amountWei": str(amount_atomic), "destination": zephyr_dest},
         timeout=15.0,
     )
     if prep_err and prep_status is None:
@@ -281,16 +232,19 @@ def _unwrap_flow(
         return _r(test_id, lvl, lane, FAIL, f"Unwrap prepare returned invalid JSON (HTTP {prep_status})")
 
     payload = prep_data.get("payload", "")
-    nonce = prep_data.get("nonce", "")
     if not payload:
         return _r(test_id, lvl, lane, FAIL, f"No payload in unwrap prepare response: {prep_data}")
 
-    # 3. cast send burnWithData(amount, payload, nonce)
+    # Generate random 32-byte nonce (client-side, like the frontend does)
+    import secrets
+    nonce = "0x" + secrets.token_hex(32)
+
+    # 3. cast send burnWithData(amount, bytes, bytes32)
     log_step(f"[{test_id}] Burning {token_symbol} on EVM...")
     _, err = _seed_cast([
         "send", token_addr,
-        "burnWithData(uint256,bytes,uint256)",
-        str(amount_atomic), payload, str(nonce),
+        "burnWithData(uint256,bytes,bytes32)",
+        str(amount_atomic), payload, nonce,
         "--private-key", test_pk,
         "--rpc-url", ANVIL_URL,
     ])
@@ -344,9 +298,6 @@ def check_unwrap_02(probes: dict[str, bool]) -> ExecutionResult:
 # ── Test Registry ────────────────────────────────────────────────────
 
 TESTS: list[TestDef] = [
-    TestDef("XFER-01", "Zephyr Transfer", "transfer", "integration", "integration", check_xfer_01),
-    TestDef("ORACLE-01", "Oracle Price Control", "oracle", "integration", "integration", check_oracle_01),
-    TestDef("RR-01", "RR Mode Transition", "rr", "integration", "integration", check_rr_01),
     TestDef("WALLET-01", "Bridge Wallet Creation", "bridge", "integration", "integration", check_wallet_01),
     TestDef("WRAP-01", "Wrap ZEPH -> wZEPH", "bridge", "integration", "integration", check_wrap_01),
     TestDef("UNWRAP-01", "Unwrap wZEPH -> ZEPH", "bridge", "integration", "integration", check_unwrap_01,

@@ -6,10 +6,11 @@ Quick reference for the Zephyr Bridge test suite. For detailed test specs, see t
 
 | Command | What it does |
 |---------|-------------|
-| `make precheck` | Health probes — is everything alive? (~2 min, read-only) |
+| `make precheck` | Pre-setup gate — is infra ready for dev-setup? (~2 min) |
+| `make smoke` | Post-setup health — are apps + contracts working? (~2 min, read-only) |
 | `make test` | Integration tests — does the bridge work? (~8-12 min, moves funds) |
 | `make test-seed` | Seed verification — is the stack bootstrapped? (~2 min) |
-| `make test-all` | All tiers: precheck + integration + seed |
+| `make test-all` | All tiers: precheck + smoke + integration + seed |
 | `make test-engine` | Engine strategy tests (332 tests) |
 | `make test-edge` | Edge-case framework (automated checks) |
 | `make status` | Health check all services |
@@ -20,17 +21,19 @@ Quick reference for the Zephyr Bridge test suite. For detailed test specs, see t
 
 | Tier | Purpose | Mutates | Time | Command | Details |
 |------|---------|---------|------|---------|---------|
-| **Precheck** | Services alive, endpoints respond | No | ~2 min | `make precheck` | 29 read-only health probes |
-| **Integration** | Bridge flows: transfer, wrap, unwrap | Yes | ~8-12 min | `make test` | 8 tests exercising real fund movement |
+| **Precheck** | Pre-setup gate: infra ready for dev-setup | Some | ~2 min | `make precheck` | 13 tests (10 read-only + 3 state-mutating with restore) |
+| **Smoke** | Post-setup health: apps + contracts working | No | ~2 min | `make smoke` | 19 read-only health probes |
+| **Integration** | Bridge flows: wrap, unwrap, wallet creation | Yes | ~8-12 min | `make test` | 5 tests exercising real fund movement |
 | **Seed** | Stack fully bootstrapped (pools, inventory) | No | ~2 min | `make test-seed` | 9 verification checks |
 | **Engine** | Strategy unit tests (332) | No | ~5 min | `make test-engine` | [engine-test-scope.md](./engine-test-scope.md) |
 | **Edge** | Security, race conditions, chaos | Mixed | ~10+ min | `make test-edge` | [00-edge-case-scope.md](./00-edge-case-scope.md), [08-edge-framework.md](./08-edge-framework.md) |
 
 ## Where to Start
 
-- **First time** — `make precheck` (verify infra is healthy)
+- **Before dev-setup** — `make precheck` (verify infra is ready)
+- **After dev-setup** — `make smoke` (verify apps + contracts are working)
 - **After changes** — `make test` (exercises wrap/unwrap pipeline)
-- **Full validation** — `make test-all` (precheck + integration + seed)
+- **Full validation** — `make test-all` (precheck + smoke + integration + seed)
 - **Deep edge cases** — `make test-edge-execute` (automated edge-case checks)
 - **Engine strategies** — `make test-engine` (332 unit tests)
 

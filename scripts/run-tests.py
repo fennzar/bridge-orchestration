@@ -40,7 +40,8 @@ from test_common import (
 
 
 TIER_LABELS = {
-    "precheck": "Precheck: Health Probes",
+    "precheck": "Precheck: Pre-Setup Gate",
+    "smoke": "Smoke: Post-Setup Health",
     "integration": "Integration: Bridge Flows",
     "seed": "Seed: Stack Verification",
 }
@@ -70,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--tier", action="append", dest="tiers",
-        choices=["precheck", "integration", "seed"],
+        choices=["precheck", "smoke", "integration", "seed"],
         help="Run all tests in a tier (repeatable)",
     )
     parser.add_argument("--list", action="store_true", help="List available tests")
@@ -131,8 +132,8 @@ def main() -> int:
     print(f"Running {len(tests_to_run)} test(s)...")
     print()
 
-    # Check if integration tier is included (needs cleanup context for oracle/orderbook)
-    has_integration = any(t.tier == "integration" for t in tests_to_run)
+    # Check if precheck or integration tier is included (needs cleanup context for oracle/orderbook)
+    has_integration = any(t.tier in ("precheck", "integration") for t in tests_to_run)
 
     # Run tests with dependency resolution
     results = []

@@ -545,11 +545,15 @@ scan-pools:
 # Test Framework
 # ===========================================
 
-.PHONY: precheck test test-seed test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-engine test-engine-verbose typecheck-tests
+.PHONY: precheck smoke test test-seed test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-engine test-engine-verbose typecheck-tests
 
-## Health probes — is everything alive? (~2 min, read-only)
+## Pre-setup gate — is infra ready for dev-setup? (~2 min)
 precheck:
 	./scripts/run-tests.py --tier precheck
+
+## Post-setup health — are apps + contracts working? (~2 min, read-only)
+smoke:
+	./scripts/run-tests.py --tier smoke
 
 ## Integration tests — does the bridge work? (~8-12 min, moves funds)
 test:

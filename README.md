@@ -231,10 +231,13 @@ $ZEPHYR_CLI price
 ## Testing
 
 ```bash
-# Health probes (read-only, ~2 min)
+# Pre-setup gate — is infra ready for dev-setup? (~2 min)
 make precheck
 
-# Integration tests — wrap, unwrap, transfers (~8-12 min)
+# Post-setup health — are apps + contracts working? (~2 min, read-only)
+make smoke
+
+# Integration tests — wrap, unwrap (~8-12 min)
 make test
 
 # Seed verification — pools, inventory (~2 min)

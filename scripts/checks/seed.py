@@ -102,29 +102,27 @@ def check_seed_02(probes: dict[str, bool]) -> ExecutionResult:
 
 
 def check_seed_03(probes: dict[str, bool]) -> ExecutionResult:
-    """At least 4 completed claims exist for the engine address."""
+    """Engine received minted wrapped tokens (>= 4 assets on-chain)."""
     tid, lvl, lane = "SEED-03", "seed", "seed"
     skip = _need_engine_addr(tid, lvl, lane)
     if skip:
         return skip
 
-    data, err = _jget(f"{BRIDGE_API_URL}/claims/{ENGINE_ADDRESS}")
-    if err:
-        return _r(tid, lvl, lane, FAIL, f"Bridge API unreachable: {err}")
-    claims = data if isinstance(data, list) else (data or {}).get("claims", [])
-    if not isinstance(claims, list):
-        return _r(tid, lvl, lane, FAIL, f"Unexpected claims type: {type(claims).__name__}")
-    done = [
-        c for c in claims
-        if isinstance(c, dict)
-        and (c.get("status") or "").lower() in {"claimed", "completed"}
-    ]
-    if len(done) >= 4:
-        return _r(tid, lvl, lane, PASS, f"{len(done)} completed claims (need >= 4)")
-    if claims:
-        statuses = [c.get("status", "?") for c in claims if isinstance(c, dict)]
-        return _r(tid, lvl, lane, FAIL, f"Only {len(done)}/4 completed claims; statuses: {statuses}")
-    return _r(tid, lvl, lane, FAIL, "No claims found for engine address")
+    # Verify claims happened by checking on-chain balances (survives DB reset).
+    # Wrapped tokens can only reach the engine via claimWithSignature mints,
+    # so non-zero balances prove claims were completed.
+    tokens = {"wZEPH": TK.get("wZEPH", ""), "wZSD": TK.get("wZSD", ""), "wZRS": TK.get("wZRS", ""), "wZYS": TK.get("wZYS", "")}
+    funded: list[str] = []
+    for symbol, addr in tokens.items():
+        if not addr:
+            continue
+        bal, err = _balance_of(addr, ENGINE_ADDRESS)
+        if err is None and isinstance(bal, int) and bal > 0:
+            funded.append(symbol)
+
+    if len(funded) >= 4:
+        return _r(tid, lvl, lane, PASS, f"{len(funded)} completed claims (need >= 4)")
+    return _r(tid, lvl, lane, FAIL, f"Only {len(funded)}/4 tokens minted to engine; funded={funded}")
 
 
 def check_seed_04(probes: dict[str, bool]) -> ExecutionResult:

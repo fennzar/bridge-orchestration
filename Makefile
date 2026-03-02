@@ -548,23 +548,69 @@ scan-pools:
 .PHONY: precheck smoke test test-seed test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-engine test-engine-verbose typecheck-tests
 
 ## Pre-setup gate — is infra ready for dev-setup? (~2 min)
+## Resets to post-init state before and after (interactive prompt, skippable).
 precheck:
-	./scripts/run-tests.py --tier precheck
+	@if [ ! -f "$(ORCH_DIR)/snapshots/chain/node1-lmdb.tar.gz" ]; then \
+		echo ""; \
+		echo "  ERROR: dev-init has not been run yet."; \
+		echo "  Run 'make dev-init' first to create the devnet."; \
+		echo ""; \
+		exit 1; \
+	fi
+	@DO_RESET=1; \
+	if [ -t 0 ]; then \
+		printf "\n  Reset to post-init state (make dev-reset-hard) pre and post precheck (recommended)? [Y/n] "; \
+		read -r ans; \
+		case "$$ans" in [nN]) DO_RESET=0; echo "  Skipping reset, running precheck as-is..." ;; esac; \
+	fi; \
+	if [ "$$DO_RESET" = "1" ]; then \
+		echo "  [pre-reset]  Resetting to post-init state..."; $(MAKE) dev-reset-hard; \
+		echo "  [pre-reset]  Done"; echo ""; \
+	else \
+		echo "  [pre-reset]  Skipped"; echo ""; \
+	fi; \
+	curl -sf http://127.0.0.1:8545 -X POST \
+		-d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' \
+		-H 'Content-Type: application/json' >/dev/null 2>&1 \
+		|| { echo "  Starting infrastructure..."; $(DC_DEV) up -d; ./scripts/open-wallets.sh; echo ""; }; \
+	OUTFILE=$$(mktemp); \
+	./scripts/run-tests.py --tier precheck 2>&1 | tee "$$OUTFILE"; \
+	RC=$${PIPESTATUS[0]}; \
+	if [ "$$DO_RESET" = "1" ]; then \
+		echo ""; echo "  [post-reset] Resetting to post-init state..."; \
+		$(MAKE) dev-reset-hard >/dev/null 2>&1; \
+		echo "  [post-reset] Done"; \
+	else \
+		echo ""; echo "  [post-reset] Skipped"; \
+	fi; \
+	echo ""; \
+	echo "=== Precheck Results ==="; \
+	cat "$$OUTFILE"; \
+	rm -f "$$OUTFILE"; \
+	exit $$RC
 
 ## Post-setup health — are apps + contracts working? (~2 min, read-only)
 smoke:
+	@overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1 \
+		|| { echo "  Starting stack..."; $(MAKE) dev; echo ""; }
 	./scripts/run-tests.py --tier smoke
 
 ## Integration tests — does the bridge work? (~8-12 min, moves funds)
 test:
+	@overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1 \
+		|| { echo "  Starting stack..."; $(MAKE) dev; echo ""; }
 	./scripts/run-tests.py --tier integration
 
 ## Seed verification — is the stack bootstrapped? (~2 min, read-only)
 test-seed:
+	@overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1 \
+		|| { echo "  Starting stack..."; $(MAKE) dev; echo ""; }
 	./scripts/run-tests.py --tier seed
 
 ## All tiers: precheck + integration + seed
 test-all:
+	@overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1 \
+		|| { echo "  Starting stack..."; $(MAKE) dev; echo ""; }
 	./scripts/run-tests.py
 
 ## Edge-case framework default pass (summary + lint + logical)

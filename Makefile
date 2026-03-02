@@ -545,73 +545,50 @@ scan-pools:
 # Test Framework
 # ===========================================
 
-.PHONY: precheck smoke test test-seed test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-engine test-engine-verbose typecheck-tests
+.PHONY: dev-test-setup precheck test-infra test-ops test-bridge test-e2e test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-engine test-engine-verbose typecheck-tests
 
-## Pre-setup gate — is infra ready for dev-setup? (~2 min)
-## Resets to post-init state before and after (interactive prompt, skippable).
+## Frozen test setup — independent of dev-setup.sh (~4 min)
+## Leaves stack running on success. Use for test-owned infrastructure.
+dev-test-setup:
+	./scripts/dev-test-setup.sh
+
+## T1: Environment readiness — repos, binaries, .env (instant, no infra)
 precheck:
-	@if [ ! -f "$(ORCH_DIR)/snapshots/chain/node1-lmdb.tar.gz" ]; then \
-		echo ""; \
-		echo "  ERROR: dev-init has not been run yet."; \
-		echo "  Run 'make dev-init' first to create the devnet."; \
-		echo ""; \
-		exit 1; \
-	fi
-	@DO_RESET=1; \
-	if [ -t 0 ]; then \
-		printf "\n  Reset to post-init state (make dev-reset-hard) pre and post precheck (recommended)? [Y/n] "; \
-		read -r ans; \
-		case "$$ans" in [nN]) DO_RESET=0; echo "  Skipping reset, running precheck as-is..." ;; esac; \
-	fi; \
-	if [ "$$DO_RESET" = "1" ]; then \
-		echo "  [pre-reset]  Resetting to post-init state..."; $(MAKE) dev-reset-hard; \
-		echo "  [pre-reset]  Done"; echo ""; \
-	else \
-		echo "  [pre-reset]  Skipped"; echo ""; \
-	fi; \
-	curl -sf http://127.0.0.1:8545 -X POST \
-		-d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' \
-		-H 'Content-Type: application/json' >/dev/null 2>&1 \
-		|| { echo "  Starting infrastructure..."; $(DC_DEV) up -d; ./scripts/open-wallets.sh; echo ""; }; \
-	OUTFILE=$$(mktemp); \
-	./scripts/run-tests.py --tier precheck 2>&1 | tee "$$OUTFILE"; \
-	RC=$${PIPESTATUS[0]}; \
-	if [ "$$DO_RESET" = "1" ]; then \
-		echo ""; echo "  [post-reset] Resetting to post-init state..."; \
-		$(MAKE) dev-reset-hard >/dev/null 2>&1; \
-		echo "  [post-reset] Done"; \
-	else \
-		echo ""; echo "  [post-reset] Skipped"; \
-	fi; \
-	echo ""; \
-	echo "=== Precheck Results ==="; \
-	cat "$$OUTFILE"; \
-	rm -f "$$OUTFILE"; \
-	exit $$RC
+	@./scripts/test-gate.sh precheck
+	./scripts/run-tests.py --tier precheck
 
-## Post-setup health — are apps + contracts working? (~2 min, read-only)
-smoke:
-	@overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1 \
-		|| { echo "  Starting stack..."; $(MAKE) dev; echo ""; }
-	./scripts/run-tests.py --tier smoke
+## T2: Infrastructure health — Docker, wallets, chain, oracle (post dev-init)
+## Gate: dev-reset-hard + start infra
+test-infra:
+	@./scripts/test-gate.sh infra
+	./scripts/run-tests.py --tier infra
 
-## Integration tests — does the bridge work? (~8-12 min, moves funds)
-test:
-	@overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1 \
-		|| { echo "  Starting stack..."; $(MAKE) dev; echo ""; }
-	./scripts/run-tests.py --tier integration
+## T3: Basic operations — transfers, oracle, RR mode (post dev-init, mutating)
+## Gate: dev-reset-hard + start infra
+test-ops:
+	@./scripts/test-gate.sh ops
+	./scripts/run-tests.py --tier ops
 
-## Seed verification — is the stack bootstrapped? (~2 min, read-only)
-test-seed:
-	@overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1 \
-		|| { echo "  Starting stack..."; $(MAKE) dev; echo ""; }
-	./scripts/run-tests.py --tier seed
+## T4A: Bridge health + flows — contracts, APIs, wrap/unwrap (post dev-setup)
+## Gate: dev-reset (or dev-test-setup if needed) + make dev
+test-bridge:
+	@./scripts/test-gate.sh bridge
+	./scripts/run-tests.py --tier bridge
 
-## All tiers: precheck + integration + seed
+## T5: Full system tests — placeholder
+test-e2e:
+	@./scripts/test-gate.sh e2e
+	./scripts/run-tests.py --tier e2e
+
+## All tiers in order: precheck → infra → ops → bridge → engine → e2e
+## Each tier handles its own state.
 test-all:
-	@overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1 \
-		|| { echo "  Starting stack..."; $(MAKE) dev; echo ""; }
-	./scripts/run-tests.py
+	$(MAKE) precheck
+	$(MAKE) test-infra
+	$(MAKE) test-ops
+	$(MAKE) test-bridge
+	$(MAKE) test-engine
+	$(MAKE) test-e2e
 
 ## Edge-case framework default pass (summary + lint + logical)
 test-edge:
@@ -667,8 +644,10 @@ test-edge-fe:
 test-edge-seed:
 	./scripts/run-l5-tests.py --execute --category SEED --verbose
 
-## Run engine strategy tests (332 tests)
+## T4B: Engine strategy tests (332 tests, post dev-setup)
+## Gate: dev-reset (or dev-test-setup if needed) + make dev
 test-engine:
+	@./scripts/test-gate.sh engine
 	python3 scripts/engine_tests/runner.py
 
 ## Run engine tests verbose
@@ -854,5 +833,12 @@ help:
 	@echo "  make keygen                     Generate fresh keys and write to .env"
 	@echo "  make sync-env                   Sync .env to sub-repos"
 	@echo "  make sync-zephyr                Copy artifacts from Zephyr repo"
-	@echo "  make test                       Run all L1-L4 tests"
-	@echo "  make test-l5                    Run L5 edge framework pass"
+	@echo "  make dev-test-setup              Frozen test setup (~4 min, leaves stack running)"
+	@echo "  make precheck                   T1: Environment readiness (instant)"
+	@echo "  make test-infra                 T2: Infrastructure health (~2 min)"
+	@echo "  make test-ops                   T3: Basic operations (~2 min)"
+	@echo "  make test-bridge                T4A: Bridge health + flows (~10 min)"
+	@echo "  make test-engine                T4B: Engine strategy tests (332 tests)"
+	@echo "  make test-e2e                   T5: Full system (placeholder)"
+	@echo "  make test-all                   All tiers in order"
+	@echo "  make test-edge                  Edge-case framework pass"

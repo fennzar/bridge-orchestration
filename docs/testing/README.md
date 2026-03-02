@@ -1,41 +1,78 @@
 # Testing
 
-Quick reference for the Zephyr Bridge test suite. For detailed test specs, see the docs linked below.
+Quick reference for the Zephyr Bridge test suite. Every `make test-*` is self-contained — it handles its own state (resets, setup, startup). Any tier can run in isolation, in any order.
 
 ## Quick Commands
 
-| Command | What it does |
-|---------|-------------|
-| `make precheck` | Pre-setup gate — is infra ready for dev-setup? (~2 min) |
-| `make smoke` | Post-setup health — are apps + contracts working? (~2 min, read-only) |
-| `make test` | Integration tests — does the bridge work? (~8-12 min, moves funds) |
-| `make test-seed` | Seed verification — is the stack bootstrapped? (~2 min) |
-| `make test-all` | All tiers: precheck + smoke + integration + seed |
-| `make test-engine` | Engine strategy tests (332 tests) |
-| `make test-edge` | Edge-case framework (automated checks) |
-| `make status` | Health check all services |
-| `make dev-reset && make dev` | Reset to clean state between test runs |
-| `make set-price PRICE=x` | Change oracle price for RR testing |
+| Command | What it does | Time |
+|---------|-------------|------|
+| `make precheck` | T1: Environment readiness (repos, binaries, .env) | instant |
+| `make test-infra` | T2: Infrastructure health (Docker, wallets, chain) | ~2 min |
+| `make test-ops` | T3: Basic operations (transfers, oracle, RR mode) | ~2 min |
+| `make test-bridge` | T4A: Bridge suite (health + wrap/unwrap flows) | ~10 min |
+| `make test-engine` | T4B: Engine strategy tests (332 tests) | ~5 min |
+| `make test-e2e` | T5: Full system tests (placeholder) | — |
+| `make test-all` | All tiers in order | ~20 min |
+| `make test-edge` | Edge-case framework (automated checks) | ~10+ min |
+| `make status` | Health check all services | instant |
 
-## Test Tiers
+## Tier Structure
 
-| Tier | Purpose | Mutates | Time | Command | Details |
-|------|---------|---------|------|---------|---------|
-| **Precheck** | Pre-setup gate: infra ready for dev-setup | Some | ~2 min | `make precheck` | 13 tests (10 read-only + 3 state-mutating with restore) |
-| **Smoke** | Post-setup health: apps + contracts working | No | ~2 min | `make smoke` | 19 read-only health probes |
-| **Integration** | Bridge flows: wrap, unwrap, wallet creation | Yes | ~8-12 min | `make test` | 5 tests exercising real fund movement |
-| **Seed** | Stack fully bootstrapped (pools, inventory) | No | ~2 min | `make test-seed` | 9 verification checks |
-| **Engine** | Strategy unit tests (332) | No | ~5 min | `make test-engine` | [engine-test-scope.md](./engine-test-scope.md) |
-| **Edge** | Security, race conditions, chaos | Mixed | ~10+ min | `make test-edge` | [00-edge-case-scope.md](./00-edge-case-scope.md), [08-edge-framework.md](./08-edge-framework.md) |
+```
+Tier   Name          When            What it proves
+─────────────────────────────────────────────────────────────────────────
+T1     precheck      pre dev-init    Environment ready (repos, bins, env)
+T2     test-infra    post dev-init   Infrastructure comes up healthy
+T3     test-ops      post dev-init   Basic operations work (funds, oracle)
+T4A    test-bridge   post dev-setup  Bridge works (wrap, unwrap, all assets)
+T4B    test-engine   post dev-setup  Engine strategies (332 unit tests)
+T5     test-e2e      post dev-setup  Full system (engine arb execution)
+```
+
+## Self-Contained Tests
+
+Each tier handles its own prerequisites via `scripts/test-gate.sh`:
+
+| Tier | Gate behaviour |
+|------|---------------|
+| `precheck` | No state management — pure file/binary checks |
+| `test-infra`, `test-ops` | dev-reset-hard → start Docker infra → open wallets |
+| `test-bridge`, `test-engine`, `test-e2e` | If no addresses.json: dev-reset-hard → dev-test-setup (full deploy + seed). Otherwise: dev-reset → make dev |
+
+**CI/non-interactive:** All prompts auto-accept when `CI=1` or when stdin is not a TTY.
+
+### Why `dev-test-setup.sh` exists
+
+`dev-test-setup.sh` is a frozen copy of `dev-setup.sh`. It provides a stable, repeatable setup that tests depend on, regardless of how `dev-setup.sh` evolves (different pool sizes, new contracts, etc.).
+
+Key differences from `dev-setup.sh`:
+- On **success**: leaves the stack running (tests need it)
+- On **failure**: stops everything (same as `dev-setup.sh`)
+- Writes marker `config/.test-setup-done` on completion
+
+Run it directly: `make dev-test-setup`
+
+## Test Counts
+
+| Tier | Tests | Mutates | Details |
+|------|------:|---------|---------|
+| **T1 Precheck** | 5 | No | .env, repos, Docker, binaries, snapshot |
+| **T2 Infra** | 10 | No | Docker services, wallets, chain, oracle, mining |
+| **T3 Ops** | 3 | Yes (with restore) | Transfer, oracle control, RR mode |
+| **T4A Bridge** | 33 | Some | 28 health + 5 flow tests (wrap/unwrap) |
+| **T4B Engine** | 332 | No | External runner (12 modules) |
+| **T5 E2E** | 0 | — | Placeholder |
+| **Edge** | 168 | Mixed | [00-edge-case-scope.md](./00-edge-case-scope.md) |
 
 ## Where to Start
 
-- **Before dev-setup** — `make precheck` (verify infra is ready)
-- **After dev-setup** — `make smoke` (verify apps + contracts are working)
-- **After changes** — `make test` (exercises wrap/unwrap pipeline)
-- **Full validation** — `make test-all` (precheck + smoke + integration + seed)
-- **Deep edge cases** — `make test-edge-execute` (automated edge-case checks)
+- **Fresh environment** — `make precheck` (verify repos/binaries/env)
+- **After dev-init** — `make test-infra` (verify infrastructure)
+- **After dev-setup** — `make test-bridge` (verify bridge works)
+- **After changes** — `make test-bridge` (exercises full bridge pipeline)
+- **Full validation** — `make test-all` (all tiers, each self-contained)
 - **Engine strategies** — `make test-engine` (332 unit tests)
+- **Deep edge cases** — `make test-edge-execute` (automated edge-case checks)
 
 ## Running Specific Tests
 
@@ -44,8 +81,8 @@ Quick reference for the Zephyr Bridge test suite. For detailed test specs, see t
 ./scripts/run-tests.py INFRA-01 WRAP-01
 
 # By tier
-make precheck                        # or test, test-seed
-./scripts/run-tests.py --tier precheck --tier seed  # multiple tiers
+./scripts/run-tests.py --tier precheck
+./scripts/run-tests.py --tier infra --tier ops     # multiple tiers
 
 # Edge by category
 ./scripts/run-l5-tests.py --execute --category SEC --verbose

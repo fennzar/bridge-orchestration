@@ -11,8 +11,8 @@ from test_common import ExecutionResult
 class TestDef:
     test_id: str
     title: str
-    level: str          # grouping within a tier (e.g. "infra", "smoke", "bridge")
-    tier: str            # "precheck", "integration", "seed"
+    level: str          # grouping within a tier (e.g. "infra", "smoke", "bridge", "seed")
+    tier: str            # "precheck", "infra", "ops", "bridge", "e2e"
     lane: str
     check: Callable[[dict[str, bool]], ExecutionResult]
     depends_on: tuple[str, ...] = ()  # test IDs that must PASS first

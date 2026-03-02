@@ -1,4 +1,4 @@
-"""Integration tier: bridge product flow tests (5 tests).
+"""Bridge tier — flow tests (5 tests).
 
 These tests move real funds and exercise the core wrap/unwrap pipeline.
 CleanupContext should be used when running this tier.
@@ -46,7 +46,7 @@ from lib.seed_helpers import (
 
 def check_wallet_01(probes: dict[str, bool]) -> ExecutionResult:
     """Bridge wallet creation: POST /bridge/address returns subaddress."""
-    tid, lvl, lane = "WALLET-01", "bridge", "integration"
+    tid, lvl, lane = "WALLET-01", "bridge", "bridge"
 
     test_addr = os.environ.get("TEST_USER_1_ADDRESS", "")
     if not test_addr:
@@ -96,7 +96,7 @@ def _wrap_flow(
     amount: float,
 ) -> ExecutionResult:
     """Shared wrap flow: create addr -> transfer -> mine -> poll claims -> claim on EVM."""
-    lvl, lane = "bridge", "integration"
+    lvl, lane = "bridge", "bridge"
 
     test_addr = os.environ.get("TEST_USER_1_ADDRESS", "")
     test_pk = os.environ.get("TEST_USER_1_PK", "")
@@ -181,7 +181,7 @@ def _unwrap_flow(
     depends_wrap: str,
 ) -> ExecutionResult:
     """Shared unwrap flow: burn wToken -> bridge watcher relays -> native arrives."""
-    lvl, lane = "bridge", "integration"
+    lvl, lane = "bridge", "bridge"
 
     test_addr = os.environ.get("TEST_USER_1_ADDRESS", "")
     test_pk = os.environ.get("TEST_USER_1_PK", "")
@@ -298,11 +298,11 @@ def check_unwrap_02(probes: dict[str, bool]) -> ExecutionResult:
 # ── Test Registry ────────────────────────────────────────────────────
 
 TESTS: list[TestDef] = [
-    TestDef("WALLET-01", "Bridge Wallet Creation", "bridge", "integration", "integration", check_wallet_01),
-    TestDef("WRAP-01", "Wrap ZEPH -> wZEPH", "bridge", "integration", "integration", check_wrap_01),
-    TestDef("UNWRAP-01", "Unwrap wZEPH -> ZEPH", "bridge", "integration", "integration", check_unwrap_01,
+    TestDef("WALLET-01", "Bridge Wallet Creation", "bridge", "bridge", "bridge", check_wallet_01),
+    TestDef("WRAP-01", "Wrap ZEPH -> wZEPH", "bridge", "bridge", "bridge", check_wrap_01),
+    TestDef("UNWRAP-01", "Unwrap wZEPH -> ZEPH", "bridge", "bridge", "bridge", check_unwrap_01,
             depends_on=("WRAP-01",)),
-    TestDef("WRAP-02", "Wrap ZSD -> wZSD", "bridge", "integration", "integration", check_wrap_02),
-    TestDef("UNWRAP-02", "Unwrap wZSD -> ZSD", "bridge", "integration", "integration", check_unwrap_02,
+    TestDef("WRAP-02", "Wrap ZSD -> wZSD", "bridge", "bridge", "bridge", check_wrap_02),
+    TestDef("UNWRAP-02", "Unwrap wZSD -> ZSD", "bridge", "bridge", "bridge", check_unwrap_02,
             depends_on=("WRAP-02",)),
 ]

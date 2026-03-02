@@ -1,33 +1,20 @@
-"""Precheck tier: pre-setup gate (13 tests).
+"""Infra tier (T2): post-init infrastructure validation (10 tests).
 
-Validates that infrastructure is ready for `make dev-setup`.
-Works after `make dev-init` + `make dev-infra` — no contracts or apps needed.
-Some tests mutate state (XFER-01, ORACLE-01, RR-01) but validate machinery
-that dev-setup depends on. CleanupContext restores oracle price.
+Validates that infrastructure is healthy after dev-init.
+All read-only — no state mutation.
 """
 from __future__ import annotations
 
 import time as _time
-from pathlib import Path
 
 from test_common import (
     ANVIL_URL, ATOMIC, ExecutionResult,
-    FAIL, GOV_W, GOV_WALLET_PORT,
-    MINER_W, MINER_WALLET_PORT,
+    FAIL, GOV_W,
     NODE1_RPC, NODE1_RPC_PORT, NODE2_RPC_PORT, ORACLE_URL, ORDERBOOK_URL,
-    PASS, TEST_W, TEST_WALLET_PORT,
+    PASS,
     _jget, _jpost, _rpc,
-    set_oracle_price,
 )
 from ._types import TestDef, _r
-
-# Import seed helpers for XFER-01 and RR-01
-_sys_path = str(Path(__file__).resolve().parent.parent)
-import sys as _sys
-if _sys_path not in _sys.path:
-    _sys.path.insert(0, _sys_path)
-
-from lib.seed_helpers import mine_blocks
 
 
 # ── L1 Infrastructure (3 tests) ──────────────────────────────────────
@@ -154,6 +141,7 @@ def check_infra_03(probes: dict[str, bool]) -> ExecutionResult:
     parts = []
     failed = False
 
+    from test_common import MINER_W, MINER_WALLET_PORT, TEST_W, TEST_WALLET_PORT, GOV_WALLET_PORT
     wallets = [
         ("Gov", GOV_W, GOV_WALLET_PORT, "gov_wallet"),
         ("Miner", MINER_W, MINER_WALLET_PORT, "miner_wallet"),
@@ -180,7 +168,7 @@ def check_infra_03(probes: dict[str, bool]) -> ExecutionResult:
 
 def check_smoke_01(probes: dict[str, bool]) -> ExecutionResult:
     """Zephyr chain health: height, synced, difficulty."""
-    tid, lvl, lane = "SMOKE-01", "smoke", "smoke"
+    tid, lvl, lane = "SMOKE-01", "smoke", "infra"
 
     result, err = _rpc(NODE1_RPC, "get_info", timeout=5.0)
     if err:
@@ -224,7 +212,7 @@ def check_smoke_01(probes: dict[str, bool]) -> ExecutionResult:
 
 def check_smoke_02(probes: dict[str, bool]) -> ExecutionResult:
     """Gov wallet balances: ZPH, ZRS, ZSD."""
-    tid, lvl, lane = "SMOKE-02", "smoke", "smoke"
+    tid, lvl, lane = "SMOKE-02", "smoke", "infra"
 
     result, err = _rpc(GOV_W, "get_balance", timeout=5.0)
     if err:
@@ -259,7 +247,7 @@ def check_smoke_02(probes: dict[str, bool]) -> ExecutionResult:
 
 def check_smoke_03(probes: dict[str, bool]) -> ExecutionResult:
     """Oracle price: spot > 0."""
-    tid, lvl, lane = "SMOKE-03", "smoke", "smoke"
+    tid, lvl, lane = "SMOKE-03", "smoke", "infra"
 
     data, err = _jget(f"{ORACLE_URL}/status", timeout=5.0)
     if err:
@@ -279,7 +267,7 @@ def check_smoke_03(probes: dict[str, bool]) -> ExecutionResult:
 
 def check_smoke_06(probes: dict[str, bool]) -> ExecutionResult:
     """Mining active: mining_status or block production."""
-    tid, lvl, lane = "SMOKE-06", "smoke", "smoke"
+    tid, lvl, lane = "SMOKE-06", "smoke", "infra"
 
     result, err = _rpc(NODE1_RPC, "mining_status", timeout=5.0)
     if err is None and result:
@@ -301,12 +289,12 @@ def check_smoke_06(probes: dict[str, bool]) -> ExecutionResult:
     return _r(tid, lvl, lane, PASS, f"No new blocks in 3s (height: {h2}) - mining may be paused")
 
 
-# ── L3 Component (2 read-only tests) ─────────────────────────────────
+# ── L3 Component (3 read-only tests) ─────────────────────────────────
 
 
 def check_zephyr_01(probes: dict[str, bool]) -> ExecutionResult:
     """Gov wallet balances (detailed, all 4 assets)."""
-    tid, lvl, lane = "ZEPHYR-01", "zephyr", "zephyr"
+    tid, lvl, lane = "ZEPHYR-01", "zephyr", "infra"
 
     result, err = _rpc(GOV_W, "get_balance", {"account_index": 0, "all_assets": True}, timeout=10.0)
     if err:
@@ -336,7 +324,7 @@ def check_zephyr_01(probes: dict[str, bool]) -> ExecutionResult:
 
 def check_zephyr_02(probes: dict[str, bool]) -> ExecutionResult:
     """Reserve info from node."""
-    tid, lvl, lane = "ZEPHYR-02", "zephyr", "zephyr"
+    tid, lvl, lane = "ZEPHYR-02", "zephyr", "infra"
 
     result, err = _rpc(NODE1_RPC, "get_reserve_info", timeout=10.0)
     if err:
@@ -355,7 +343,7 @@ def check_zephyr_02(probes: dict[str, bool]) -> ExecutionResult:
 
 def check_orderbook_01(probes: dict[str, bool]) -> ExecutionResult:
     """Orderbook tracks oracle price."""
-    tid, lvl, lane = "ORDERBOOK-01", "orderbook", "orderbook"
+    tid, lvl, lane = "ORDERBOOK-01", "orderbook", "infra"
 
     data, err = _jget(f"{ORDERBOOK_URL}/status", timeout=10.0)
     if err:
@@ -367,133 +355,20 @@ def check_orderbook_01(probes: dict[str, bool]) -> ExecutionResult:
     return _r(tid, lvl, lane, FAIL, "Orderbook not tracking price")
 
 
-# ── State-mutating pre-setup validations (3 tests) ──────────────────
-
-
-def check_xfer_01(probes: dict[str, bool]) -> ExecutionResult:
-    """Transfer Gov -> Test wallet (mines warm-up blocks if outputs locked)."""
-    tid, lvl, lane = "XFER-01", "transfer", "precheck"
-
-    result, err = _rpc(TEST_W, "get_address", {"account_index": 0}, timeout=10.0)
-    if err:
-        return _r(tid, lvl, lane, FAIL, f"Could not get test wallet address: {err}")
-
-    test_addr = (result or {}).get("address")
-    if not test_addr:
-        return _r(tid, lvl, lane, FAIL, "Could not get test wallet address")
-
-    for attempt in range(1, 4):
-        _rpc(GOV_W, "refresh", timeout=10.0)
-
-        transfer_result, err = _rpc(GOV_W, "transfer", {
-            "destinations": [{"amount": 100_000_000_000_000, "address": test_addr}],
-            "source_asset": "ZPH",
-            "destination_asset": "ZPH",
-        }, timeout=10.0)
-
-        if err is None and transfer_result:
-            tx_hash = transfer_result.get("tx_hash")
-            if tx_hash:
-                _time.sleep(10)
-                _rpc(TEST_W, "refresh", timeout=10.0)
-                bal_result, _ = _rpc(TEST_W, "get_balance", {"account_index": 0}, timeout=10.0)
-                test_bal = int((bal_result or {}).get("balance", 0))
-                bal_str = f" (balance: {test_bal / ATOMIC:.4f} ZPH)" if test_bal > 0 else ""
-                return _r(tid, lvl, lane, PASS, f"Transfer submitted - tx={tx_hash}{bal_str}")
-
-        err_msg = str(err) if err else "unknown error"
-
-        # Outputs locked after dev-reset — mine warm-up blocks (coinbase maturity=60)
-        if "unlocked" in err_msg.lower() and attempt < 3:
-            mine_blocks(65)
-            _rpc(GOV_W, "refresh", timeout=10.0)
-            continue
-
-        if "ring" in err_msg.lower() and attempt < 3:
-            _time.sleep(15)
-            continue
-
-        return _r(tid, lvl, lane, FAIL, f"Transfer failed - {err_msg}")
-
-    return _r(tid, lvl, lane, FAIL, "Transfer failed after 3 retries")
-
-
-def check_oracle_01(probes: dict[str, bool]) -> ExecutionResult:
-    """Oracle price control: set/verify/restore."""
-    tid, lvl, lane = "ORACLE-01", "oracle", "precheck"
-
-    data, err = _jget(f"{ORACLE_URL}/status", timeout=10.0)
-    if err:
-        return _r(tid, lvl, lane, FAIL, f"Could not get oracle status: {err}")
-
-    before = (data or {}).get("spot")
-    if not before or before == "null":
-        return _r(tid, lvl, lane, FAIL, "Could not get oracle status")
-
-    set_oracle_price(2.00)
-    _time.sleep(3)
-
-    data2, err2 = _jget(f"{ORACLE_URL}/status", timeout=10.0)
-    after = (data2 or {}).get("spot") if not err2 else None
-
-    # Restore
-    set_oracle_price(1.50)
-
-    if after == 2000000000000:
-        return _r(tid, lvl, lane, PASS, "Price control works (changed to $2.00 and restored)")
-    return _r(tid, lvl, lane, FAIL, f"Price change failed - before={before}, after={after}")
-
-
-def check_rr_01(probes: dict[str, bool]) -> ExecutionResult:
-    """RR mode transitions via oracle price change."""
-    tid, lvl, lane = "RR-01", "rr", "precheck"
-
-    result, err = _rpc(NODE1_RPC, "get_reserve_info", timeout=10.0)
-    if err:
-        return _r(tid, lvl, lane, FAIL, f"Could not get reserve info: {err}")
-
-    current_rr = (result or {}).get("reserve_ratio", "0")
-
-    # Drop oracle price and mine blocks so the new price takes effect
-    set_oracle_price(0.60)
-    mine_blocks(3)
-    _time.sleep(2)
-
-    result2, err2 = _rpc(NODE1_RPC, "get_reserve_info", timeout=10.0)
-    new_rr = (result2 or {}).get("reserve_ratio", "0") if not err2 else "0"
-
-    # Restore price and mine so it takes effect
-    set_oracle_price(1.50)
-    mine_blocks(3)
-
-    try:
-        rr_num = int(float(new_rr))
-    except (ValueError, TypeError):
-        rr_num = 999
-
-    if rr_num < 7:
-        return _r(tid, lvl, lane, PASS, f"RR responded to oracle change ({current_rr} -> {new_rr})")
-    return _r(tid, lvl, lane, FAIL, f"RR did not change as expected ({current_rr} -> {new_rr})")
-
-
 # ── Test Registry ────────────────────────────────────────────────────
 
 TESTS: list[TestDef] = [
     # L1 Infrastructure
-    TestDef("INFRA-01", "Docker Services (Redis, PostgreSQL, Anvil)", "infra", "precheck", "infra", check_infra_01),
-    TestDef("INFRA-02", "DEVNET Services (Oracle, Orderbook, Node1, Node2)", "infra", "precheck", "infra", check_infra_02),
-    TestDef("INFRA-03", "Wallet RPCs (Gov, Miner, Test)", "infra", "precheck", "infra", check_infra_03),
+    TestDef("INFRA-01", "Docker Services (Redis, PostgreSQL, Anvil)", "infra", "infra", "infra", check_infra_01),
+    TestDef("INFRA-02", "DEVNET Services (Oracle, Orderbook, Node1, Node2)", "infra", "infra", "infra", check_infra_02),
+    TestDef("INFRA-03", "Wallet RPCs (Gov, Miner, Test)", "infra", "infra", "infra", check_infra_03),
     # L2 Smoke (pre-setup subset)
-    TestDef("SMOKE-01", "Zephyr Chain Health", "smoke", "precheck", "smoke", check_smoke_01),
-    TestDef("SMOKE-02", "Gov Wallet Balances", "smoke", "precheck", "smoke", check_smoke_02),
-    TestDef("SMOKE-03", "Oracle Price", "smoke", "precheck", "smoke", check_smoke_03),
-    TestDef("SMOKE-06", "Mining Active", "smoke", "precheck", "smoke", check_smoke_06),
+    TestDef("SMOKE-01", "Zephyr Chain Health", "smoke", "infra", "infra", check_smoke_01),
+    TestDef("SMOKE-02", "Gov Wallet Balances", "smoke", "infra", "infra", check_smoke_02),
+    TestDef("SMOKE-03", "Oracle Price", "smoke", "infra", "infra", check_smoke_03),
+    TestDef("SMOKE-06", "Mining Active", "smoke", "infra", "infra", check_smoke_06),
     # L3 Component (pre-setup subset)
-    TestDef("ZEPHYR-01", "Gov Wallet Balances (Detailed)", "zephyr", "precheck", "zephyr", check_zephyr_01),
-    TestDef("ZEPHYR-02", "Reserve Info", "zephyr", "precheck", "zephyr", check_zephyr_02),
-    TestDef("ORDERBOOK-01", "Orderbook Price Tracking", "orderbook", "precheck", "orderbook", check_orderbook_01),
-    # State-mutating pre-setup validations
-    TestDef("XFER-01", "Zephyr Transfer", "transfer", "precheck", "precheck", check_xfer_01),
-    TestDef("ORACLE-01", "Oracle Price Control", "oracle", "precheck", "precheck", check_oracle_01),
-    TestDef("RR-01", "RR Mode Transition", "rr", "precheck", "precheck", check_rr_01),
+    TestDef("ZEPHYR-01", "Gov Wallet Balances (Detailed)", "zephyr", "infra", "infra", check_zephyr_01),
+    TestDef("ZEPHYR-02", "Reserve Info", "zephyr", "infra", "infra", check_zephyr_02),
+    TestDef("ORDERBOOK-01", "Orderbook Price Tracking", "orderbook", "infra", "infra", check_orderbook_01),
 ]

@@ -3,13 +3,15 @@
 
 Usage:
   ./scripts/run-tests.py                              # All tiers
-  ./scripts/run-tests.py --tier precheck              # Health probes only
-  ./scripts/run-tests.py --tier integration            # Bridge flow tests only
-  ./scripts/run-tests.py --tier seed                   # Seed verification only
-  ./scripts/run-tests.py INFRA-01 WRAP-01              # Specific test IDs
-  ./scripts/run-tests.py --list                        # List tests
-  ./scripts/run-tests.py --verbose                     # Show per-test detail
-  ./scripts/run-tests.py --report-json out.json        # JSON report
+  ./scripts/run-tests.py --tier precheck              # T1: Environment readiness
+  ./scripts/run-tests.py --tier infra                 # T2: Infrastructure health
+  ./scripts/run-tests.py --tier ops                   # T3: Basic operations
+  ./scripts/run-tests.py --tier bridge                # T4A: Bridge health + flows
+  ./scripts/run-tests.py --tier e2e                   # T5: Full system (placeholder)
+  ./scripts/run-tests.py INFRA-01 WRAP-01             # Specific test IDs
+  ./scripts/run-tests.py --list                       # List tests
+  ./scripts/run-tests.py --verbose                    # Show per-test detail
+  ./scripts/run-tests.py --report-json out.json       # JSON report
 """
 from __future__ import annotations
 
@@ -40,11 +42,14 @@ from test_common import (
 
 
 TIER_LABELS = {
-    "precheck": "Precheck: Pre-Setup Gate",
-    "smoke": "Smoke: Post-Setup Health",
-    "integration": "Integration: Bridge Flows",
-    "seed": "Seed: Stack Verification",
+    "precheck": "T1 Precheck: Environment Readiness",
+    "infra": "T2 Infra: Infrastructure Health",
+    "ops": "T3 Ops: Basic Operations",
+    "bridge": "T4A Bridge: Health + Flows",
+    "e2e": "T5 E2E: Full System",
 }
+
+VALID_TIERS = list(TIER_LABELS.keys())
 
 
 def list_tests(ids: list[str]) -> None:
@@ -71,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--tier", action="append", dest="tiers",
-        choices=["precheck", "smoke", "integration", "seed"],
+        choices=VALID_TIERS,
         help="Run all tests in a tier (repeatable)",
     )
     parser.add_argument("--list", action="store_true", help="List available tests")
@@ -118,27 +123,32 @@ def main() -> int:
     print("===========================================")
     print()
 
-    # Probe services once
-    print(f"{CYAN}[INFO]{NC} Probing services...")
-    probes = probe_services()
-    up = [k for k, v in sorted(probes.items()) if v]
-    down = [k for k, v in sorted(probes.items()) if not v]
-    if up:
-        print(f"{BLUE}[INFO]{NC} Up: {', '.join(up)}")
-    if down:
-        print(f"{BLUE}[INFO]{NC} Down: {', '.join(down)}")
+    # Probe services once (skip for precheck tier which doesn't need infra)
+    tiers_in_run = {t.tier for t in tests_to_run}
+    if tiers_in_run == {"precheck"}:
+        probes: dict[str, bool] = {}
+        print(f"{CYAN}[INFO]{NC} Precheck tier — skipping service probes")
+    else:
+        print(f"{CYAN}[INFO]{NC} Probing services...")
+        probes = probe_services()
+        up = [k for k, v in sorted(probes.items()) if v]
+        down = [k for k, v in sorted(probes.items()) if not v]
+        if up:
+            print(f"{BLUE}[INFO]{NC} Up: {', '.join(up)}")
+        if down:
+            print(f"{BLUE}[INFO]{NC} Down: {', '.join(down)}")
     print()
 
     print(f"Running {len(tests_to_run)} test(s)...")
     print()
 
-    # Check if precheck or integration tier is included (needs cleanup context for oracle/orderbook)
-    has_integration = any(t.tier in ("precheck", "integration") for t in tests_to_run)
+    # CleanupContext for tiers that mutate oracle/orderbook state
+    has_mutating = any(t.tier in ("ops", "bridge") for t in tests_to_run)
 
     # Run tests with dependency resolution
     results = []
     passed_ids: set[str] = set()
-    ctx = CleanupContext() if has_integration else None
+    ctx = CleanupContext() if has_mutating else None
 
     try:
         if ctx:

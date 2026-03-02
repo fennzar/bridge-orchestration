@@ -231,19 +231,22 @@ $ZEPHYR_CLI price
 ## Testing
 
 ```bash
-# Pre-setup gate — is infra ready for dev-setup? (~2 min)
+# T1: Environment readiness (instant, no infra)
 make precheck
 
-# Post-setup health — are apps + contracts working? (~2 min, read-only)
-make smoke
+# T2: Infrastructure health (post dev-init, ~2 min)
+make test-infra
 
-# Integration tests — wrap, unwrap (~8-12 min)
-make test
+# T3: Basic operations — transfers, oracle, RR mode (~2 min)
+make test-ops
 
-# Seed verification — pools, inventory (~2 min)
-make test-seed
+# T4A: Bridge health + flows — contracts, APIs, wrap/unwrap (~10 min)
+make test-bridge
 
-# All tiers
+# T4B: Engine strategy tests (332 tests, ~5 min)
+make test-engine
+
+# All tiers in order
 make test-all
 
 # Repo unit tests

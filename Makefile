@@ -212,6 +212,7 @@ dev-start:
 		rm -f $(OVERMIND_SOCK); \
 	fi
 	@# Start infrastructure (Blockscout on by default, EXPLORER=0 to skip)
+	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
 	@echo "=== Starting Docker infrastructure ==="
 	@if [ "$(EXPLORER)" = "0" ]; then \
 		$(DC_DEV) up -d; \
@@ -304,7 +305,9 @@ dev-init:
 	@rm -f config/addresses.json deployed-addresses.json
 	@# 4. Rebuild images (pass DEVNET_MODE for mirror binary selection)
 	@$(MAKE) build DEVNET_MODE=$(or $(DEVNET_MODE),custom)
-	@# 5. Start infrastructure
+	@# 5. Pre-create Anvil state dir (writable by foundry uid 1000 in container)
+	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
+	@# 6. Start infrastructure
 	@echo ""
 	@echo "=== Starting Docker infrastructure ==="
 	@$(DC_DEV) up -d
@@ -351,6 +354,7 @@ dev-setup:
 
 ## Start Docker infrastructure only
 dev-infra:
+	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
 	@echo "=== Starting Docker infrastructure ==="
 	$(DC_DEV) up -d
 

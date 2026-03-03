@@ -260,6 +260,7 @@ fi
 
 # Start Anvil — loads from state.json (checkpoint for normal reset,
 # or absent for hard reset = fresh chain).
+mkdir -p "$ORCH_DIR/snapshots/anvil" && chmod a+w "$ORCH_DIR/snapshots/anvil"
 $DC_DEV start anvil 2>/dev/null || $DC_DEV up -d anvil
 
 log_info "Waiting for Anvil..."

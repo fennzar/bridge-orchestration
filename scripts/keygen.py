@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -148,7 +150,37 @@ def print_keys(keys: dict[str, str], mode: str) -> None:
     print()
 
 
-def write_env(keys: dict[str, str], force: bool) -> None:
+def detect_paths() -> dict[str, str]:
+    """Auto-detect ROOT and PATH values based on repo layout."""
+    parent = ROOT.parent
+    paths: dict[str, str] = {}
+
+    # ROOT = parent directory containing all sibling repos
+    paths["ROOT"] = str(parent)
+
+    # PATH = include node (via nvm), foundry, and system PATH
+    path_parts: list[str] = []
+
+    # nvm node
+    nvm_dir = Path(os.environ.get("NVM_DIR", Path.home() / ".nvm"))
+    if nvm_dir.exists():
+        # Find the current node version directory
+        node_bin = shutil.which("node")
+        if node_bin:
+            path_parts.append(str(Path(node_bin).parent))
+
+    # foundry
+    foundry_bin = Path.home() / ".foundry" / "bin"
+    if foundry_bin.exists():
+        path_parts.append(str(foundry_bin))
+
+    path_parts.append("$PATH")
+    paths["PATH"] = ":".join(path_parts)
+
+    return paths
+
+
+def write_env(keys: dict[str, str], force: bool, quiet: bool = False) -> None:
     """Read .env.example, replace <KEYGEN:XXX> placeholders, write .env."""
     if not ENV_EXAMPLE.exists():
         print(f"Error: {ENV_EXAMPLE} not found", file=sys.stderr)
@@ -172,14 +204,38 @@ def write_env(keys: dict[str, str], force: bool) -> None:
 
     output = re.sub(r"<KEYGEN:(\w+)>", replacer, template)
 
+    # Auto-detect and set ROOT and PATH
+    detected = detect_paths()
+
+    # Replace ROOT placeholder
+    output = re.sub(
+        r"^ROOT=.*$",
+        f"ROOT={detected['ROOT']}",
+        output,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+    # Replace PATH line
+    output = re.sub(
+        r"^PATH=.*$",
+        f"PATH={detected['PATH']}",
+        output,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
     # Verify no unresolved placeholders remain
     remaining = re.findall(r"<KEYGEN:\w+>", output)
     if remaining:
         print(f"Warning: {len(remaining)} unresolved placeholders: {remaining}", file=sys.stderr)
 
     ENV_FILE.write_text(output)
-    print(f"Written to {ENV_FILE}")
-    print(f"Next: run ./scripts/sync-env.sh to propagate to sub-repos")
+    if not quiet:
+        print(f"Written to {ENV_FILE}")
+        print(f"  ROOT={detected['ROOT']}")
+        print(f"  PATH={detected['PATH']}")
+        print(f"Next: run ./scripts/sync-env.sh to propagate to sub-repos")
 
 
 def main() -> None:
@@ -190,6 +246,8 @@ def main() -> None:
                         help="Write generated keys to .env")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite .env without asking")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Suppress verbose output (for scripted use)")
     args = parser.parse_args()
 
     # Verify cast is available
@@ -201,10 +259,12 @@ def main() -> None:
         sys.exit(1)
 
     keys = generate_keys(args.mode)
-    print_keys(keys, args.mode)
+
+    if not args.quiet:
+        print_keys(keys, args.mode)
 
     if args.write_env:
-        write_env(keys, args.force)
+        write_env(keys, args.force, quiet=args.quiet)
 
 
 if __name__ == "__main__":

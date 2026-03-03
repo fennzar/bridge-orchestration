@@ -23,27 +23,27 @@ ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/
 
 # ── Docker Compose command ──────────────────
 
-COMPOSE_BASE="$ORCH_DIR/docker/compose.base.yml"
-COMPOSE_DEV="$ORCH_DIR/docker/compose.dev.yml"
-DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $COMPOSE_BASE -f $COMPOSE_DEV -f $ORCH_DIR/docker/compose.blockscout.yml"
+source "$SCRIPT_DIR/lib/compose.sh"
+DC_DEV=$(get_dc_dev "$ORCH_DIR" 2>/dev/null) || DC_DEV="docker compose -p bridge-orch"
 
 # ── Docker service definitions ──────────────
 # Format: container_name:display_name:port
 
 DOCKER_SERVICES=(
-    "zephyr-redis:redis:6380"
-    "zephyr-postgres:postgres:5432"
-    "zephyr-anvil:anvil:8545"
+    "orch-redis:redis:6380"
+    "orch-postgres:postgres:5432"
+    "orch-anvil:anvil:8545"
     "zephyr-node1:zephyr-node1:47767"
     "zephyr-node2:zephyr-node2:47867"
-    "zephyr-wallet-gov:wallet-gov:48769"
-    "zephyr-wallet-miner:wallet-miner:48767"
-    "zephyr-wallet-test:wallet-test:48768"
-    "zephyr-wallet-bridge:wallet-bridge:48770"
-    "zephyr-wallet-engine:wallet-engine:48771"
+    "wallet-gov:wallet-gov:48769"
+    "wallet-miner:wallet-miner:48767"
+    "wallet-test:wallet-test:48768"
+    "orch-wallet-bridge:wallet-bridge:48770"
+    "orch-wallet-engine:wallet-engine:48771"
+    "orch-wallet-cex:wallet-cex:48772"
     "zephyr-fake-oracle:fake-oracle:5555"
-    "zephyr-fake-orderbook:fake-orderbook:5556"
-    "zephyr-blockscout-proxy:blockscout:4000:optional"
+    "orch-fake-orderbook:fake-orderbook:5556"
+    "orch-blockscout-proxy:blockscout:4000:optional"
 )
 
 # ── Overmind process definitions ────────────
@@ -58,7 +58,15 @@ OVERMIND_PROCESSES=(
     "dashboard:7100"
 )
 
-OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
+# Auto-detect which overmind socket is active (dev or prod)
+# Prefer an active socket over the Makefile default.
+if [ -S "$ORCH_DIR/.overmind-prod.sock" ] && overmind status -s "$ORCH_DIR/.overmind-prod.sock" &>/dev/null; then
+    OVERMIND_SOCK="$ORCH_DIR/.overmind-prod.sock"
+elif [ -S "$ORCH_DIR/.overmind-dev.sock" ] && overmind status -s "$ORCH_DIR/.overmind-dev.sock" &>/dev/null; then
+    OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
+else
+    OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
+fi
 
 # ===========================================
 # Helper: check if Docker is available
@@ -243,9 +251,10 @@ print_persisted_state() {
 
     # Anvil snapshots
     local anvil_dir="$ORCH_DIR/snapshots/anvil"
-    if ls "$anvil_dir"/*.hex &>/dev/null 2>&1; then
+    if ls "$anvil_dir"/*.json "$anvil_dir"/*.hex &>/dev/null 2>&1; then
         local anvil_list=""
-        for f in "$anvil_dir"/*.hex; do
+        for f in "$anvil_dir"/*.json "$anvil_dir"/*.hex; do
+            [ -f "$f" ] || continue
             local name
             name=$(basename "$f")
             local size
@@ -344,6 +353,56 @@ print_docker_services() {
 }
 
 # ===========================================
+# Section 3b: Docker Log Warnings
+# ===========================================
+
+print_docker_warnings() {
+    if ! docker_available; then
+        return
+    fi
+
+    local found_issues=false
+    local warnings=""
+
+    for svc in "${DOCKER_SERVICES[@]}"; do
+        IFS=: read -r container display port flags <<< "$svc"
+
+        # Skip containers that aren't running
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+            continue
+        fi
+
+        # Sample last 50 lines and count error patterns
+        local log_sample
+        log_sample=$(docker logs --tail 50 "$container" 2>&1) || continue
+
+        local error_count=0
+        local sample_line=""
+        while IFS= read -r line; do
+            if echo "$line" | grep -qiE '(error|fatal|panic|ENOSPC|BlockOutOfRange|TransportError|no space left|OOM)'; then
+                error_count=$((error_count + 1))
+                if [ -z "$sample_line" ]; then
+                    sample_line="${line:0:100}"
+                fi
+            fi
+        done <<< "$log_sample"
+
+        if [ "$error_count" -gt 10 ]; then
+            if [ "$found_issues" = false ]; then
+                found_issues=true
+                warnings+="$(echo -e "${CYAN}━━━ Docker Log Warnings ━━━${NC}")\n"
+            fi
+            warnings+="$(warn "$(printf '%-18s' "$display") $error_count errors in last 50 lines")\n"
+            warnings+="$(dim "  ${sample_line}")\n"
+        fi
+    done
+
+    if [ "$found_issues" = true ]; then
+        echo -e "$warnings"
+    fi
+}
+
+# ===========================================
 # Section 4: Overmind Processes
 # ===========================================
 
@@ -436,6 +495,20 @@ print_chain_vitals() {
         echo -e "  Zephyr:  ${DIM}not responding${NC}"
     fi
 
+    # Mining status
+    local mining_response
+    mining_response=$(curl -sf -m 2 http://127.0.0.1:47767/mining_status 2>/dev/null) || true
+    if [ -n "${mining_response:-}" ]; then
+        local mining_active mining_threads
+        mining_active=$(echo "$mining_response" | jq -r '.active // false' 2>/dev/null)
+        mining_threads=$(echo "$mining_response" | jq -r '.threads_count // 0' 2>/dev/null)
+        if [ "$mining_active" = "true" ]; then
+            echo -e "  Mining:  ${YELLOW}${BOLD}active${NC} (${mining_threads} threads)"
+        else
+            echo -e "  Mining:  ${DIM}stopped${NC}"
+        fi
+    fi
+
     # Anvil block number
     local anvil_block
     anvil_block=$(curl -sf -m 2 http://127.0.0.1:8545 -X POST \
@@ -479,6 +552,7 @@ detect_stage
 print_stage
 print_persisted_state
 print_docker_services
+print_docker_warnings
 print_overmind_processes
 print_chain_vitals
 

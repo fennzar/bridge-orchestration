@@ -1,24 +1,107 @@
 # ===========================================
 # Testnet V3 Overrides (Sepolia)
 # ===========================================
-# Extends base with: app containers, Caddy TLS, profiles.
+# Extends Zephyr base with: app containers, Caddy TLS, profiles.
 # No Anvil (uses Sepolia RPC). No port exposure for internal services.
 #
-# Usage:
-#   docker compose -f docker/compose.base.yml -f docker/compose.testnet-v3.yml --profile full up -d
+# Usage (combined with Zephyr base + public + bridge + engine):
+#   docker compose -f $ZEPHYR_BASE -f $ZEPHYR_PUBLIC \
+#     -f docker/compose.bridge.yml -f docker/compose.engine.yml \
+#     -f docker/compose.testnet-v3.yml --profile full up -d
 #
 # Profiles:
 #   bridge  - Bridge services only
 #   engine  - Engine services only
 #   full    - Everything
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
+  # ===========================================
+  # CEX Wallet (testnet only)
+  # ===========================================
+  wallet-cex:
+    image: zephyr-devnet
+    container_name: orch-wallet-cex
+    environment:
+      ZEPHYR_MODE: wallet
+    command:
+      - "--devnet"
+      - "--rpc-bind-port=48772"
+      - "--rpc-bind-ip=0.0.0.0"
+      - "--confirm-external-bind"
+      - "--disable-rpc-login"
+      - "--wallet-dir=/wallets"
+      - "--daemon-address=zephyr-node1:47767"
+      - "--trusted-daemon"
+      - "--shared-ringdb-dir=/data/ringdb"
+      - "--log-level=1"
+    volumes:
+      - wallet-data:/wallets
+      - shared-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48772/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+    logging: *default-logging
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # Fake Orderbook (testnet only)
+  # ===========================================
+  fake-orderbook:
+    image: zephyr-fake-orderbook
+    container_name: orch-fake-orderbook
+    environment:
+      FAKE_ORDERBOOK_PORT: "5556"
+      FAKE_ORACLE_URL: "http://zephyr-node1:5555"
+    depends_on:
+      zephyr-fake-oracle:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5556/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # Oracle override: add wallet/node env vars
+  # ===========================================
+  zephyr-fake-oracle:
+    environment:
+      ORACLE_PORT: "5555"
+      GOV_WALLET_RPC: "http://wallet-gov:48769"
+      NODE_RPC: "http://127.0.0.1:47767"
+
+  # devnet-init override: add oracle dependency
+  devnet-init:
+    depends_on:
+      zephyr-fake-oracle:
+        condition: service_healthy
+
   # ===========================================
   # App Containers
   # ===========================================
   bridge-web:
     image: zephyr-bridge-web
-    container_name: zephyr-bridge-web
+    container_name: orch-bridge-web
     profiles: ["bridge", "full"]
     env_file: ../env/.env.testnet-v3
     environment:
@@ -28,12 +111,13 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
   bridge-api:
     image: zephyr-bridge-api
-    container_name: zephyr-bridge-api
+    container_name: orch-bridge-api
     profiles: ["bridge", "full"]
     env_file: ../env/.env.testnet-v3
     environment:
@@ -43,12 +127,13 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
   bridge-watchers:
     image: zephyr-bridge-watchers
-    container_name: zephyr-bridge-watchers
+    container_name: orch-bridge-watchers
     profiles: ["bridge", "full"]
     env_file: ../env/.env.testnet-v3
     depends_on:
@@ -58,12 +143,13 @@ services:
         condition: service_healthy
       zephyr-node1:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
   engine-web:
     image: zephyr-engine-web
-    container_name: zephyr-engine-web
+    container_name: orch-engine-web
     profiles: ["engine", "full"]
     env_file: ../env/.env.testnet-v3
     environment:
@@ -73,12 +159,13 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
   engine-watchers:
     image: zephyr-engine-watchers
-    container_name: zephyr-engine-watchers
+    container_name: orch-engine-watchers
     profiles: ["engine", "full"]
     env_file: ../env/.env.testnet-v3
     depends_on:
@@ -88,16 +175,18 @@ services:
         condition: service_healthy
       fake-orderbook:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
   dashboard:
     image: zephyr-dashboard
-    container_name: zephyr-dashboard
+    container_name: orch-dashboard
     profiles: ["full"]
     environment:
       PORT: "7100"
       ZEPHYR_CHAIN_MODE: "devnet"
+    logging: *default-logging
     networks:
       - zephyr-net
 
@@ -106,65 +195,25 @@ services:
   # ===========================================
   caddy:
     image: caddy:2-alpine
-    container_name: zephyr-caddy
+    container_name: orch-caddy
     profiles: ["bridge", "full"]
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./caddy/Caddyfile.testnet-v3:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    networks:
-      - zephyr-net
-
-  # ===========================================
-  # DEVNET Init (profile: init)
-  # ===========================================
-  # Uses zephyr-cli devnet init — creates gov/miner/test wallets only.
-  devnet-init:
-    image: zephyr-devnet-init
-    container_name: zephyr-devnet-init
-    profiles:
-      - init
-    environment:
-      ORACLE_PRICE: "2.0"
-      DEVNET_MODE: "${DEVNET_MODE:-custom}"
-      TARGET_RR: "7.0"
-      ZSD_MINT_LIMIT: "450000"
-      CHECKPOINT_FILE: "/checkpoint/height"
-      MINING_THREADS: "2"
-      # Docker hostname overrides (consumed by zephyr-cli config.py env var layer)
-      ZEPHYR_DAEMON_HOST: "zephyr-node1"
-      ZEPHYR_DAEMON_PORT: "47767"
-      ZEPHYR_ORACLE_HOST: "zephyr-node1"
-      ZEPHYR_ORACLE_PORT: "5555"
-      ZEPHYR_WALLET_GOV_HOST: "wallet-gov"
-      ZEPHYR_WALLET_GOV_PORT: "48769"
-      ZEPHYR_WALLET_MINER_HOST: "wallet-miner"
-      ZEPHYR_WALLET_MINER_PORT: "48767"
-      ZEPHYR_WALLET_TEST_HOST: "wallet-test"
-      ZEPHYR_WALLET_TEST_PORT: "48768"
-    volumes:
-      - zephyr-checkpoint:/checkpoint
-    depends_on:
-      zephyr-node1:
-        condition: service_healthy
-      zephyr-node2:
-        condition: service_healthy
-      fake-oracle:
-        condition: service_healthy
-      wallet-gov:
-        condition: service_healthy
-      wallet-miner:
-        condition: service_healthy
-      wallet-test:
-        condition: service_healthy
+      - ${ORCH_DIR}/caddy/Caddyfile.testnet-v3:/etc/caddy/Caddyfile:ro
+      - orch-caddy-data:/data
+      - orch-caddy-config:/config
+    logging: *default-logging
     networks:
       - zephyr-net
 
 volumes:
-  caddy-data:
-    name: bridge-v3-caddy-data
-  caddy-config:
-    name: bridge-v3-caddy-config
+  wallet-data:
+    name: zephyr-wallets
+  shared-data:
+    name: zephyr-shared
+  orch-caddy-data:
+    name: orch-v3-caddy-data
+  orch-caddy-config:
+    name: orch-v3-caddy-config

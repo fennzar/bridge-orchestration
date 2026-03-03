@@ -629,7 +629,6 @@ def main() -> None:
 
     mode = f"checking against ${fmt(args.price, 2)} spec" if args.price else "report only"
     print(f"\n{BOLD}Bridge Orchestration — Post-Setup Sanity Check{NC}")
-    print(f"{DIM}Spec: docs/plans/pool-seeding-targets.md  ({mode}){NC}")
 
     addresses = load_addresses()
     if not addresses:

@@ -1,0 +1,14 @@
+# Send almost nothing — Dockerfiles only COPY specific paths
+*
+
+# Allow only what Dockerfiles need
+!docker/zephyr/bin/
+!docker/zephyr/bin-mirror/
+!docker/zephyr/entrypoint.sh
+!docker/fake-oracle/
+!docker/fake-orderbook/
+!docker/devnet-init/
+!tools/
+!utils/python-rpc/
+!config/
+!scripts/

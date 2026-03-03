@@ -36,15 +36,6 @@ SHELL := /bin/bash
 # ===========================================
 # Configuration
 # ===========================================
-COMPOSE_BASE := docker/compose.base.yml
-COMPOSE_DEV  := docker/compose.dev.yml
-COMPOSE_V3   := docker/compose.testnet-v3.yml
-COMPOSE_PROD := docker/compose.prod.yml
-COMPOSE_BS   := docker/compose.blockscout.yml
-
-# Blockscout always in dev compose chain (profiled — won't start unless activated)
-DC_DEV := docker compose -p bridge --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV) -f $(COMPOSE_BS)
-DC_V3  := docker compose -p bridge-v3 --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_V3)
 
 # Paths (loaded from .env if available)
 # Save system PATH before .env overrides it
@@ -52,18 +43,82 @@ SYSTEM_PATH := $(PATH)
 -include .env
 # Restore PATH (the .env PATH uses $PATH which doesn't expand in Make)
 export PATH := $(SYSTEM_PATH)
+
 ORCH_DIR        := $(CURDIR)
 PROCFILE        ?= $(ORCH_DIR)/Procfile.dev
 OVERMIND_SOCK   ?= $(ORCH_DIR)/.overmind-dev.sock
-export PROCFILE OVERMIND_SOCK
+export PROCFILE OVERMIND_SOCK ORCH_DIR
 ZEPHYR_CLI      := $(or $(wildcard tools/zephyr-cli/cli),$(ZEPHYR_REPO_PATH)/tools/zephyr-cli/cli)
 
+# Zephyr base compose files (from Zephyr repo)
+ZEPHYR_BASE   := $(ZEPHYR_REPO_PATH)/docker/compose.yml
+ZEPHYR_PUBLIC := $(ZEPHYR_REPO_PATH)/docker/compose.public.yml
+
+# Bridge-orch compose files
+COMPOSE_BRIDGE := docker/compose.bridge.yml
+COMPOSE_ENGINE := docker/compose.engine.yml
+COMPOSE_DEV    := docker/compose.dev.yml
+COMPOSE_BS     := docker/compose.blockscout.yml
+COMPOSE_V2     := docker/compose.testnet-v2.yml
+COMPOSE_V3     := docker/compose.testnet-v3.yml
+COMPOSE_PROD   := docker/compose.prod.yml
+
+# Guard: verify Zephyr base exists (only warn when .env exists — fresh installs haven't run keygen yet)
+$(if $(wildcard .env),$(if $(wildcard $(ZEPHYR_BASE)),,$(warning Zephyr compose.yml not found at $(ZEPHYR_BASE). Check ZEPHYR_REPO_PATH in .env)))
+
+# Compose commands (Blockscout always in chain — profiled, won't start unless activated)
+DC_DEV := docker compose -p bridge-orch --env-file .env \
+  -f $(ZEPHYR_BASE) -f $(COMPOSE_BRIDGE) -f $(COMPOSE_ENGINE) \
+  -f $(COMPOSE_DEV) -f $(COMPOSE_BS)
+
+DC_V2 := docker compose -p bridge-orch --env-file .env \
+  -f $(ZEPHYR_BASE) -f $(ZEPHYR_PUBLIC) -f $(COMPOSE_BRIDGE) -f $(COMPOSE_ENGINE) \
+  -f $(COMPOSE_V2) -f $(COMPOSE_BS)
+
+DC_V3 := docker compose -p bridge-v3 --env-file .env \
+  -f $(ZEPHYR_BASE) -f $(ZEPHYR_PUBLIC) -f $(COMPOSE_BRIDGE) -f $(COMPOSE_ENGINE) \
+  -f $(COMPOSE_V3)
 
 # ===========================================
 # Build
 # ===========================================
 
-.PHONY: keygen build build-zephyr build-oracle build-orderbook build-init sync-zephyr docs-dashboard docs-dashboard-check
+.PHONY: setup reset keygen build build-zephyr build-oracle build-orderbook build-init sync-zephyr docs-dashboard docs-dashboard-check
+
+## One-time setup: check prereqs, clone repos, install deps
+setup:
+	./scripts/setup.sh
+
+## Full reset: dev-delete + remove cloned repos (interactive)
+reset:
+	@$(MAKE) dev-delete
+	@PARENT="$(dir $(ORCH_DIR))"; \
+	REPOS=""; \
+	for dir in zephyr zephyr-bridge zephyr-bridge-engine zephyr-eth-foundry; do \
+		if [ -d "$$PARENT/$$dir" ]; then \
+			REPOS="$$REPOS  $$PARENT/$$dir\n"; \
+		fi; \
+	done; \
+	if [ -z "$$REPOS" ]; then \
+		echo "No sibling repos found to remove."; \
+	else \
+		echo ""; \
+		echo "The following repos will be permanently deleted:"; \
+		echo -e "$$REPOS"; \
+		printf "Continue? [y/N] "; \
+		read -r ans; \
+		case "$$ans" in \
+			[yY]) \
+				for dir in zephyr zephyr-bridge zephyr-bridge-engine zephyr-eth-foundry; do \
+					if [ -d "$$PARENT/$$dir" ]; then \
+						echo "  Removing $$PARENT/$$dir..."; \
+						rm -rf "$$PARENT/$$dir"; \
+					fi; \
+				done; \
+				echo "=== Reset complete ===" ;; \
+			*) echo "Aborted." ;; \
+		esac; \
+	fi
 
 ## Generate fresh keys and write to .env
 keygen:
@@ -156,10 +211,6 @@ dev-start:
 		echo "Cleaning stale Overmind socket..."; \
 		rm -f $(OVERMIND_SOCK); \
 	fi
-	@# Ensure shared zephyr volumes exist (external: true in compose)
-	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
-		docker volume create $$v >/dev/null 2>&1 || true; \
-	done
 	@# Start infrastructure (Blockscout on by default, EXPLORER=0 to skip)
 	@echo "=== Starting Docker infrastructure ==="
 	@if [ "$(EXPLORER)" = "0" ]; then \
@@ -167,29 +218,10 @@ dev-start:
 	else \
 		$(DC_DEV) --profile explorer up -d; \
 	fi
-	@# Restore Anvil from post-setup snapshot (Anvil --state doesn't persist reliably)
-	@SNAPSHOT="$(ORCH_DIR)/snapshots/anvil/post-setup.hex"; \
-	if [ -f "$$SNAPSHOT" ]; then \
-		for i in $$(seq 1 20); do cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break; sleep 0.5; done; \
-		TMPFILE=$$(mktemp); \
-		printf '{"jsonrpc":"2.0","id":1,"method":"anvil_loadState","params":[' > "$$TMPFILE"; \
-		cat "$$SNAPSHOT" >> "$$TMPFILE"; \
-		printf ']}' >> "$$TMPFILE"; \
-		curl -sf http://127.0.0.1:8545 -H 'Content-Type: application/json' -d @"$$TMPFILE" >/dev/null 2>&1 || true; \
-		rm -f "$$TMPFILE"; \
-	fi
+	@# Anvil loads state via --load-state CLI (entrypoint wrapper checks for snapshot file)
 	@# Open wallets (wallet RPCs don't auto-load after container restart)
 	@./scripts/open-wallets.sh
-	@# Wait for node1 to synchronize before starting mining
-	@for i in $$(seq 1 30); do \
-		curl -sf http://127.0.0.1:47767/json_rpc \
-			-d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' 2>/dev/null | \
-			python3 -c "import sys,json; assert json.load(sys.stdin)['result']['synchronized']" 2>/dev/null && break; \
-		sleep 1; \
-	done
-	@# Start mining — uses node2 fallback if node1 is unsynchronized after pop_blocks
-	@./scripts/mine-via-node2.sh 2>/dev/null || \
-		$(ZEPHYR_CLI) mine start --threads 2 2>/dev/null || true
+	@# Mining is NOT auto-started. Use: $(ZEPHYR_CLI) mine start --threads 2
 	@# Push database schemas (idempotent — applies any pending migrations)
 	@cd $(BRIDGE_REPO_PATH)/packages/db && DATABASE_URL=$(DATABASE_URL_BRIDGE) npx prisma db push 2>&1 | tail -1
 	@cd $(ENGINE_REPO_PATH) && DATABASE_URL=$(DATABASE_URL_ENGINE) pnpm prisma db push --schema=src/infra/prisma/schema.prisma --skip-generate 2>&1 | tail -1
@@ -228,21 +260,51 @@ dev-init:
 	@$(DC_DEV) --profile explorer down -v 2>/dev/null || true
 	@# Also remove any orphaned volumes (handles project-name mismatches)
 	@docker volume ls -q --filter name=zephyr- | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=orch- | xargs -r docker volume rm 2>/dev/null || true
+	@# Legacy volumes (pre-migration prefixes)
 	@docker volume ls -q --filter name=bridge-redis | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-postgres | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-anvil | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-blockscout | xargs -r docker volume rm 2>/dev/null || true
-	@# Legacy volumes (pre-migration docker_ prefix)
 	@docker volume ls -q --filter name=docker_ | xargs -r docker volume rm 2>/dev/null || true
-	@# 3. Remove stale addresses (setup not done yet)
+	@# 3. Preflight: check for leftover containers and port conflicts
+	@CONFLICTS=""; STALE_IDS=""; \
+	for cname in $$($(DC_DEV) --profile explorer config 2>/dev/null | grep 'container_name:' | awk '{print $$2}'); do \
+		cid=$$(docker ps -aq --filter "name=^/$${cname}$$" 2>/dev/null | head -1); \
+		if [ -n "$$cid" ]; then \
+			CONFLICTS="$$CONFLICTS  container $$cname ($$cid)\n"; \
+			STALE_IDS="$$STALE_IDS $$cid"; \
+		fi; \
+	done; \
+	for port in $$($(DC_DEV) --profile explorer config 2>/dev/null | grep 'published:' | sed 's/.*published: *"\?\([0-9]*\)"\?.*/\1/' | sort -n | uniq); do \
+		owner=$$(docker ps --format '{{.ID}} {{.Names}}' --filter "publish=$$port" 2>/dev/null | head -1); \
+		if [ -n "$$owner" ]; then \
+			oid=$$(echo "$$owner" | awk '{print $$1}'); \
+			oname=$$(echo "$$owner" | awk '{print $$2}'); \
+			CONFLICTS="$$CONFLICTS  port $$port ← container $$oname ($$oid)\n"; \
+			echo "$$STALE_IDS" | grep -q "$$oid" || STALE_IDS="$$STALE_IDS $$oid"; \
+		elif ss -tlnH 2>/dev/null | awk '{print $$4}' | grep -q ":$$port$$"; then \
+			pid=$$(ss -tlnpH 2>/dev/null | grep ":$$port " | head -1 | sed 's/.*pid=\([0-9]*\).*/\1/'); \
+			pname=$$(ps -p "$$pid" -o comm= 2>/dev/null); \
+			CONFLICTS="$$CONFLICTS  port $$port ← process $${pname:-pid $$pid}\n"; \
+		fi; \
+	done; \
+	if [ -n "$$CONFLICTS" ]; then \
+		echo ""; \
+		echo "ERROR: Conflicts remain after teardown:"; \
+		echo -e "$$CONFLICTS"; \
+		if [ -n "$$STALE_IDS" ]; then \
+			echo "Fix: docker rm -f$$STALE_IDS && make dev-init"; \
+		else \
+			echo "Fix: stop the process(es) above, then re-run make dev-init"; \
+		fi; \
+		exit 1; \
+	fi
+	@# 4. Remove stale addresses (setup not done yet)
 	@rm -f config/addresses.json deployed-addresses.json
 	@# 4. Rebuild images (pass DEVNET_MODE for mirror binary selection)
 	@$(MAKE) build DEVNET_MODE=$(or $(DEVNET_MODE),custom)
-	@# 5. Pre-create shared zephyr volumes (external: true in compose)
-	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
-		docker volume create $$v >/dev/null 2>&1 || true; \
-	done
-	@# 6. Start infrastructure
+	@# 5. Start infrastructure
 	@echo ""
 	@echo "=== Starting Docker infrastructure ==="
 	@$(DC_DEV) up -d
@@ -290,9 +352,6 @@ dev-setup:
 ## Start Docker infrastructure only
 dev-infra:
 	@echo "=== Starting Docker infrastructure ==="
-	@for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do \
-		docker volume create $$v >/dev/null 2>&1 || true; \
-	done
 	$(DC_DEV) up -d
 
 ## Start native apps via Overmind (usage: make dev-apps APPS=bridge)
@@ -361,11 +420,12 @@ dev-delete:
 	@docker rm zephyr-devnet-init 2>/dev/null || true
 	@# Remove orphaned volumes (handles project-name mismatches)
 	@docker volume ls -q --filter name=zephyr- | xargs -r docker volume rm 2>/dev/null || true
+	@docker volume ls -q --filter name=orch- | xargs -r docker volume rm 2>/dev/null || true
+	@# Legacy volumes (pre-migration prefixes)
 	@docker volume ls -q --filter name=bridge-redis | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-postgres | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-anvil | xargs -r docker volume rm 2>/dev/null || true
 	@docker volume ls -q --filter name=bridge-blockscout | xargs -r docker volume rm 2>/dev/null || true
-	@# Legacy volumes (pre-migration docker_ prefix)
 	@docker volume ls -q --filter name=docker_ | xargs -r docker volume rm 2>/dev/null || true
 	@# Remove local state files
 	@rm -f config/addresses.json deployed-addresses.json
@@ -603,12 +663,14 @@ PROD_SOCK     := $(ORCH_DIR)/.overmind-prod.sock
 
 ## Build all apps for production (pnpm build)
 testnet-v2-build:
+	@echo "=== Syncing env files ==="
+	./scripts/sync-env.sh
 	@echo "=== Building bridge ==="
-	cd $(BRIDGE_REPO_PATH) && pnpm build
+	source scripts/lib/env.sh && load_env .env && load_env "$(BRIDGE_REPO_PATH)/.env.local" && cd "$(BRIDGE_REPO_PATH)" && pnpm build
 	@echo "=== Building engine ==="
-	cd $(ENGINE_REPO_PATH) && pnpm build
+	source scripts/lib/env.sh && load_env .env && cd "$(ENGINE_REPO_PATH)" && pnpm build:web
 	@echo "=== Building dashboard ==="
-	cd $(ORCH_DIR)/status-dashboard && pnpm build
+	source scripts/lib/env.sh && load_env .env && cd "$(ORCH_DIR)/status-dashboard" && pnpm build
 
 ## Init base Zephyr devnet (same as dev-init)
 testnet-v2-init:
@@ -693,6 +755,11 @@ testnet-v3-logs:
 ## Show this help
 help:
 	@echo "Zephyr Bridge Stack"
+	@echo ""
+	@echo "First-time setup:"
+	@echo "  make setup                      Check prereqs, clone repos, install deps"
+	@echo "  make keygen                     Generate fresh EVM keys → .env"
+	@echo "  make reset                      Full reset: dev-delete + remove cloned repos"
 	@echo ""
 	@echo "Dev workflow (staged setup):"
 	@echo "  make dev-init                   Base Zephyr devnet, then stop (~4 min)"

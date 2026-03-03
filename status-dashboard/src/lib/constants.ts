@@ -2,20 +2,22 @@ import * as path from "path";
 import type { EvmEnv } from "./types";
 
 // Docker services (infrastructure layer — Docker Compose)
+// Zephyr base services use Zephyr container names; bridge-orch services use orch-* prefix.
 export const DOCKER_SERVICES = [
   { name: "zephyr-node1", container: "zephyr-node1", port: 47767, type: "daemon" as const },
   { name: "zephyr-node2", container: "zephyr-node2", port: 47867, type: "daemon" as const },
-  { name: "wallet-gov", container: "zephyr-wallet-gov", port: 48769, type: "wallet" as const },
-  { name: "wallet-miner", container: "zephyr-wallet-miner", port: 48767, type: "wallet" as const },
-  { name: "wallet-test", container: "zephyr-wallet-test", port: 48768, type: "wallet" as const },
-  { name: "wallet-bridge", container: "zephyr-wallet-bridge", port: 48770, type: "wallet" as const },
-  { name: "wallet-engine", container: "zephyr-wallet-engine", port: 48771, type: "wallet" as const },
+  { name: "wallet-gov", container: "wallet-gov", port: 48769, type: "wallet" as const },
+  { name: "wallet-miner", container: "wallet-miner", port: 48767, type: "wallet" as const },
+  { name: "wallet-test", container: "wallet-test", port: 48768, type: "wallet" as const },
+  { name: "wallet-bridge", container: "orch-wallet-bridge", port: 48770, type: "wallet" as const },
+  { name: "wallet-engine", container: "orch-wallet-engine", port: 48771, type: "wallet" as const },
+  { name: "wallet-cex", container: "orch-wallet-cex", port: 48772, type: "wallet" as const },
   { name: "fake-oracle", container: "zephyr-fake-oracle", port: 5555, type: "oracle" as const },
-  { name: "fake-orderbook", container: "zephyr-fake-orderbook", port: 5556, type: "orderbook" as const },
-  { name: "redis", container: "zephyr-redis", port: 6380, type: "infra" as const },
-  { name: "postgres", container: "zephyr-postgres", port: 5432, type: "infra" as const },
-  { name: "anvil", container: "zephyr-anvil", port: 8545, type: "evm" as const },
-  { name: "blockscout", container: "zephyr-blockscout-proxy", port: 4000, type: "explorer" as const, optional: true },
+  { name: "fake-orderbook", container: "orch-fake-orderbook", port: 5556, type: "orderbook" as const },
+  { name: "redis", container: "orch-redis", port: 6380, type: "infra" as const },
+  { name: "postgres", container: "orch-postgres", port: 5432, type: "infra" as const },
+  { name: "anvil", container: "orch-anvil", port: 8545, type: "evm" as const },
+  { name: "blockscout", container: "orch-blockscout-proxy", port: 4000, type: "explorer" as const, optional: true },
 ] as const;
 
 export type DockerServiceType = (typeof DOCKER_SERVICES)[number]["type"];
@@ -34,8 +36,9 @@ export type AppGroup = "bridge" | "engine" | "dashboard";
 
 // Paths
 export const ORCH_DIR = process.env.ORCHESTRATION_PATH || path.resolve(process.cwd(), "..");
-export const OVERMIND_SOCKET = path.join(ORCH_DIR, ".overmind-dev.sock");
-export const DC_CMD = `docker compose -p bridge --env-file ${ORCH_DIR}/.env -f ${ORCH_DIR}/docker/compose.base.yml -f ${ORCH_DIR}/docker/compose.dev.yml -f ${ORCH_DIR}/docker/compose.blockscout.yml`;
+export const OVERMIND_SOCKET = process.env.OVERMIND_SOCK || path.join(ORCH_DIR, ".overmind-dev.sock");
+const ZEPHYR_BASE = path.join(process.env.ZEPHYR_REPO_PATH || path.resolve(ORCH_DIR, "../zephyr"), "docker/compose.yml");
+export const DC_CMD = `docker compose -p bridge-orch --env-file ${ORCH_DIR}/.env -f ${ZEPHYR_BASE} -f ${ORCH_DIR}/docker/compose.bridge.yml -f ${ORCH_DIR}/docker/compose.engine.yml -f ${ORCH_DIR}/docker/compose.dev.yml -f ${ORCH_DIR}/docker/compose.blockscout.yml`;
 
 // RPC ports for direct access
 export const DAEMON_PRIMARY_PORT = 47767;
@@ -45,6 +48,7 @@ export const WALLET_MINER_PORT = 48767;
 export const WALLET_TEST_PORT = 48768;
 export const WALLET_BRIDGE_PORT = 48770;
 export const WALLET_ENGINE_PORT = 48771;
+export const WALLET_CEX_PORT = 48772;
 
 export const WALLET_PORTS: Record<string, number> = {
   gov: WALLET_GOV_PORT,
@@ -52,6 +56,7 @@ export const WALLET_PORTS: Record<string, number> = {
   test: WALLET_TEST_PORT,
   bridge: WALLET_BRIDGE_PORT,
   engine: WALLET_ENGINE_PORT,
+  cex: WALLET_CEX_PORT,
 };
 export const ORACLE_PORT = 5555;
 export const ORDERBOOK_PORT = 5556;

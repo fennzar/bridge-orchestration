@@ -1,0 +1,119 @@
+# ===========================================
+# Bridge Services Overlay
+# ===========================================
+# Adds bridge-specific services on top of Zephyr base:
+#   - wallet-bridge (Zephyr wallet for bridge operator)
+#   - Redis (state cache)
+#   - Postgres (bridge + engine databases)
+#   - wallet-gov checkpoint volume mount (override)
+#
+# Usage (always combined with Zephyr base):
+#   docker compose -f $ZEPHYR_BASE -f docker/compose.bridge.yml up -d
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ===========================================
+  # wallet-gov override — add checkpoint volume
+  # ===========================================
+  wallet-gov:
+    volumes:
+      - checkpoint:/checkpoint
+
+  # ===========================================
+  # Bridge Wallet
+  # ===========================================
+  wallet-bridge:
+    image: zephyr-devnet
+    container_name: orch-wallet-bridge
+    environment:
+      ZEPHYR_MODE: wallet
+    command:
+      - "--devnet"
+      - "--rpc-bind-port=48770"
+      - "--rpc-bind-ip=0.0.0.0"
+      - "--confirm-external-bind"
+      - "--disable-rpc-login"
+      - "--wallet-dir=/wallets"
+      - "--daemon-address=zephyr-node1:47767"
+      - "--trusted-daemon"
+      - "--shared-ringdb-dir=/data/ringdb"
+      - "--log-level=1"
+    volumes:
+      - wallet-data:/wallets
+      - shared-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48770/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+    logging: *default-logging
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # Redis
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: orch-redis
+    volumes:
+      - orch-redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+  # ===========================================
+  # PostgreSQL
+  # ===========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: orch-postgres
+    environment:
+      POSTGRES_USER: zephyr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: zephyr
+    volumes:
+      - orch-postgres-data:/var/lib/postgresql/data
+      - ${ORCH_DIR}/config/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zephyr"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+volumes:
+  # Reference Zephyr base volume aliases
+  wallet-data:
+    name: zephyr-wallets
+  shared-data:
+    name: zephyr-shared
+  checkpoint:
+    name: zephyr-checkpoint
+  # Bridge-orch own volumes
+  orch-redis-data:
+    name: orch-redis-data
+  orch-postgres-data:
+    name: orch-postgres-data

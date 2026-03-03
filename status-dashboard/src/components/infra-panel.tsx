@@ -28,6 +28,7 @@ import {
   ChevronRight,
   RefreshCw,
   CheckCircle2,
+  AlertTriangle,
   XCircle,
   Loader2,
 } from "lucide-react";
@@ -122,61 +123,96 @@ function ContainerCard({ container }: { container: ContainerStatus }) {
   };
 
   const isRunning = container.status === "running";
+  const hasErrors = isRunning && container.errors && container.errors.length > 0;
 
   return (
     <Collapsible open={isOpen} onOpenChange={handleOpenChange}>
       <div
         className={`border rounded-lg bg-card ${
-          isRunning ? "border-green-600/30 bg-green-500/5" : ""
+          hasErrors
+            ? "border-amber-500/30 bg-amber-500/5"
+            : isRunning
+              ? "border-green-600/30 bg-green-500/5"
+              : ""
         }`}
       >
         <CollapsibleTrigger asChild>
-          <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50 transition-colors">
-            <div className="flex items-center gap-3">
-              {containerIcon(container.type)}
-              <div>
-                <div className="font-mono font-medium text-sm">
-                  {container.name}
-                </div>
-                <div className="flex items-center gap-2">
-                  {container.port > 0 && (
-                    <span className="text-xs text-muted-foreground font-mono">
-                      :{container.port}
-                    </span>
-                  )}
-                  {containerMetric(container)}
+          <div className="flex flex-col p-3 cursor-pointer hover:bg-muted/50 transition-colors">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {containerIcon(container.type)}
+                <div>
+                  <div className="font-mono font-medium text-sm">
+                    {container.name}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {container.port > 0 && (
+                      <span className="text-xs text-muted-foreground font-mono">
+                        :{container.port}
+                      </span>
+                    )}
+                    {containerMetric(container)}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {container.mining?.active && (
-                <Badge
-                  variant="default"
-                  className="bg-amber-500 hover:bg-amber-600"
-                >
-                  <Pickaxe className="h-3 w-3 mr-1" />
-                  Mining
-                </Badge>
-              )}
-              <Badge
-                variant={isRunning ? "default" : "destructive"}
-                className={
-                  isRunning ? "bg-green-600 hover:bg-green-700" : ""
-                }
-              >
-                {isRunning ? (
-                  <CheckCircle2 className="h-3 w-3 mr-1" />
-                ) : (
-                  <XCircle className="h-3 w-3 mr-1" />
+              <div className="flex items-center gap-2">
+                {container.mining?.active && (
+                  <Badge
+                    variant="default"
+                    className="bg-amber-500 hover:bg-amber-600"
+                  >
+                    <Pickaxe className="h-3 w-3 mr-1" />
+                    Mining
+                  </Badge>
                 )}
-                {container.status}
-              </Badge>
-              {isOpen ? (
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              )}
+                {hasErrors && (
+                  <Badge
+                    variant="default"
+                    className="bg-amber-500 hover:bg-amber-600"
+                  >
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    errors
+                  </Badge>
+                )}
+                <Badge
+                  variant={isRunning ? "default" : "destructive"}
+                  className={
+                    isRunning && !hasErrors
+                      ? "bg-green-600 hover:bg-green-700"
+                      : isRunning && hasErrors
+                        ? "bg-amber-500 hover:bg-amber-600"
+                        : ""
+                  }
+                >
+                  {isRunning && !hasErrors ? (
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                  ) : isRunning && hasErrors ? (
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                  ) : (
+                    <XCircle className="h-3 w-3 mr-1" />
+                  )}
+                  {container.status}
+                </Badge>
+                {isOpen ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+              </div>
             </div>
+            {/* Error summary when collapsed */}
+            {hasErrors && !isOpen && (
+              <div className="mt-2 pl-7 space-y-1">
+                {container.errors!.slice(0, 2).map((err, i) => (
+                  <div
+                    key={i}
+                    className="text-xs text-amber-600 dark:text-amber-400 font-mono truncate max-w-full"
+                  >
+                    {err}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </CollapsibleTrigger>
 

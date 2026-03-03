@@ -9,8 +9,7 @@ Uses a separate Procfile (`Procfile.prod`) and Overmind socket (`.overmind-prod.
 ## Quick Start
 
 ```bash
-# 1. First time setup (same as dev)
-make keygen
+# 1. First time setup (same as dev — make setup includes keygen)
 make testnet-v2-init                 # Base Zephyr devnet (~4 min)
 make testnet-v2-setup                # Bridge infra + contracts + seed (~4 min)
 
@@ -62,7 +61,7 @@ make testnet-v2-logs SERVICE=x       # Tail logs
 
 ```bash
 # First time:
-make keygen && make testnet-v2-init && make testnet-v2-setup
+make testnet-v2-init && make testnet-v2-setup
 make testnet-v2-build && make testnet-v2
 
 # Between tests:

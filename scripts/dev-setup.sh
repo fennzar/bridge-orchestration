@@ -18,9 +18,10 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 # Load shared libraries
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/compose.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
-DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml -f $ORCH_DIR/docker/compose.blockscout.yml"
+DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
 PROCFILE="${PROCFILE:-$ORCH_DIR/Procfile.dev}"
 ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
@@ -78,10 +79,6 @@ echo ""
 # Step 2: Start infrastructure
 # ===========================================
 log_info "Starting Docker infrastructure..."
-# Ensure shared zephyr volumes exist (external: true in compose)
-for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do
-    docker volume create "$v" >/dev/null 2>&1 || true
-done
 $DC_DEV up -d
 echo ""
 
@@ -108,7 +105,7 @@ done
 
 log_info "Pushing database schemas (force-reset for clean state)..."
 cd "$BRIDGE_REPO_PATH/packages/db" && PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="yes" DATABASE_URL="$DATABASE_URL_BRIDGE" npx prisma db push --force-reset 2>&1 | tail -1
-cd "$ENGINE_REPO_PATH" && PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="yes" DATABASE_URL="$DATABASE_URL_ENGINE" pnpm prisma db push --schema=src/infra/prisma/schema.prisma --force-reset --skip-generate 2>&1 | tail -1
+cd "$ENGINE_REPO_PATH" && PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="yes" DATABASE_URL="$DATABASE_URL_ENGINE" pnpm prisma db push --schema=src/infra/prisma/schema.prisma --force-reset 2>&1 | tail -1
 cd "$ORCH_DIR"
 # Flush Redis for clean state
 redis-cli -p "${REDIS_PORT:-6380}" -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 || \
@@ -177,8 +174,9 @@ echo ""
 # Step 8: Reset Anvil + deploy contracts
 # ===========================================
 log_info "Resetting Anvil for fresh deploy..."
-$DC_DEV exec -T anvil rm -f /data/anvil-state.json 2>/dev/null || true
-$DC_DEV restart anvil
+$DC_DEV stop anvil
+rm -f "$ORCH_DIR/snapshots/anvil/state.json"
+$DC_DEV start anvil
 log_info "Waiting for Anvil..."
 for i in $(seq 1 20); do
     cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break
@@ -200,8 +198,10 @@ if [ -S "$OVERMIND_SOCK" ] && ! overmind status -s "$OVERMIND_SOCK" >/dev/null 2
     rm -f "$OVERMIND_SOCK"
 fi
 "$SCRIPT_DIR/sync-env.sh"
+# Always use dev Procfile for setup — prod builds don't exist yet
+SETUP_PROCFILE="$ORCH_DIR/Procfile.dev"
 FORM="bridge-web=1,bridge-api=1,bridge-watchers=1,engine-web=1,engine-watchers=1,dashboard=0"
-cd "$ORCH_DIR" && OVERMIND_FORMATION="$FORM" overmind start -D -f "$PROCFILE" -s "$OVERMIND_SOCK"
+cd "$ORCH_DIR" && OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK"
 log_success "Apps started"
 
 log_info "Waiting for bridge-api health..."
@@ -248,31 +248,32 @@ log_success "Checkpoint updated: $CHECKPOINT -> $NEW_HEIGHT"
 echo ""
 
 # ===========================================
-# Step 12: Save Anvil snapshot
-# ===========================================
-log_info "Saving Anvil EVM snapshot..."
-# Use anvil_dumpState RPC to capture full EVM state (contracts, balances, pools).
-# State is saved as a JSON-quoted string (e.g. "0x1f8b...") so it can be directly
-# spliced into anvil_loadState JSON payloads by both dev-reset.sh and the Makefile.
-mkdir -p "$ORCH_DIR/snapshots/anvil"
-curl -sf -X POST http://127.0.0.1:8545 \
-    -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","id":1,"method":"anvil_dumpState","params":[]}' \
-    | python3 -c "import sys,json; r=json.load(sys.stdin).get('result'); print(json.dumps(r)) if r else sys.exit(1)" \
-    > "$ORCH_DIR/snapshots/anvil/post-setup.hex" 2>/dev/null
-if [ -s "$ORCH_DIR/snapshots/anvil/post-setup.hex" ]; then
-    log_success "Anvil snapshot saved ($(du -h "$ORCH_DIR/snapshots/anvil/post-setup.hex" | cut -f1))"
-else
-    rm -f "$ORCH_DIR/snapshots/anvil/post-setup.hex"
-    log_warn "Failed to dump Anvil state — dev-reset will start Anvil fresh"
-fi
-echo ""
-
-# ===========================================
-# Step 13: Sanity check
+# Step 12: Sanity check (while services are still running)
 # ===========================================
 log_info "Running post-setup sanity check..."
 python3 "$SCRIPT_DIR/sanity-check-post-setup-state.py" --price "$SETUP_PRICE"
+echo ""
+
+# ===========================================
+# Step 13: Save Anvil snapshot
+# ===========================================
+log_info "Saving Anvil EVM snapshot..."
+# Anvil uses --state (bidirectional) + --preserve-historical-states, so a graceful
+# stop writes the full state (including per-block history) to state.json.
+# We copy that as the checkpoint for dev-reset.
+mkdir -p "$ORCH_DIR/snapshots/anvil"
+$DC_DEV stop anvil
+sleep 2
+if [ -s "$ORCH_DIR/snapshots/anvil/state.json" ]; then
+    /usr/bin/cp "$ORCH_DIR/snapshots/anvil/state.json" "$ORCH_DIR/snapshots/anvil/post-setup.json"
+    log_success "Anvil snapshot saved ($(du -h "$ORCH_DIR/snapshots/anvil/post-setup.json" | cut -f1))"
+else
+    log_warn "Anvil state.json not found after stop — dev-reset will start Anvil fresh"
+fi
+# Clean up legacy snapshots
+rm -f "$ORCH_DIR/snapshots/anvil/post-setup.hex"
+rm -f "$ORCH_DIR/snapshots/anvil/post-deploy.hex"
+rm -f "$ORCH_DIR/snapshots/anvil/post-seed.hex"
 echo ""
 
 # ===========================================

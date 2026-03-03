@@ -9,6 +9,7 @@ export interface ContainerStatus {
   port: number;
   type: string;
   health?: string;
+  errors?: string[];
   // Per-service metrics (populated for specific types)
   height?: number;
   mining?: { active: boolean; threads?: number; speed?: number };

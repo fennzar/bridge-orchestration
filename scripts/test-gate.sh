@@ -157,6 +157,18 @@ case "$TIER" in
             fi
         fi
 
+        # Wait for apps to be healthy before declaring ready
+        log_info "Waiting for apps to be healthy..."
+        for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:7051/health >/dev/null 2>&1 && \
+               curl -sf http://127.0.0.1:7000/ >/dev/null 2>&1; then
+                log_success "Apps healthy"
+                break
+            fi
+            [ "$i" -eq 60 ] && { log_error "Apps not healthy after 60s"; exit 1; }
+            sleep 2
+        done
+
         log_success "Test gate ready (tier=$TIER)"
         ;;
 

@@ -692,6 +692,12 @@ testnet-v2-build:
 	source scripts/lib/env.sh && load_env .env && cd "$(ENGINE_REPO_PATH)" && pnpm build:web
 	@echo "=== Building dashboard ==="
 	source scripts/lib/env.sh && load_env .env && cd "$(ORCH_DIR)/status-dashboard" && pnpm build
+	@# Verify production builds exist (catch silent failures from e.g. disk full)
+	@echo "=== Verifying builds ==="
+	@test -f "$(BRIDGE_REPO_PATH)/apps/web/.next/BUILD_ID" || { echo "ERROR: bridge-web .next build missing (next build may have failed)"; exit 1; }
+	@test -f "$(ENGINE_REPO_PATH)/apps/web/.next/BUILD_ID" || { echo "ERROR: engine-web .next build missing (next build may have failed)"; exit 1; }
+	@test -d "$(ORCH_DIR)/status-dashboard/.next" || { echo "ERROR: dashboard .next build missing"; exit 1; }
+	@echo "=== All builds verified ==="
 
 ## Init base Zephyr devnet (same as dev-init)
 testnet-v2-init:

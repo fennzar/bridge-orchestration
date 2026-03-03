@@ -141,10 +141,11 @@ RR_MODE_PRICES_FALLBACK = {
     "high-rr":   3.00,
 }
 
-# Larger swap amounts for execution tests — need >100bps to trigger auto-execute.
+# Larger swap amounts for execution tests — need sufficient gap to exceed
+# profitability threshold (fees ~190bps for ZEPH).
 # Separate from POOL_SWAP_OVERRIDES to avoid changing calibration for detection/gate tests.
 EXEC_SWAP_AMOUNTS: dict[tuple[str, str], int] = {
-    ("wZEPH-wZSD", "premium"):  25_000_000_000_000_000,  # 25K wZSD for >100bps
+    ("wZEPH-wZSD", "premium"):  45_000_000_000_000_000,  # 45K wZSD for >200bps (fees ~190bps)
     ("wZEPH-wZSD", "discount"): 15_000_000_000_000_000,  # 15K wZEPH
     ("wZRS-wZEPH", "premium"):  13_000_000_000_000_000,  # 13K wZEPH
     ("wZRS-wZEPH", "discount"):  8_000_000_000_000_000,  # 8K wZRS

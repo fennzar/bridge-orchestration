@@ -136,22 +136,16 @@ Restores Zephyr LMDB from init snapshots, wipes Anvil + addresses. Ready for `ma
 
 Stops everything and deletes all containers, volumes, and Docker images. Clean slate — run `make dev-init` to start over.
 
-## Sync Zephyr Artifacts
+## Zephyr Artifacts
 
-Handled automatically by `make setup`. To re-run manually (e.g. after Zephyr repo updates):
+Zephyr Docker images (daemon, oracle, devnet-init) build automatically from the Zephyr repo via Docker Compose on `make dev-init`. No vendored copies are needed in bridge-orch.
 
+Binaries must be pre-built in `$ZEPHYR_REPO_PATH`:
 ```bash
-# Requires ../zephyr or ZEPHYR_REPO_PATH in .env
-./scripts/sync-zephyr-artifacts.sh
+cd ../zephyr && tools/fresh-devnet/run.sh build
 ```
 
-Copies into this repo:
-- **Devnet binaries** (`zephyrd`, `zephyr-wallet-rpc`) -> `docker/zephyr/bin/`
-- **Fake oracle files** (`server.js`, PEM keys) -> `docker/fake-oracle/`
-- **Fresh-devnet tooling** -> `tools/fresh-devnet/`
-- **Zephyr CLI** -> `tools/zephyr-cli/`
-
-Binaries (~34MB each) are gitignored. Use `--force` to overwrite, `--no-build` to skip C++ compilation.
+The Zephyr CLI is used directly from `$ZEPHYR_REPO_PATH/tools/zephyr-cli/cli`.
 
 ## Repository Structure
 

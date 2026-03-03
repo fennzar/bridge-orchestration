@@ -48,7 +48,16 @@ ORCH_DIR        := $(CURDIR)
 PROCFILE        ?= $(ORCH_DIR)/Procfile.dev
 OVERMIND_SOCK   ?= $(ORCH_DIR)/.overmind-dev.sock
 export PROCFILE OVERMIND_SOCK ORCH_DIR
-ZEPHYR_CLI      := $(or $(wildcard tools/zephyr-cli/cli),$(ZEPHYR_REPO_PATH)/tools/zephyr-cli/cli)
+
+# Browser-facing host derivation (from PUBLIC_HOST in .env)
+PUBLIC_HOST     ?= 127.0.0.1
+PUBLIC_PROTOCOL ?= http
+BLOCKSCOUT_API_HOST     ?= $(PUBLIC_HOST):$(or $(BLOCKSCOUT_PORT),4000)
+BLOCKSCOUT_API_PROTOCOL ?= $(PUBLIC_PROTOCOL)
+export PUBLIC_HOST PUBLIC_PROTOCOL BLOCKSCOUT_API_HOST BLOCKSCOUT_API_PROTOCOL
+
+ZEPHYR_CLI      := $(ZEPHYR_REPO_PATH)/tools/zephyr-cli/cli
+ZEPHYR_DEVNET_SH := $(ZEPHYR_REPO_PATH)/tools/devnet.sh
 
 # Zephyr base compose files (from Zephyr repo)
 ZEPHYR_BASE   := $(ZEPHYR_REPO_PATH)/docker/compose.yml
@@ -83,7 +92,7 @@ DC_V3 := docker compose -p bridge-v3 --env-file .env \
 # Build
 # ===========================================
 
-.PHONY: setup reset keygen build build-zephyr build-oracle build-orderbook build-init sync-zephyr docs-dashboard docs-dashboard-check
+.PHONY: setup reset keygen build build-orderbook docs-dashboard docs-dashboard-check
 
 ## One-time setup: check prereqs, clone repos, install deps
 setup:
@@ -124,29 +133,8 @@ reset:
 keygen:
 	./scripts/keygen.py --write-env
 
-## Build all Docker images
-build: build-zephyr build-oracle build-orderbook build-init
-
-## Build Zephyr node/wallet image (uses vendored binaries)
-## Usage: make build-zephyr [DEVNET_MODE=mirror]
-build-zephyr:
-	@BIN_DIR=$$([ "$(DEVNET_MODE)" = "mirror" ] && echo "docker/zephyr/bin-mirror" || echo "docker/zephyr/bin"); \
-	echo "=== Building zephyr-devnet image ($$BIN_DIR) ==="; \
-	if [ ! -f "$$BIN_DIR/zephyrd" ]; then \
-		echo "Error: zephyrd not found at $$BIN_DIR/zephyrd"; \
-		echo "Run: ./scripts/sync-zephyr-artifacts.sh"; \
-		exit 1; \
-	fi; \
-	docker build --build-arg BIN_DIR=$$BIN_DIR -f docker/zephyr/Dockerfile -t zephyr-devnet .
-
-## Build fake oracle image (uses vendored oracle files)
-build-oracle:
-	@echo "=== Building zephyr-fake-oracle image ==="
-	@if [ ! -f "docker/fake-oracle/server.js" ]; then \
-		echo "Error: oracle files not found. Run: ./scripts/sync-zephyr-artifacts.sh"; \
-		exit 1; \
-	fi
-	docker build -t zephyr-fake-oracle docker/fake-oracle/
+## Build bridge-orch's own Docker images (Zephyr images build via Compose from Zephyr repo)
+build: build-orderbook
 
 ## Generate dashboard API docs from route meta
 docs-dashboard:
@@ -165,19 +153,10 @@ docs-dashboard-check:
 	fi
 	@echo "Dashboard API docs are up to date."
 
-## Sync all artifacts from Zephyr repo
-sync-zephyr:
-	./scripts/sync-zephyr-artifacts.sh
-
 ## Build fake orderbook image
 build-orderbook:
 	@echo "=== Building zephyr-fake-orderbook image ==="
 	docker build -t zephyr-fake-orderbook -f docker/fake-orderbook/Dockerfile services/fake-orderbook/
-
-## Build devnet-init image (context = repo root so it can COPY tools/zephyr-cli + utils/python-rpc)
-build-init:
-	@echo "=== Building zephyr-devnet-init image ==="
-	docker build -t zephyr-devnet-init -f docker/devnet-init/Dockerfile .
 
 # ===========================================
 # Dev Environment
@@ -212,6 +191,7 @@ dev-start:
 		rm -f $(OVERMIND_SOCK); \
 	fi
 	@# Start infrastructure (Blockscout on by default, EXPLORER=0 to skip)
+	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
 	@echo "=== Starting Docker infrastructure ==="
 	@if [ "$(EXPLORER)" = "0" ]; then \
 		$(DC_DEV) up -d; \
@@ -302,9 +282,12 @@ dev-init:
 	fi
 	@# 4. Remove stale addresses (setup not done yet)
 	@rm -f config/addresses.json deployed-addresses.json
-	@# 4. Rebuild images (pass DEVNET_MODE for mirror binary selection)
-	@$(MAKE) build DEVNET_MODE=$(or $(DEVNET_MODE),custom)
-	@# 5. Start infrastructure
+	@# 4. Cleanup disk if low, then rebuild bridge-orch images
+	@source scripts/lib/logging.sh && source scripts/lib/disk.sh && maybe_cleanup_disk
+	@$(MAKE) build-orderbook
+	@# 5. Pre-create Anvil state dir (writable by foundry uid 1000 in container)
+	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
+	@# 6. Start infrastructure
 	@echo ""
 	@echo "=== Starting Docker infrastructure ==="
 	@$(DC_DEV) up -d
@@ -315,20 +298,14 @@ dev-init:
 	@echo "=== Pushing database schemas ==="
 	@cd $(BRIDGE_REPO_PATH)/packages/db && DATABASE_URL=$(DATABASE_URL_BRIDGE) npx prisma db push 2>&1 | tail -1
 	@cd $(ENGINE_REPO_PATH) && DATABASE_URL=$(DATABASE_URL_ENGINE) pnpm prisma db push --schema=src/infra/prisma/schema.prisma --skip-generate 2>&1 | tail -1
-	@# 7. Run devnet init (CLI-based: gov/miner/test wallets only)
+	@# 7. Run devnet init + save LMDB snapshots
 	@echo ""
 	@echo "=== Initializing DEVNET (mode: $(or $(DEVNET_MODE),custom)) ==="
 	@docker rm zephyr-devnet-init 2>/dev/null || true
-	@DEVNET_MODE=$(or $(DEVNET_MODE),custom) $(DC_DEV) --profile init up devnet-init
-	@# 8. Stop daemons + save LMDB snapshots (must be stopped for consistent LMDB copy)
-	@echo ""
-	@echo "=== Saving chain snapshots ==="
 	@mkdir -p snapshots/chain
 	@echo "$(or $(DEVNET_MODE),custom)" > snapshots/chain/mode
-	@$(DC_DEV) stop zephyr-node1 zephyr-node2
-	@docker run --rm -v zephyr-node1-data:/data alpine tar czf - -C /data --exclude='lmdb/lock.mdb' lmdb > snapshots/chain/node1-lmdb.tar.gz
-	@docker run --rm -v zephyr-node2-data:/data alpine tar czf - -C /data --exclude='lmdb/lock.mdb' lmdb > snapshots/chain/node2-lmdb.tar.gz
-	@echo "  Snapshots saved ($$(du -sh snapshots/chain/ | cut -f1))"
+	@DC_CMD="$(DC_DEV)" DEVNET_DOCKER=1 DEVNET_MODE=$(or $(DEVNET_MODE),custom) \
+		$(ZEPHYR_DEVNET_SH) init --snapshot-dir $(CURDIR)/snapshots/chain
 	@# 9. Stop everything (volumes persist)
 	@echo ""
 	@echo "=== Stopping infrastructure ==="
@@ -351,6 +328,7 @@ dev-setup:
 
 ## Start Docker infrastructure only
 dev-infra:
+	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
 	@echo "=== Starting Docker infrastructure ==="
 	$(DC_DEV) up -d
 
@@ -431,7 +409,9 @@ dev-delete:
 	@rm -f config/addresses.json deployed-addresses.json
 	@# Remove built images
 	@echo "  Removing Docker images..."
-	@docker rmi zephyr-devnet zephyr-fake-oracle zephyr-fake-orderbook zephyr-devnet-init 2>/dev/null || true
+	@docker rmi zephyr-fake-orderbook 2>/dev/null || true
+	@# Legacy Makefile-built images (now built by Compose)
+	@docker rmi zephyr-devnet zephyr-fake-oracle zephyr-devnet-init 2>/dev/null || true
 	@echo "=== Deleted ==="
 
 ## Reset to post-setup state, then stop (~15 sec)
@@ -680,6 +660,7 @@ PROD_SOCK     := $(ORCH_DIR)/.overmind-prod.sock
 
 ## Build all apps for production (pnpm build)
 testnet-v2-build:
+	@source scripts/lib/logging.sh && source scripts/lib/disk.sh && maybe_cleanup_disk
 	@echo "=== Syncing env files ==="
 	./scripts/sync-env.sh
 	@echo "=== Building bridge ==="
@@ -688,6 +669,12 @@ testnet-v2-build:
 	source scripts/lib/env.sh && load_env .env && cd "$(ENGINE_REPO_PATH)" && pnpm build:web
 	@echo "=== Building dashboard ==="
 	source scripts/lib/env.sh && load_env .env && cd "$(ORCH_DIR)/status-dashboard" && pnpm build
+	@# Verify production builds exist (catch silent failures from e.g. disk full)
+	@echo "=== Verifying builds ==="
+	@test -f "$(BRIDGE_REPO_PATH)/apps/web/.next/BUILD_ID" || { echo "ERROR: bridge-web .next build missing (next build may have failed)"; exit 1; }
+	@test -f "$(ENGINE_REPO_PATH)/apps/web/.next/BUILD_ID" || { echo "ERROR: engine-web .next build missing (next build may have failed)"; exit 1; }
+	@test -d "$(ORCH_DIR)/status-dashboard/.next" || { echo "ERROR: dashboard .next build missing"; exit 1; }
+	@echo "=== All builds verified ==="
 
 ## Init base Zephyr devnet (same as dev-init)
 testnet-v2-init:
@@ -832,7 +819,6 @@ help:
 	@echo "  make scan-pools                 Trigger bridge-api pool scan"
 	@echo "  make keygen                     Generate fresh keys and write to .env"
 	@echo "  make sync-env                   Sync .env to sub-repos"
-	@echo "  make sync-zephyr                Copy artifacts from Zephyr repo"
 	@echo "  make dev-test-setup              Frozen test setup (~4 min, leaves stack running)"
 	@echo "  make precheck                   T1: Environment readiness (instant)"
 	@echo "  make test-infra                 T2: Infrastructure health (~2 min)"

@@ -8,12 +8,21 @@ set -euo pipefail
 # installs dependencies, and prints next steps.
 #
 # Idempotent — safe to run repeatedly.
+# Use --yes to auto-accept all prompts (CI/non-interactive).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PARENT="$(cd "$ROOT/.." && pwd)"
 
 source "$SCRIPT_DIR/lib/logging.sh"
+
+# ── Auto-accept mode ────────────────────────────
+AUTO_YES=false
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y) AUTO_YES=true ;;
+    esac
+done
 
 # ── Config ────────────────────────────────────
 
@@ -62,6 +71,10 @@ version_ge() {
 # Prompt y/N, returns 0 on yes
 ask_yn() {
     local prompt="$1"
+    if $AUTO_YES; then
+        printf "\n  %s [y/N] y (auto)\n" "$prompt"
+        return 0
+    fi
     printf "\n  %s [y/N] " "$prompt"
     read -r ans </dev/tty
     [[ "$ans" =~ ^[yY]$ ]]
@@ -891,8 +904,10 @@ phase_branches() {
     echo -e "  Verify you're on the correct branches before continuing."
     echo -e "  ${DIM}For devnet: cd $PARENT/zephyr && git checkout fresh-dev-bootstrap${NC}"
     echo ""
-    printf "  Press Enter to continue (or Ctrl-C to check out branches first)..."
-    read -r </dev/tty
+    if ! $AUTO_YES; then
+        printf "  Press Enter to continue (or Ctrl-C to check out branches first)..."
+        read -r </dev/tty
+    fi
 }
 
 # ── Phase 5: Install Dependencies ────────────
@@ -1017,7 +1032,7 @@ phase_zephyr_deps() {
     fi
 
     echo -e "  ${DIM}These are needed to compile the Zephyr daemon from source.${NC}"
-    echo -e "  ${DIM}Required for: make build-zephyr / make dev-init${NC}"
+    echo -e "  ${DIM}Required for: make dev-init (Compose builds Zephyr images from source)${NC}"
     echo ""
 
     if $IS_DEBIAN; then
@@ -1046,11 +1061,11 @@ phase_zephyr_deps() {
     fi
 }
 
-# ── Phase 5c: Sync Zephyr Artifacts ──────────
+# ── Phase 5c: Verify Zephyr Repo ─────────────
 
-phase_sync_artifacts() {
+phase_verify_zephyr() {
     echo ""
-    echo "Sync Zephyr artifacts"
+    echo "Verify Zephyr repo"
     echo ""
 
     if ! [ -d "$PARENT/zephyr" ]; then
@@ -1058,29 +1073,21 @@ phase_sync_artifacts() {
         return 0
     fi
 
-    # Check if artifacts already exist
-    local have_binaries=false have_oracle=false have_cli=false
-    [ -f "$ROOT/docker/zephyr/bin/zephyrd" ] && have_binaries=true
-    [ -f "$ROOT/docker/fake-oracle/server.js" ] && have_oracle=true
-    [ -f "$ROOT/tools/zephyr-cli/cli" ] && have_cli=true
-
-    if $have_binaries && $have_oracle && $have_cli; then
-        ok "Zephyr artifacts already synced"
-        echo -e "  ${DIM}Re-run with: ./scripts/sync-zephyr-artifacts.sh --force${NC}"
-        return 0
+    if ! [ -d "$PARENT/zephyr/.git" ]; then
+        fail "zephyr directory exists but is not a git repo"
+        return 1
     fi
 
-    echo -e "  ${DIM}Syncs binaries, oracle, CLI, and Docker files from the zephyr repo.${NC}"
-    echo -e "  ${DIM}Will build the Zephyr daemon from source if binaries are not found.${NC}"
-    echo ""
+    ok "Zephyr repo found at $PARENT/zephyr"
 
-    if ask_yn "Sync now? (or N to do it later with: ./scripts/sync-zephyr-artifacts.sh)"; then
-        echo ""
-        # Run the sync script directly — it has its own verbose output
-        "$SCRIPT_DIR/sync-zephyr-artifacts.sh"
+    # Check if devnet binaries are built
+    local bin_dir="$PARENT/zephyr/build/devnet/bin"
+    if [ -f "$bin_dir/zephyrd" ] && [ -f "$bin_dir/zephyr-wallet-rpc" ]; then
+        ok "Devnet binaries built ($bin_dir)"
     else
-        echo ""
-        log_skip "Skipped — run later: ./scripts/sync-zephyr-artifacts.sh"
+        warn "Devnet binaries not found at $bin_dir"
+        echo -e "  ${DIM}Docker Compose will build them on first 'make dev-init'.${NC}"
+        echo -e "  ${DIM}Or build manually: cd ../zephyr && tools/fresh-devnet/run.sh build${NC}"
     fi
 }
 
@@ -1175,6 +1182,6 @@ phase_clone
 phase_branches
 phase_deps
 phase_zephyr_deps
-phase_sync_artifacts
+phase_verify_zephyr
 phase_keygen
 phase_summary

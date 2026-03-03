@@ -25,6 +25,25 @@ echo "==========================================="
 echo ""
 
 # ===========================================
+# Prompt for PUBLIC_HOST if not yet configured
+# ===========================================
+# Only prompt on first run (PUBLIC_HOST not in .env). Once set, reuse silently.
+if [ -t 0 ] && [ -t 1 ] && ! grep -q '^PUBLIC_HOST=' "$ORCH_DIR/.env" 2>/dev/null; then
+    printf "Public host (how browsers reach this machine) [127.0.0.1]: "
+    read -r input_host
+    input_host="${input_host:-127.0.0.1}"
+    # Append to .env so future runs skip the prompt
+    cat >> "$ORCH_DIR/.env" << PUBHOST
+
+# Public Host (how browsers reach this machine)
+PUBLIC_HOST=$input_host
+PUBLIC_PROTOCOL=http
+PUBHOST
+    export PUBLIC_HOST="$input_host"
+    log_info "PUBLIC_HOST=$input_host saved to .env"
+fi
+
+# ===========================================
 # Generate zephyr-bridge .env.local
 # ===========================================
 log_info "Generating zephyr-bridge/.env.local..."
@@ -68,6 +87,11 @@ NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-}
 NEXT_PUBLIC_REOWN_PROJECT_ID=${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-placeholder}
 NEXT_PUBLIC_ENABLE_DEV_CONTROLS=${NEXT_PUBLIC_ENABLE_DEV_CONTROLS}
 NEXT_PUBLIC_ZEPHYR_EXPLORER_BASE=https://explorer.zephyrprotocol.com/tx/
+
+# === Public Host (browser-facing URLs) ===
+NEXT_PUBLIC_ANVIL_LOCAL_HOST=${PUBLIC_HOST:-127.0.0.1}
+NEXT_PUBLIC_ZEPHYR_DAEMON_RPC=${PUBLIC_HOST:-127.0.0.1}:47767
+NEXT_PUBLIC_ANVIL_EXPLORER_URL=${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-127.0.0.1}:${BLOCKSCOUT_PORT:-4000}
 
 # === Token Config ===
 NEXT_PUBLIC_USE_WZSD=1

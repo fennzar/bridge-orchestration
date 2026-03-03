@@ -447,10 +447,22 @@ print_overmind_processes() {
         status=$(echo "$proc_line" | awk '{print $3}')
 
         if [ "$status" = "running" ]; then
-            if [ "$port" = "-" ]; then
-                ok "$(printf '%-18s' "$name") running (pid $pid)"
+            if [ "$port" != "-" ]; then
+                # Verify the port is actually responding (detect crash-looping)
+                if curl -sf -o /dev/null --connect-timeout 2 "http://127.0.0.1:$port/" 2>/dev/null; then
+                    ok "$(printf '%-18s' "$name") running (port $port, pid $pid)"
+                else
+                    fail "$(printf '%-18s' "$name") crash-looping (port $port not responding)"
+                fi
             else
-                ok "$(printf '%-18s' "$name") running (port $port, pid $pid)"
+                # Portless process: check tmux logs for crash patterns
+                local logs
+                logs=$(tmux capture-pane -p -t "bridge-orchestration:${name}" 2>/dev/null | tail -20) || logs=""
+                if echo "$logs" | grep -qE '(Process crashed|restarting in [0-9]+s|FATAL|Cannot find module)'; then
+                    fail "$(printf '%-18s' "$name") crash-looping (pid $pid)"
+                else
+                    ok "$(printf '%-18s' "$name") running (pid $pid)"
+                fi
             fi
         else
             fail "$(printf '%-18s' "$name") $status"

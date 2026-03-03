@@ -33,6 +33,7 @@ load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
 ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
+ZEPHYR_DEVNET_SH="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/devnet.sh"
 
 # Parse flags
 HARD_RESET=false
@@ -117,42 +118,16 @@ if [ "$HARD_RESET" = true ]; then
         exit 1
     fi
 
+    # Close + delete bridge/engine/cex wallets (bridge-orch specific)
     log_info "Closing bridge/engine/cex wallets (will be recreated by dev-setup)..."
     "$ZEPHYR_CLI" wallet close bridge 2>/dev/null || true
     "$ZEPHYR_CLI" wallet close engine 2>/dev/null || true
     "$ZEPHYR_CLI" wallet close cex 2>/dev/null || true
     $DC_DEV exec -T wallet-gov sh -c 'rm -f /wallets/bridge /wallets/bridge.keys /wallets/bridge.address.txt /wallets/engine /wallets/engine.keys /wallets/engine.address.txt /wallets/cex /wallets/cex.keys /wallets/cex.address.txt' 2>/dev/null || true
 
-    # Close base wallets before daemon restart
-    "$ZEPHYR_CLI" wallet close gov 2>/dev/null || true
-    "$ZEPHYR_CLI" wallet close miner 2>/dev/null || true
-    "$ZEPHYR_CLI" wallet close test 2>/dev/null || true
+    # Delegate LMDB restore + base wallet management to devnet.sh
+    DC_CMD="$DC_DEV" DEVNET_DOCKER=1 "$ZEPHYR_DEVNET_SH" reset --hard --snapshot-dir "$SNAPSHOT_DIR"
 
-    # Stop daemons, restore LMDB from snapshots, restart
-    log_info "Restoring chain from init snapshots..."
-    $DC_DEV stop zephyr-node1 zephyr-node2 2>/dev/null
-    docker run --rm -v zephyr-node1-data:/data -v "$SNAPSHOT_DIR:/snap:ro" alpine \
-        sh -c 'rm -rf /data/lmdb && tar xzf /snap/node1-lmdb.tar.gz -C /data && rm -f /data/lmdb/lock.mdb'
-    docker run --rm -v zephyr-node2-data:/data -v "$SNAPSHOT_DIR:/snap:ro" alpine \
-        sh -c 'rm -rf /data/lmdb && tar xzf /snap/node2-lmdb.tar.gz -C /data && rm -f /data/lmdb/lock.mdb'
-    $DC_DEV start zephyr-node1 zephyr-node2
-
-    # Wait for daemons
-    log_info "Waiting for daemons..."
-    "$ZEPHYR_CLI" wait-daemons
-
-    # Re-open base wallets + hard rescan (bridge/engine/cex were deleted)
-    "$SCRIPT_DIR/open-wallets.sh"
-    log_info "Hard-rescanning base wallets..."
-    for w in gov miner test; do
-        "$ZEPHYR_CLI" rescan "$w" 2>/dev/null || true
-    done
-    sleep 15
-    # Close wallets to flush rescan results to disk
-    "$ZEPHYR_CLI" wallet close gov 2>/dev/null || true
-    "$ZEPHYR_CLI" wallet close miner 2>/dev/null || true
-    "$ZEPHYR_CLI" wallet close test 2>/dev/null || true
-    sleep 1
     CHECKPOINT=$("$ZEPHYR_CLI" height)
     log_success "Chain restored to init height $CHECKPOINT"
 else
@@ -164,69 +139,19 @@ else
         exit 1
     fi
     CURRENT=$("$ZEPHYR_CLI" height)
-    BLOCKS_TO_POP=$((CURRENT - CHECKPOINT))
-    echo "  Current: $CURRENT, Checkpoint: $CHECKPOINT, Popping: $BLOCKS_TO_POP blocks"
+    echo "  Current: $CURRENT, Checkpoint: $CHECKPOINT"
 
-    # Stop mining + pop blocks
-    "$ZEPHYR_CLI" mine stop 2>/dev/null || true
-    sleep 1
-
-    # Close all wallets before pop (they hold LMDB locks on shared ringdb)
-    log_info "Closing wallets..."
-    for w in gov miner test bridge engine cex; do
+    # Close bridge/engine/cex wallets (bridge-orch specific)
+    log_info "Closing bridge/engine/cex wallets..."
+    for w in bridge engine cex; do
         "$ZEPHYR_CLI" wallet close "$w" 2>/dev/null || true
     done
 
-    log_info "Popping blocks on both nodes..."
-    "$ZEPHYR_CLI" pop "$BLOCKS_TO_POP" --all
-    sleep 3
+    # Delegate pop/ringdb/restart/rescan/warmup to devnet.sh
+    DC_CMD="$DC_DEV" DEVNET_DOCKER=1 "$ZEPHYR_DEVNET_SH" reset --checkpoint "$CHECKPOINT"
 
-    # Clear the shared ringdb — after pop_blocks, the ring database references
-    # output indices that no longer exist, causing transactions to be rejected
-    # by the daemon with "Known ring does not include the spent output: N".
-    log_info "Clearing shared ring database..."
-    $DC_DEV exec -T wallet-gov sh -c 'rm -f /data/ringdb/data.mdb /data/ringdb/lock.mdb' 2>/dev/null || true
-
-    # Restart node1 to force resync with node2 after pop_blocks.
-    # Without this, node1 stays synchronized=False indefinitely in devnet,
-    # which blocks all wallet transfer operations ("daemon is busy").
-    log_info "Restarting node1 to resync..."
-    docker restart zephyr-node1 >/dev/null 2>&1
-    sleep 5
-    for i in $(seq 1 20); do
-        if curl -sf http://127.0.0.1:47767/json_rpc \
-            -d '{"jsonrpc":"2.0","id":"0","method":"get_info"}' 2>/dev/null | \
-            python3 -c "import sys,json; assert json.load(sys.stdin)['result']['synchronized']" 2>/dev/null; then
-            break
-        fi
-        sleep 1
-    done
-
-    # Re-open wallets (node1 restart drops wallet connections)
+    # Reopen all wallets (including bridge/engine/cex)
     "$SCRIPT_DIR/open-wallets.sh"
-
-    log_info "Rescanning wallets..."
-    "$ZEPHYR_CLI" rescan all
-    sleep 2
-
-    # Flush tx pool to clear any stale/stuck transactions from previous session.
-    log_info "Flushing transaction pool..."
-    curl -sf http://127.0.0.1:47767/json_rpc \
-        -d '{"jsonrpc":"2.0","id":"0","method":"flush_txpool","params":{}}' >/dev/null 2>&1 || true
-
-    # Mine warm-up blocks so wallets have fresh outputs for ring member selection.
-    # After clearing the ringdb and rescanning, the wallets need new on-chain outputs
-    # to build valid ring signatures. Without this, the daemon rejects transactions
-    # with "transaction was rejected by daemon" (error -4).
-    log_info "Mining warm-up blocks..."
-    "$ZEPHYR_CLI" mine start --threads 2
-    sleep 10
-    "$ZEPHYR_CLI" mine stop 2>/dev/null || true
-    sleep 1
-
-    # Refresh wallets to pick up the warm-up block outputs
-    "$ZEPHYR_CLI" rescan all 2>/dev/null || true
-    sleep 3
 fi
 
 log_success "Zephyr chain reset to height $CHECKPOINT"
@@ -260,6 +185,7 @@ fi
 
 # Start Anvil — loads from state.json (checkpoint for normal reset,
 # or absent for hard reset = fresh chain).
+mkdir -p "$ORCH_DIR/snapshots/anvil" && chmod a+w "$ORCH_DIR/snapshots/anvil"
 $DC_DEV start anvil 2>/dev/null || $DC_DEV up -d anvil
 
 log_info "Waiting for Anvil..."

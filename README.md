@@ -231,17 +231,28 @@ $ZEPHYR_CLI price
 ## Testing
 
 ```bash
-# Bridge tests
+# T1: Environment readiness (instant, no infra)
+make precheck
+
+# T2: Infrastructure health (post dev-init, ~2 min)
+make test-infra
+
+# T3: Basic operations — transfers, oracle, RR mode (~2 min)
+make test-ops
+
+# T4A: Bridge health + flows — contracts, APIs, wrap/unwrap (~10 min)
+make test-bridge
+
+# T4B: Engine strategy tests (332 tests, ~5 min)
+make test-engine
+
+# All tiers in order
+make test-all
+
+# Repo unit tests
 cd ../zephyr-bridge && pnpm test
-
-# Engine tests
 cd ../zephyr-bridge-engine && pnpm test
-
-# Foundry tests
 cd ../zephyr-eth-foundry && forge test
-
-# E2E tests
-make test
 ```
 
 ## Common Issues

@@ -545,92 +545,109 @@ scan-pools:
 # Test Framework
 # ===========================================
 
-.PHONY: test test-l1 test-l2 test-l3 test-l4 test-l1-l2 test-l3-l4 test-l5 test-l5-lint test-l5-summary test-l5-browser-preflight test-l5-execute test-l5-execute-all test-l5-sec test-l5-runtime test-l5-infra test-l5-asset test-l5-stress test-l5-fe test-l5-seed test-engine test-engine-verbose typecheck-tests
+.PHONY: dev-test-setup precheck test-infra test-ops test-bridge test-e2e test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-engine test-engine-verbose typecheck-tests
 
-## Run all L1-L4 tests
-test:
-	./scripts/run-tests.py
+## Frozen test setup — independent of dev-setup.sh (~4 min)
+## Leaves stack running on success. Use for test-owned infrastructure.
+dev-test-setup:
+	./scripts/dev-test-setup.sh
 
-## Run L1 infrastructure tests only
-test-l1:
-	./scripts/run-tests.py --level L1
+## T1: Environment readiness — repos, binaries, .env (instant, no infra)
+precheck:
+	@./scripts/test-gate.sh precheck
+	./scripts/run-tests.py --tier precheck
 
-## Run L2 smoke tests only
-test-l2:
-	./scripts/run-tests.py --level L2
+## T2: Infrastructure health — Docker, wallets, chain, oracle (post dev-init)
+## Gate: dev-reset-hard + start infra
+test-infra:
+	@./scripts/test-gate.sh infra
+	./scripts/run-tests.py --tier infra
 
-## Run L3 component tests only
-test-l3:
-	./scripts/run-tests.py --level L3
+## T3: Basic operations — transfers, oracle, RR mode (post dev-init, mutating)
+## Gate: dev-reset-hard + start infra
+test-ops:
+	@./scripts/test-gate.sh ops
+	./scripts/run-tests.py --tier ops
 
-## Run L4 E2E tests only
-test-l4:
-	./scripts/run-tests.py --level L4
+## T4A: Bridge health + flows — contracts, APIs, wrap/unwrap (post dev-setup)
+## Gate: dev-reset (or dev-test-setup if needed) + make dev
+test-bridge:
+	@./scripts/test-gate.sh bridge
+	./scripts/run-tests.py --tier bridge
 
-## Run L1/L2 infrastructure + smoke tests (legacy, delegates to run-tests.py)
-test-l1-l2:
-	./scripts/run-tests.py --level L1 --level L2
+## T5: Full system tests — placeholder
+test-e2e:
+	@./scripts/test-gate.sh e2e
+	./scripts/run-tests.py --tier e2e
 
-## Run L3/L4 component + e2e tests (legacy, delegates to run-tests.py)
-test-l3-l4:
-	./scripts/run-tests.py --level L3 --level L4
+## All tiers in order: precheck → infra → ops → bridge → engine → e2e
+## Each tier handles its own state.
+test-all:
+	$(MAKE) precheck
+	$(MAKE) test-infra
+	$(MAKE) test-ops
+	$(MAKE) test-bridge
+	$(MAKE) test-engine
+	$(MAKE) test-e2e
 
-## Run L5 edge-case framework default pass (summary + lint + logical)
-test-l5:
+## Edge-case framework default pass (summary + lint + logical)
+test-edge:
 	./scripts/run-l5-tests.py
 
-## L5 catalog lint
-test-l5-lint:
+## Edge catalog lint
+test-edge-lint:
 	./scripts/run-l5-tests.py --lint
 
-## L5 catalog summary
-test-l5-summary:
+## Edge catalog summary
+test-edge-summary:
 	./scripts/run-l5-tests.py --summary
 
-## L5 browser lane preflight
-test-l5-browser-preflight:
+## Edge browser lane preflight
+test-edge-browser-preflight:
 	./scripts/run-l5-tests.py --browser-preflight
 
-## L5 execution pass (runs ready+expand, blocks TBC)
-test-l5-execute:
+## Edge execution pass (runs ready+expand, blocks TBC)
+test-edge-execute:
 	@mkdir -p reports
 	./scripts/run-l5-tests.py --execute --report-json reports/l5-execution-report.json
 
-## L5 execution pass including TBC baseline checks
-test-l5-execute-all:
+## Edge execution pass including TBC baseline checks
+test-edge-execute-all:
 	@mkdir -p reports
 	./scripts/run-l5-tests.py --execute --execute-tbc --report-json reports/l5-execution-report.json
 
-## L5.1 Security & Contracts (SEC + SC)
-test-l5-sec:
+## Edge L5.1 Security & Contracts (SEC + SC)
+test-edge-sec:
 	./scripts/run-l5-tests.py --execute --sublevel L5.1 --verbose
 
-## L5.2 Runtime & Consistency (CONS + RR + CONC + SEED)
-test-l5-runtime:
+## Edge L5.2 Runtime & Consistency (CONS + RR + CONC + SEED)
+test-edge-runtime:
 	./scripts/run-l5-tests.py --execute --sublevel L5.2 --verbose
 
-## L5.3 Infra & Watchers (WATCH + CONF + REC)
-test-l5-infra:
+## Edge L5.3 Infra & Watchers (WATCH + CONF + REC)
+test-edge-infra:
 	./scripts/run-l5-tests.py --execute --sublevel L5.3 --verbose
 
-## L5.4 Asset & DEX (ASSET + DEX)
-test-l5-asset:
+## Edge L5.4 Asset & DEX (ASSET + DEX)
+test-edge-asset:
 	./scripts/run-l5-tests.py --execute --sublevel L5.4 --verbose
 
-## L5.5 Privacy & Load (PRIV + LOAD + TIME)
-test-l5-stress:
+## Edge L5.5 Privacy & Load (PRIV + LOAD + TIME)
+test-edge-stress:
 	./scripts/run-l5-tests.py --execute --sublevel L5.5 --verbose
 
-## L5.6 Frontend (FE)
-test-l5-fe:
+## Edge L5.6 Frontend (FE)
+test-edge-fe:
 	./scripts/run-l5-tests.py --execute --sublevel L5.6 --verbose
 
-## SEED checks (part of L5.2, also runnable standalone)
-test-l5-seed:
+## SEED edge checks (part of L5.2, also runnable standalone)
+test-edge-seed:
 	./scripts/run-l5-tests.py --execute --category SEED --verbose
 
-## Run engine strategy tests (332 tests)
+## T4B: Engine strategy tests (332 tests, post dev-setup)
+## Gate: dev-reset (or dev-test-setup if needed) + make dev
 test-engine:
+	@./scripts/test-gate.sh engine
 	python3 scripts/engine_tests/runner.py
 
 ## Run engine tests verbose
@@ -816,5 +833,12 @@ help:
 	@echo "  make keygen                     Generate fresh keys and write to .env"
 	@echo "  make sync-env                   Sync .env to sub-repos"
 	@echo "  make sync-zephyr                Copy artifacts from Zephyr repo"
-	@echo "  make test                       Run all L1-L4 tests"
-	@echo "  make test-l5                    Run L5 edge framework pass"
+	@echo "  make dev-test-setup              Frozen test setup (~4 min, leaves stack running)"
+	@echo "  make precheck                   T1: Environment readiness (instant)"
+	@echo "  make test-infra                 T2: Infrastructure health (~2 min)"
+	@echo "  make test-ops                   T3: Basic operations (~2 min)"
+	@echo "  make test-bridge                T4A: Bridge health + flows (~10 min)"
+	@echo "  make test-engine                T4B: Engine strategy tests (332 tests)"
+	@echo "  make test-e2e                   T5: Full system (placeholder)"
+	@echo "  make test-all                   All tiers in order"
+	@echo "  make test-edge                  Edge-case framework pass"

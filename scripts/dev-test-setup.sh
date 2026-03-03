@@ -86,6 +86,8 @@ echo ""
 # Step 2: Start infrastructure
 # ===========================================
 log_info "Starting Docker infrastructure..."
+# Ensure Anvil state dir is writable by foundry user (uid 1000) in container
+mkdir -p "$ORCH_DIR/snapshots/anvil" && chmod a+w "$ORCH_DIR/snapshots/anvil"
 $DC_DEV up -d
 echo ""
 
@@ -265,7 +267,7 @@ echo ""
 # Step 13: Save Anvil snapshot
 # ===========================================
 log_info "Saving Anvil EVM snapshot..."
-mkdir -p "$ORCH_DIR/snapshots/anvil"
+mkdir -p "$ORCH_DIR/snapshots/anvil" && chmod a+w "$ORCH_DIR/snapshots/anvil"
 $DC_DEV stop anvil
 sleep 2
 if [ -s "$ORCH_DIR/snapshots/anvil/state.json" ]; then

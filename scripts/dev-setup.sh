@@ -19,7 +19,11 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/compose.sh"
+source "$SCRIPT_DIR/lib/disk.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
+
+# Cleanup disk if low before heavy operations
+maybe_cleanup_disk
 
 DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
@@ -79,6 +83,8 @@ echo ""
 # Step 2: Start infrastructure
 # ===========================================
 log_info "Starting Docker infrastructure..."
+# Ensure Anvil state dir is writable by foundry user (uid 1000) in container
+mkdir -p "$ORCH_DIR/snapshots/anvil" && chmod a+w "$ORCH_DIR/snapshots/anvil"
 $DC_DEV up -d
 echo ""
 
@@ -261,7 +267,7 @@ log_info "Saving Anvil EVM snapshot..."
 # Anvil uses --state (bidirectional) + --preserve-historical-states, so a graceful
 # stop writes the full state (including per-block history) to state.json.
 # We copy that as the checkpoint for dev-reset.
-mkdir -p "$ORCH_DIR/snapshots/anvil"
+mkdir -p "$ORCH_DIR/snapshots/anvil" && chmod a+w "$ORCH_DIR/snapshots/anvil"
 $DC_DEV stop anvil
 sleep 2
 if [ -s "$ORCH_DIR/snapshots/anvil/state.json" ]; then

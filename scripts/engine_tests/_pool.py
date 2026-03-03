@@ -143,7 +143,7 @@ def pool_push(pool_name: str, direction: str, amount: int = 0) -> Generator[tupl
 # Mining and RR mode
 # ===========================================================================
 
-ZEPHYR_CLI = str(ROOT / "tools" / "zephyr-cli" / "cli")
+ZEPHYR_CLI = os.environ.get("ZEPHYR_REPO_PATH", str(ROOT.parent / "zephyr")) + "/tools/zephyr-cli/cli"
 
 
 def mine_blocks(seconds: int = 8) -> None:

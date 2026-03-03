@@ -36,13 +36,6 @@ __pycache__/
 reports/
 tests/
 
-# Docker build artifacts (binaries not tracked)
-docker/zephyr/bin/
-
-# Zephyr CLI cache + vendored python-rpc
-tools/zephyr-cli/zephyr_cli/__pycache__/
-utils/python-rpc/
-
 # Testnet/prod env (contains secrets)
 env/.env.testnet-v2
 env/.env.testnet-v3

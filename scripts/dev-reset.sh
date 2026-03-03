@@ -27,9 +27,10 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 # Load shared libraries
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/compose.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
-DC_DEV="docker compose -p bridge --env-file $ORCH_DIR/.env -f $ORCH_DIR/docker/compose.base.yml -f $ORCH_DIR/docker/compose.dev.yml -f $ORCH_DIR/docker/compose.blockscout.yml"
+DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
 ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
 
@@ -94,10 +95,6 @@ if $DC_DEV ps --format '{{.Name}}' 2>/dev/null | grep -q zephyr-node1; then
     log_info "Infrastructure already running"
 else
     log_info "Starting infrastructure temporarily..."
-    # Ensure shared zephyr volumes exist (external: true in compose)
-    for v in zephyr-node1-data zephyr-node2-data zephyr-wallets zephyr-shared zephyr-checkpoint; do
-        docker volume create "$v" >/dev/null 2>&1 || true
-    done
     $DC_DEV up -d
 fi
 
@@ -194,7 +191,7 @@ else
     # Without this, node1 stays synchronized=False indefinitely in devnet,
     # which blocks all wallet transfer operations ("daemon is busy").
     log_info "Restarting node1 to resync..."
-    $DC_DEV restart zephyr-node1 2>/dev/null
+    docker restart zephyr-node1 >/dev/null 2>&1
     sleep 5
     for i in $(seq 1 20); do
         if curl -sf http://127.0.0.1:47767/json_rpc \
@@ -232,14 +229,6 @@ else
     sleep 3
 fi
 
-# Restart mining (skip for --hard: dev-setup will handle mining)
-if [ "$HARD_RESET" = false ]; then
-    log_info "Restarting mining..."
-    "$ZEPHYR_CLI" mine start --threads 2
-else
-    log_info "Skipping mining restart (hard reset)"
-fi
-
 log_success "Zephyr chain reset to height $CHECKPOINT"
 
 # ===========================================
@@ -249,15 +238,29 @@ log_info "Resetting Anvil..."
 
 if [ "$HARD_RESET" = true ]; then
     # Hard reset: wipe Anvil completely (dev-setup will redeploy)
+    # Stop first so the graceful shutdown writes state.json, THEN delete it.
+    $DC_DEV stop anvil 2>/dev/null || true
     rm -f "$ORCH_DIR/config/addresses.json"
     rm -f "$ORCH_DIR/deployed-addresses.json"
-    rm -f "$ORCH_DIR/snapshots/anvil/post-setup.hex"
-    log_info "Removed config/addresses.json + Anvil snapshot"
+    rm -f "$ORCH_DIR/snapshots/anvil/post-setup.json"
+    rm -f "$ORCH_DIR/snapshots/anvil/state.json"
+    log_info "Removed config/addresses.json + Anvil state files"
     $DC_DEV exec -T wallet-gov sh -c 'cp /checkpoint/init-height /checkpoint/height' 2>/dev/null || true
+else
+    # Normal reset: restore Anvil checkpoint (post-setup state)
+    # Stop first so graceful shutdown writes state.json, THEN overwrite it.
+    $DC_DEV stop anvil 2>/dev/null || true
+    if [ -f "$ORCH_DIR/snapshots/anvil/post-setup.json" ]; then
+        /usr/bin/cp "$ORCH_DIR/snapshots/anvil/post-setup.json" "$ORCH_DIR/snapshots/anvil/state.json"
+        log_info "Restored Anvil state from checkpoint"
+    else
+        log_warn "No Anvil snapshot found — EVM state not restored (run dev-setup to create one)"
+    fi
 fi
 
-# Restart Anvil (always restart to clear in-memory state)
-$DC_DEV restart anvil
+# Start Anvil — loads from state.json (checkpoint for normal reset,
+# or absent for hard reset = fresh chain).
+$DC_DEV start anvil 2>/dev/null || $DC_DEV up -d anvil
 
 log_info "Waiting for Anvil..."
 for i in $(seq 1 30); do
@@ -268,37 +271,12 @@ for i in $(seq 1 30); do
 done
 
 if ! cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
-    log_error "Anvil did not come up. Check: docker logs zephyr-anvil"
+    log_error "Anvil did not come up. Check: docker logs orch-anvil"
     $DC_DEV --profile explorer down --remove-orphans
     exit 1
 fi
 
-# Normal reset: restore EVM state from post-setup snapshot
-if [ "$HARD_RESET" = false ] && [ -f "$ORCH_DIR/snapshots/anvil/post-setup.hex" ]; then
-    log_info "Restoring Anvil from post-setup snapshot..."
-    # Build JSON payload with the hex state data via python (avoids shell arg length limits)
-    RESULT=$(python3 -c "
-import json, sys
-with open('$ORCH_DIR/snapshots/anvil/post-setup.hex') as f:
-    state = f.read().strip()
-# Strip surrounding quotes if present (older snapshots may include them)
-if state.startswith('\"') and state.endswith('\"'):
-    state = state[1:-1]
-payload = json.dumps({'jsonrpc':'2.0','id':1,'method':'anvil_loadState','params':[state]})
-sys.stdout.write(payload)
-" | curl -sf -X POST http://127.0.0.1:8545 \
-        -H "Content-Type: application/json" \
-        --data-binary @-)
-    if echo "$RESULT" | python3 -c "import sys,json; r=json.load(sys.stdin); assert r.get('result')" 2>/dev/null; then
-        log_success "Anvil state restored"
-    else
-        log_warn "Failed to restore Anvil state: $RESULT"
-    fi
-elif [ "$HARD_RESET" = false ]; then
-    log_warn "No Anvil snapshot found — EVM state not restored (run dev-setup to create one)"
-fi
-
-log_success "Anvil reset complete"
+log_success "Anvil reset complete (block $(cast block-number --rpc-url http://127.0.0.1:8545 2>/dev/null || echo '?'))"
 
 # ===========================================
 # Phase 4: Database + Redis reset
@@ -320,22 +298,24 @@ redis-cli -p "${REDIS_PORT:-6380}" -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 |
     $DC_DEV exec -T redis redis-cli -n "${REDIS_DB:-6}" FLUSHDB >/dev/null 2>&1 || true
 log_success "Redis flushed"
 
-log_info "Resetting blockscout database..."
-docker volume rm bridge-blockscout-db-data 2>/dev/null || true
-
 # ===========================================
-# Phase 5: Stop infrastructure
+# Phase 5: Stop infrastructure + wipe Blockscout
 # ===========================================
 log_info "Stopping infrastructure..."
 $DC_DEV --profile explorer down --remove-orphans
+
+# Wipe Blockscout DB so it re-indexes cleanly from the restored Anvil state.
+# Must happen after `down` since the container holds the volume.
+log_info "Resetting blockscout database..."
+docker volume rm orch-blockscout-db-data 2>/dev/null || true
 
 echo ""
 echo "==========================================="
 if [ "$HARD_RESET" = true ]; then
     log_success "Hard reset complete (post-init state)"
-    echo "  Next: make dev-setup"
+    echo "  Next: make dev-setup or make testnet-v2-setup"
 else
     log_success "Reset complete (post-setup state)"
-    echo "  Next: make dev"
+    echo "  Next: make dev or make testnet-v2"
 fi
 echo "==========================================="

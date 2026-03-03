@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { DOCKER_SERVICES } from "@/lib/constants";
 import type { ContainerStatus, InfraResponse } from "@/lib/types";
-import { getContainerStatuses } from "@/lib/docker";
+import { getContainerStatuses, getContainerLogs } from "@/lib/docker";
+import { extractDockerErrors } from "@/lib/health";
 import {
   getDaemonInfo,
   getWalletAddress,
@@ -86,6 +87,13 @@ export async function GET() {
         // "infra" and "orderbook" types: just Docker health status, no extra RPC
         default:
           break;
+      }
+
+      // Check recent logs for error patterns
+      const logs = await getContainerLogs(svc.name, 50);
+      const errors = extractDockerErrors(logs);
+      if (errors.length > 0) {
+        base.errors = errors;
       }
 
       return base;

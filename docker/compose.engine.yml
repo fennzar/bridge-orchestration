@@ -1,0 +1,59 @@
+# ===========================================
+# Engine Services Overlay
+# ===========================================
+# Adds engine-specific services on top of Zephyr base:
+#   - wallet-engine (Zephyr wallet for engine operator)
+#
+# Usage (always combined with Zephyr base + bridge):
+#   docker compose -f $ZEPHYR_BASE -f docker/compose.bridge.yml -f docker/compose.engine.yml up -d
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ===========================================
+  # Engine Wallet
+  # ===========================================
+  wallet-engine:
+    image: zephyr-devnet
+    container_name: orch-wallet-engine
+    environment:
+      ZEPHYR_MODE: wallet
+    command:
+      - "--devnet"
+      - "--rpc-bind-port=48771"
+      - "--rpc-bind-ip=0.0.0.0"
+      - "--confirm-external-bind"
+      - "--disable-rpc-login"
+      - "--wallet-dir=/wallets"
+      - "--daemon-address=zephyr-node1:47767"
+      - "--trusted-daemon"
+      - "--shared-ringdb-dir=/data/ringdb"
+      - "--log-level=1"
+    volumes:
+      - wallet-data:/wallets
+      - shared-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://127.0.0.1:48771/json_rpc",
+             "-d", '{"jsonrpc":"2.0","id":"0","method":"get_version"}',
+             "-H", "Content-Type: application/json"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      zephyr-node1:
+        condition: service_healthy
+    logging: *default-logging
+    restart: unless-stopped
+    networks:
+      - zephyr-net
+
+volumes:
+  wallet-data:
+    name: zephyr-wallets
+  shared-data:
+    name: zephyr-shared

@@ -29,23 +29,21 @@ $ROOT/                       # Parent dev folder (set in .env)
 ## Quick Start
 
 ```bash
-# 1. Clone this repo + all sibling repos
+# 1. Clone this repo + setup (includes keygen)
 mkdir ~/zephyr-dev && cd ~/zephyr-dev
 git clone git@github.com:fennzar/bridge-orchestration.git
 cd bridge-orchestration
-./scripts/clone-repos.sh               # Check prereqs, clone repos, install deps
+make setup                             # Interactive: prereqs, clone, deps, artifacts, keygen
 
-# 2. Generate keys + configure paths
-make keygen                            # Generate fresh keys → .env
-# Edit .env: set ROOT to your parent dir (e.g. /home/you/zephyr-dev)
-#            set PATH to include your node/pnpm/foundry bins
-./scripts/sync-zephyr-artifacts.sh     # Vendor Zephyr binaries (once)
+# 2. Init + setup (first time only)
+make dev-init                          # Base Zephyr devnet (~4 min)
+make dev-setup                         # Deploy contracts + seed liquidity (~4 min)
 
-# 3. Start (auto-inits on first run — builds, inits chain, deploys, starts everything)
-make dev                               # ~5 min first time, ~10s after
+# 3. Start
+make dev                               # Start the stack (~10 sec)
 
 # 4. Between tests
-make dev-reset                         # Reset all layers to post-init state (~30 sec)
+make dev-reset && make dev             # Reset to post-setup state + restart
 
 # 5. Stop
 make dev-stop
@@ -57,62 +55,70 @@ UIs: [Dashboard](http://localhost:7100) | [Bridge](http://localhost:7050) | [Eng
 
 ## Prerequisites
 
-Run `make status` to check your environment. Required:
+`make setup` checks all prerequisites and offers to install missing ones interactively. Run `make status` to check your environment at any time.
 
 | Tool | Version | Installation |
 |------|---------|--------------|
-| Node.js | 22+ | `nvm install 22` |
+| Node.js | 22+ | via nvm (setup offers to install) |
 | pnpm | 9.x | `npm install -g pnpm` |
-| Docker | latest | `sudo apt install docker.io` |
+| Docker + Compose | latest | via `get.docker.com` |
 | Foundry | latest | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` |
 | Overmind | latest | [GitHub releases](https://github.com/DarthSim/overmind#installation) |
 | tmux | any | `sudo apt install tmux` |
+| curl, jq, bc | any | `sudo apt install curl jq bc` |
 
-Plus Zephyr binaries built from the `zephyr` repository.
+Plus Zephyr binaries built from the `zephyr` repository (vendored by `make setup`).
 
-## Clone Repos
+## Setup
 
-All sibling repos can be cloned and set up in one step:
+All sibling repos can be cloned and set up interactively:
 
 ```bash
-./scripts/clone-repos.sh
+make setup
 ```
 
-The script runs three phases:
+The script runs through these phases:
 
-1. **Check prerequisites** — verifies all tools above are installed, exits early if any are missing
-2. **Clone repos** — clones into the parent directory (skips existing)
-3. **Install dependencies** — `forge install` for contracts, `pnpm install` for JS/TS repos
+1. **Check prerequisites** — scans all 12 tools, shows a status matrix
+2. **Interactive fix** — offers to install missing tools (apt batch, nvm, Docker, Foundry, Overmind)
+3. **Clone repos** — parallel clones with animated progress (skips existing)
+4. **Show branches** — displays current/remote branches, pauses to verify
+5. **Install dependencies** — parallel `pnpm install` / `forge install` with spinners
+6. **Zephyr build deps** — offers to install C++ build dependencies (Ubuntu/Debian)
+7. **Sync artifacts** — vendors Zephyr binaries, oracle, and CLI into this repo
+8. **Key generation** — generates EVM keys + secrets, writes `.env` (idempotent, skips if already configured)
 
 | Local Directory | Repository | Deps |
 |-----------------|------------|------|
-| `zephyr-eth-foundry/` | `git@github.com:fennzar/zephyr-uniswap-v4-foundry.git` | `forge install` |
-| `zephyr-bridge/` | `git@github.com:fennzar/zephyr-bridge.git` | `pnpm install` |
-| `zephyr-bridge-engine/` | `git@github.com:fennzar/zephyr-bridge-engine.git` | `pnpm install` |
-| `zephyr/` | `https://github.com/ZephyrProtocol/zephyr` | C++ (see below) |
+| `zephyr-eth-foundry/` | [fennzar/zephyr-uniswap-v4-foundry](https://github.com/fennzar/zephyr-uniswap-v4-foundry) | `forge install` |
+| `zephyr-bridge/` | [fennzar/zephyr-bridge](https://github.com/fennzar/zephyr-bridge) | `pnpm install` |
+| `zephyr-bridge-engine/` | [fennzar/zephyr-bridge-engine](https://github.com/fennzar/zephyr-bridge-engine) | `pnpm install` |
+| `zephyr/` | [fennzar/zephyr](https://github.com/fennzar/zephyr) | C++ (build deps offered) |
 
-The script also prints system dependency install commands for building the Zephyr daemon from source (Ubuntu/Debian, Arch, Fedora, openSUSE, macOS).
+The script is fully idempotent — safe to re-run at any time.
 
 ## Make Targets
 
 | Target | Purpose |
 |--------|---------|
-| `make dev` | Main entry point (auto-inits if fresh, then starts) |
-| `make dev APPS=bridge` | Start with specific app groups (bridge, engine, dashboard) |
-| `make dev-reset` | Reset all layers to post-init state (~30 sec) |
-| `make dev-reset-zephyr` | Reset Zephyr chain only (pop to checkpoint) |
-| `make dev-reset-evm` | Reset EVM only (Anvil wipe + redeploy) |
-| `make dev-reset-db` | Reset databases only (Postgres + Redis) |
-| `make dev-init` | Nuclear wipe + rebuild from scratch |
+| `make setup` | Interactive prereqs, clone repos, deps, Zephyr artifacts, keygen |
+| `make keygen` | Regenerate EVM keys + secrets → .env (standalone, for key rotation) |
+| `make dev-init` | Base Zephyr devnet, then stop (~4 min) |
+| `make dev-setup` | Deploy contracts + seed liquidity, then stop (~4 min) |
+| `make dev` | Start the stack (~10 sec) |
+| `make dev APPS=bridge` | Start specific app groups (bridge, engine, dashboard) |
 | `make dev-stop` | Stop everything (apps + infra) |
+| `make dev-reset` | Reset to post-setup state, then stop (~15 sec) |
+| `make dev-reset-hard` | Reset to post-init state, then stop (~10 sec) |
+| `make dev-delete` | Delete everything (containers, volumes, images) |
 | `make dev-checkpoint` | Save current height as checkpoint |
-| `make build` | Build Docker images (auto-run by `dev` if needed) |
+| `make build` | Build Docker images |
 | `make status` | Check health of all services |
 | `make logs SERVICE=x` | Tail logs for a Docker service |
 | `make set-price PRICE=x` | Set fake oracle price |
 | `make set-scenario SCENARIO=x` | Quick presets: normal, defensive, crisis |
 | `make fund WALLET=x AMOUNT=x ASSET=x` | Transfer funds between wallets |
-| `make keygen` | Generate fresh EVM keys + secrets, write to .env |
+| `make keygen` | Regenerate EVM keys (standalone, included in `make setup`) |
 | `make deploy-contracts` | Deploy all EVM contracts to Anvil |
 | `make sync-env` | Sync .env to sub-repos |
 | `make clean` | Remove all containers and volumes |
@@ -255,14 +261,14 @@ export PATH="$HOME/.foundry/bin:$PATH"
 
 ### Anvil State Issues
 ```bash
-# Anvil now persists state across restarts via --state flag.
-# To do a full EVM reset (wipe state + redeploy contracts):
-make dev-reset-evm
+# Reset to post-setup state (restores Anvil snapshot + pops Zephyr chain):
+make dev-reset && make dev
 
-# Nuclear option (destroys all volumes):
-docker compose down -v
-docker compose up -d anvil
-./scripts/deploy-contracts.sh
+# Reset to post-init state (wipes Anvil, need to re-deploy contracts):
+make dev-reset-hard && make dev-setup && make dev
+
+# Nuclear option (destroys everything):
+make dev-delete
 ```
 
 ### Prerequisites Check Failed
@@ -275,12 +281,13 @@ make status
 
 ### Setup
 - **[dev.md](./docs/setup/dev.md)** - Local DEVNET development setup
-- **[testnet.md](./docs/setup/testnet.md)** - Testnet deployment (Sepolia + Caddy TLS)
-- **[mainnet.md](./docs/setup/mainnet.md)** - Mainnet deployment (skeleton, not ready)
+- **[testnet-v2.md](./docs/setup/testnet-v2.md)** - Testnet V2 (production build mode)
+- **[testnet-v3.md](./docs/setup/testnet-v3.md)** - Testnet V3 (Sepolia)
 - **[evm-wallets.md](./docs/reference/evm-wallets.md)** - EVM wallet tooling, Anvil accounts, Cast CLI
 - **[metamask.md](./docs/reference/metamask.md)** - MetaMask test wallet (seed, accounts, funding)
 
 ### Testing
+- **[Testing README](./docs/testing/README.md)** - Quick reference: commands, test levels, where to start
 - **[01-overview.md](./docs/testing/01-overview.md)** - Master test document (L1-L4 levels, test index)
 - **[02-infra-checklist.md](./docs/testing/02-infra-checklist.md)** - Quick infrastructure verification
 - **[03-bridge-scenarios.md](./docs/testing/03-bridge-scenarios.md)** - Wrap/unwrap test flows (API + UI)

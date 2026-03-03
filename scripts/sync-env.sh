@@ -65,6 +65,7 @@ DATABASE_URL=${DATABASE_URL_BRIDGE}
 
 # === UI Settings ===
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-}
+NEXT_PUBLIC_REOWN_PROJECT_ID=${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-placeholder}
 NEXT_PUBLIC_ENABLE_DEV_CONTROLS=${NEXT_PUBLIC_ENABLE_DEV_CONTROLS}
 NEXT_PUBLIC_ZEPHYR_EXPLORER_BASE=https://explorer.zephyrprotocol.com/tx/
 
@@ -98,12 +99,13 @@ if [ -f "$ADDR_SRC" ]; then
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/apps/api/config/addresses.local.json"
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/packages/config/src/addresses/addresses.local.json"
   log_success "Copied addresses to bridge API + config package"
-
-  # Rebuild config package to clear cached dist/
-  log_info "Rebuilding bridge config package..."
-  (cd "$BRIDGE_REPO_PATH" && pnpm --filter @zephyr-bridge/config build 2>/dev/null)
-  log_success "Config package rebuilt"
 fi
+
+# Build all internal packages (types → config → evm → bridge etc.)
+# Required after address changes AND on fresh clones where dist/ doesn't exist yet.
+log_info "Building bridge internal packages..."
+(cd "$BRIDGE_REPO_PATH" && pnpm --filter './packages/*' build 2>/dev/null)
+log_success "Bridge packages built"
 
 # ===========================================
 # Generate zephyr-bridge-engine .env
@@ -148,7 +150,7 @@ ZEPHYR_BRIDGE_ADDRESS=$(curl -sf http://localhost:48770/json_rpc \
 DATABASE_URL=${DATABASE_URL_ENGINE}
 
 # === MEXC ===
-MEXC_PAPER=${MEXC_PAPER}
+MEXC_PAPER=${MEXC_PAPER:-true}
 MEXC_API_KEY=${MEXC_API_KEY:-}
 MEXC_API_SECRET=${MEXC_API_SECRET:-}
 
@@ -185,6 +187,7 @@ log_success "Created $ENGINE_REPO_PATH/.env"
 
 # Sync addresses to engine repo
 log_info "Syncing addresses to engine..."
+if [ -f "${ORCHESTRATION_PATH}/config/addresses.local.json" ]; then
 python3 -c "
 import json, sys
 src = json.load(open('${ORCHESTRATION_PATH}/config/addresses.local.json'))
@@ -220,6 +223,9 @@ if pools_obj:
 json.dump(out, open('${ENGINE_REPO_PATH}/src/services/evm/config/addresses.local.json', 'w'), indent=2)
 print('  Engine addresses synced (with ' + str(len(pools_obj)) + ' pools)')
 "
+else
+  log_info "No addresses.local.json yet — skipping engine address sync (run make dev-setup first)"
+fi
 
 # ===========================================
 # Summary

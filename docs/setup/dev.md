@@ -3,10 +3,8 @@
 ## Quick Start
 
 ```bash
-# One-time prerequisites
-make keygen                            # Generate fresh keys → .env
-# Edit .env: set ROOT path + PATH for your system
-./scripts/sync-zephyr-artifacts.sh     # Vendor Zephyr binaries (once, or after Zephyr repo updates)
+# One-time setup (interactive — prereqs, clone, deps, artifacts, keygen)
+make setup
 
 # First time setup (staged — each step stops when done)
 make dev-init                          # Base Zephyr devnet (~4 min)
@@ -140,7 +138,7 @@ Stops everything and deletes all containers, volumes, and Docker images. Clean s
 
 ## Sync Zephyr Artifacts
 
-Required once after cloning (and again when the Zephyr repo updates):
+Handled automatically by `make setup`. To re-run manually (e.g. after Zephyr repo updates):
 
 ```bash
 # Requires ../zephyr or ZEPHYR_REPO_PATH in .env
@@ -188,7 +186,7 @@ Deployed automatically by `make dev-setup` via `./scripts/deploy-contracts.sh`. 
 
 Addresses saved to `config/addresses.local.json`.
 
-> This project uses a **generated mnemonic** (`EVM_DEV_MNEMONIC` in `.env`, created by `make keygen`), NOT the default Foundry mnemonic. See [metamask.md](../reference/metamask.md) for MetaMask setup.
+> This project uses a **generated mnemonic** (`EVM_DEV_MNEMONIC` in `.env`, created by `make setup` or `make keygen`), NOT the default Foundry mnemonic. See [metamask.md](../reference/metamask.md) for MetaMask setup.
 
 ## Zephyr Wallets
 

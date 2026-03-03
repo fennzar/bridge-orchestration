@@ -128,16 +128,6 @@ log_info "Skipping other pool liquidity (use 'make seed-engine' for LP via bridg
 log_success "All contracts deployed"
 
 # ===========================================
-# Fund engine + CEX wallets with ETH
-# ===========================================
-log_info "Funding engine wallet with ETH..."
-~/.foundry/bin/cast send "$ENGINE_ADDRESS" --value 10ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
-log_success "Engine wallet funded: $ENGINE_ADDRESS"
-
-log_info "Funding CEX wallet with ETH..."
-~/.foundry/bin/cast send "$CEX_ADDRESS" --value 10ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" 2>/dev/null || log_warn "CEX_ADDRESS not set, skipping CEX ETH"
-
-# ===========================================
 # Sync addresses to other repos
 # ===========================================
 if [ -f ".forge-snapshots/addresses.json" ]; then

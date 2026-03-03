@@ -1,9 +1,19 @@
 # ===========================================
-# Production (skeleton)
+# Production Overlay
 # ===========================================
 # Real Zephyr mainnet node, no fake services, app containers + Caddy.
 #
+# Usage (combined with Zephyr base + public + bridge):
+#   docker compose -f $ZEPHYR_BASE -f $ZEPHYR_PUBLIC \
+#     -f docker/compose.bridge.yml -f docker/compose.prod.yml up -d
+#
 # TODO: Complete when ready for production deployment.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   # Override Zephyr nodes for mainnet (no --devnet, no --fixed-difficulty)
@@ -18,6 +28,7 @@ services:
       - "--confirm-external-bind"
       - "--non-interactive"
       - "--log-level=1"
+    logging: *default-logging
 
   # No node2 needed in production (connects to real network)
   # No fake-oracle or fake-orderbook
@@ -25,6 +36,7 @@ services:
 
   wallet-bridge:
     image: zephyr-mainnet
+    container_name: orch-wallet-bridge
     environment:
       ZEPHYR_MODE: wallet
     command:
@@ -36,65 +48,80 @@ services:
       - "--trusted-daemon"
       - "--log-level=1"
     volumes:
-      - zephyr-wallets:/wallets
+      - wallet-data:/wallets
     depends_on:
       zephyr-node1:
         condition: service_healthy
+    logging: *default-logging
     networks:
       - zephyr-net
 
   # App containers (same as testnet)
   bridge-web:
     image: zephyr-bridge-web
+    container_name: orch-bridge-web
     env_file: ../env/.env.prod
     environment:
       PORT: "7050"
+    logging: *default-logging
     networks:
       - zephyr-net
 
   bridge-api:
     image: zephyr-bridge-api
+    container_name: orch-bridge-api
     env_file: ../env/.env.prod
     environment:
       PORT: "7051"
+    logging: *default-logging
     networks:
       - zephyr-net
 
   bridge-watchers:
     image: zephyr-bridge-watchers
+    container_name: orch-bridge-watchers
     env_file: ../env/.env.prod
+    logging: *default-logging
     networks:
       - zephyr-net
 
   # Engine can be deployed on separate server
   engine-web:
     image: zephyr-engine-web
+    container_name: orch-engine-web
     profiles: ["engine", "full"]
     env_file: ../env/.env.prod
     environment:
       PORT: "7000"
+    logging: *default-logging
     networks:
       - zephyr-net
 
   engine-watchers:
     image: zephyr-engine-watchers
+    container_name: orch-engine-watchers
     profiles: ["engine", "full"]
     env_file: ../env/.env.prod
+    logging: *default-logging
     networks:
       - zephyr-net
 
   caddy:
     image: caddy:2-alpine
+    container_name: orch-caddy
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+      - ${ORCH_DIR}/caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - orch-caddy-data:/data
+      - orch-caddy-config:/config
+    logging: *default-logging
     networks:
       - zephyr-net
 
 volumes:
-  caddy-data:
-  caddy-config:
+  wallet-data:
+    name: zephyr-wallets
+  orch-caddy-data:
+  orch-caddy-config:

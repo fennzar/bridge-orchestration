@@ -165,7 +165,7 @@ def _get_engine_status():
 
 def _is_engine_running():
     """Check if engine-run overmind process is alive."""
-    sock = str(ROOT / ".overmind-dev.sock")
+    sock = os.environ.get("OVERMIND_SOCK", str(ROOT / ".overmind-dev.sock"))
     try:
         result = subprocess.run(
             ["overmind", "status", "-s", sock],

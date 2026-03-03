@@ -4,6 +4,7 @@ Imports from _api only. No dependency on _patterns or _funding.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from contextlib import contextmanager
@@ -274,7 +275,7 @@ def wait_exec(seconds: int = WAIT_EXEC) -> None:
 
 def is_engine_running() -> bool:
     """Check if engine-run overmind process is alive."""
-    sock = str(ROOT / ".overmind-dev.sock")
+    sock = os.environ.get("OVERMIND_SOCK", str(ROOT / ".overmind-dev.sock"))
     try:
         r = subprocess.run(
             ["overmind", "status", "-s", sock],

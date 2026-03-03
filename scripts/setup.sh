@@ -8,12 +8,21 @@ set -euo pipefail
 # installs dependencies, and prints next steps.
 #
 # Idempotent — safe to run repeatedly.
+# Use --yes to auto-accept all prompts (CI/non-interactive).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PARENT="$(cd "$ROOT/.." && pwd)"
 
 source "$SCRIPT_DIR/lib/logging.sh"
+
+# ── Auto-accept mode ────────────────────────────
+AUTO_YES=false
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y) AUTO_YES=true ;;
+    esac
+done
 
 # ── Config ────────────────────────────────────
 
@@ -62,6 +71,10 @@ version_ge() {
 # Prompt y/N, returns 0 on yes
 ask_yn() {
     local prompt="$1"
+    if $AUTO_YES; then
+        printf "\n  %s [y/N] y (auto)\n" "$prompt"
+        return 0
+    fi
     printf "\n  %s [y/N] " "$prompt"
     read -r ans </dev/tty
     [[ "$ans" =~ ^[yY]$ ]]
@@ -891,8 +904,10 @@ phase_branches() {
     echo -e "  Verify you're on the correct branches before continuing."
     echo -e "  ${DIM}For devnet: cd $PARENT/zephyr && git checkout fresh-dev-bootstrap${NC}"
     echo ""
-    printf "  Press Enter to continue (or Ctrl-C to check out branches first)..."
-    read -r </dev/tty
+    if ! $AUTO_YES; then
+        printf "  Press Enter to continue (or Ctrl-C to check out branches first)..."
+        read -r </dev/tty
+    fi
 }
 
 # ── Phase 5: Install Dependencies ────────────

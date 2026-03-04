@@ -289,6 +289,8 @@ dev-init:
 	@# 6. Build Zephyr binaries if missing, then start infrastructure
 	@DEVNET_MODE=$(or $(DEVNET_MODE),custom) $(ZEPHYR_DEVNET_SH) ensure-binaries
 	@echo ""
+	@echo "=== Building Docker images ==="
+	@$(DC_DEV) build
 	@echo "=== Starting Docker infrastructure ==="
 	@$(DC_DEV) up -d
 	@# 6. Wait for Postgres + push schemas

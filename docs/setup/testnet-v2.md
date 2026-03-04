@@ -13,10 +13,7 @@ Uses a separate Procfile (`Procfile.prod`) and Overmind socket (`.overmind-prod.
 make testnet-v2-init                 # Base Zephyr devnet (~4 min)
 make testnet-v2-setup                # Bridge infra + contracts + seed (~4 min)
 
-# 2. Build all apps for production
-make testnet-v2-build
-
-# 3. Start the stack
+# 2. Start the stack (auto-builds via turbo — cached when nothing changed)
 make testnet-v2                      # All services
 make testnet-v2 APPS=bridge          # Bridge only
 make testnet-v2 APPS=bridge,engine   # Bridge + engine
@@ -33,7 +30,7 @@ make testnet-v2 APPS=bridge,engine   # Bridge + engine
 | Engine web | `pnpm --dir apps/web dev` | `pnpm start:web` |
 | Dashboard | `pnpm dev` | `pnpm start` |
 | Overmind socket | `.overmind-dev.sock` | `.overmind-prod.sock` |
-| Build step | None (hot-reload) | `make testnet-v2-build` required |
+| Build step | None (hot-reload) | Auto-builds on `make testnet-v2` (turbo-cached) |
 
 Infrastructure (Docker Compose), ports, volumes, and env file (`.env`) are all identical.
 
@@ -43,9 +40,9 @@ Infrastructure (Docker Compose), ports, volumes, and env file (`.env`) are all i
 # Lifecycle (mirrors dev commands)
 make testnet-v2-init                 # Base Zephyr devnet, then stop
 make testnet-v2-setup                # Bridge infra on top, then stop
-make testnet-v2-build                # Build all apps (pnpm build)
-make testnet-v2                      # Start the stack
+make testnet-v2                      # Sync env + build + start (turbo-cached)
 make testnet-v2 APPS=bridge          # Start specific app groups
+make testnet-v2-build                # Build only (no start)
 make testnet-v2-stop                 # Stop everything (preserves data)
 
 # Reset
@@ -61,18 +58,16 @@ make testnet-v2-logs SERVICE=x       # Tail logs
 
 ```bash
 # First time:
-make testnet-v2-init && make testnet-v2-setup
-make testnet-v2-build && make testnet-v2
+make testnet-v2-init && make testnet-v2-setup && make testnet-v2
 
 # Between tests:
 make testnet-v2-reset && make testnet-v2
 
-# After code changes:
-make testnet-v2-build && make testnet-v2
+# After code changes (turbo rebuilds only what changed):
+make testnet-v2
 
 # After changing EVM contracts:
-make testnet-v2-reset-hard && make testnet-v2-setup
-make testnet-v2-build && make testnet-v2
+make testnet-v2-reset-hard && make testnet-v2-setup && make testnet-v2
 
 # Done for the day:
 make testnet-v2-stop
@@ -97,10 +92,10 @@ Same as dev mode — all services run on localhost:
 ## Troubleshooting
 
 **Apps won't start / "module not found":**
-- Run `make testnet-v2-build` first — production mode requires build output.
+- `make testnet-v2` auto-builds, but if builds are stale, run `make testnet-v2-stop && make testnet-v2` to force a fresh sync + rebuild.
 
-**Bridge web shows blank page:**
-- The `.next` build directory must exist. If it was cleaned (e.g. by `make dev-reset`), rebuild with `make testnet-v2-build`.
+**Bridge web shows wrong host/IP:**
+- `NEXT_PUBLIC_*` vars are baked at build time. After changing `PUBLIC_HOST` in `.env`, run `make testnet-v2` — the auto-build picks up the new values.
 - Note: `make testnet-v2-reset` preserves the `.next` directory automatically.
 
 **Switching between dev and testnet-v2:**

@@ -686,6 +686,7 @@ testnet-v2-setup:
 
 ## Start stack with production builds
 testnet-v2:
+	$(MAKE) testnet-v2-build
 	$(MAKE) dev PROCFILE=$(PROD_PROCFILE) OVERMIND_SOCK=$(PROD_SOCK) APPS=$(APPS) EXPLORER=$(EXPLORER)
 
 ## Stop testnet V2 stack

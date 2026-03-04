@@ -67,7 +67,7 @@ UIs: [Dashboard](http://localhost:7100) | [Bridge](http://localhost:7050) | [Eng
 | tmux | any | `sudo apt install tmux` |
 | curl, jq, bc | any | `sudo apt install curl jq bc` |
 
-Plus Zephyr binaries built from the `zephyr` repository (referenced via `$ZEPHYR_REPO_PATH`).
+Zephyr binaries are built from source inside a Docker container (Ubuntu 24.04) during `make dev-init` — no host C++ toolchain required.
 
 ## Setup
 
@@ -84,9 +84,8 @@ The script runs through these phases:
 3. **Clone repos** — parallel clones with animated progress (skips existing)
 4. **Show branches** — displays current/remote branches, pauses to verify
 5. **Install dependencies** — parallel `pnpm install` / `forge install` with spinners
-6. **Zephyr build deps** — offers to install C++ build dependencies (Ubuntu/Debian)
-7. **Verify Zephyr repo** — checks `$ZEPHYR_REPO_PATH` exists and has built binaries
-8. **Key generation** — generates EVM keys + secrets, writes `.env` (idempotent, skips if already configured)
+6. **Verify Zephyr repo** — checks `$ZEPHYR_REPO_PATH` exists (binaries built inside Docker on `make dev-init`)
+7. **Key generation** — generates EVM keys + secrets, writes `.env` (idempotent, skips if already configured)
 
 | Local Directory | Repository | Deps |
 |-----------------|------------|------|

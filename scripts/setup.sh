@@ -1010,7 +1010,7 @@ ZEPHYR_BUILD_PKGS=(
 
 phase_zephyr_deps() {
     echo ""
-    echo -e "Zephyr C++ build dependencies ${DIM}(required for devnet)${NC}"
+    echo -e "Zephyr C++ build dependencies"
     echo ""
 
     if ! [ -d "$PARENT/zephyr" ]; then
@@ -1018,47 +1018,8 @@ phase_zephyr_deps() {
         return 0
     fi
 
-    # Quick check: are the key packages already installed?
-    local missing_count=0
-    for pkg in "${ZEPHYR_CHECK_PKGS[@]}"; do
-        if ! dpkg -s "$pkg" &>/dev/null; then
-            ((missing_count++)) || true
-        fi
-    done
-
-    if [ "$missing_count" -eq 0 ]; then
-        ok "Zephyr build dependencies already installed"
-        return 0
-    fi
-
-    echo -e "  ${DIM}These are needed to compile the Zephyr daemon from source.${NC}"
-    echo -e "  ${DIM}Required for: make dev-init (Compose builds Zephyr images from source)${NC}"
-    echo ""
-
-    if $IS_DEBIAN; then
-        local pkg_list="${ZEPHYR_BUILD_PKGS[*]}"
-        echo -e "  ${DIM}${#ZEPHYR_BUILD_PKGS[@]} packages:${NC}"
-        echo -e "    ${DIM}sudo apt install -y ${pkg_list}${NC}"
-
-        if ask_yn "Install now? (or N to install manually later)"; then
-            echo ""
-            # Install as one batch with a single spinner (all or nothing)
-            if spin_while "Zephyr build dependencies (${#ZEPHYR_BUILD_PKGS[@]} packages)" \
-                sudo apt install -y "${ZEPHYR_BUILD_PKGS[@]}"; then
-                echo ""
-                log_success "Zephyr build dependencies installed"
-            else
-                echo ""
-                log_warn "Some Zephyr build deps failed — you can install them later"
-            fi
-        else
-            echo ""
-            log_skip "Skipped — install later with: sudo apt install -y ${pkg_list}"
-        fi
-    else
-        echo -e "  ${DIM}See docs/setup/dev.md for platform-specific install commands.${NC}"
-        log_skip "Non-Debian system — install manually"
-    fi
+    ok "Zephyr builds from source inside Docker (Ubuntu 24.04)"
+    echo -e "  ${DIM}No host C++ dependencies required — 'make dev-init' handles everything.${NC}"
 }
 
 # ── Phase 5c: Verify Zephyr Repo ─────────────
@@ -1079,16 +1040,7 @@ phase_verify_zephyr() {
     fi
 
     ok "Zephyr repo found at $PARENT/zephyr"
-
-    # Check if devnet binaries are built
-    local bin_dir="$PARENT/zephyr/build/devnet/bin"
-    if [ -f "$bin_dir/zephyrd" ] && [ -f "$bin_dir/zephyr-wallet-rpc" ]; then
-        ok "Devnet binaries built ($bin_dir)"
-    else
-        warn "Devnet binaries not found at $bin_dir"
-        echo -e "  ${DIM}Docker Compose will build them on first 'make dev-init'.${NC}"
-        echo -e "  ${DIM}Or build manually: cd ../zephyr && tools/fresh-devnet/run.sh build${NC}"
-    fi
+    echo -e "  ${DIM}Binaries are built inside Docker on 'make dev-init' — no native build needed.${NC}"
 }
 
 # ── Phase 6: Key Generation ───────────────────

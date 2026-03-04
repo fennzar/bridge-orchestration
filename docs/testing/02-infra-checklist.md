@@ -5,7 +5,7 @@ This checklist verifies the bridge orchestration layer works correctly - scripts
 
 > **Edge-case scope:** This checklist is the primary target for `ZB-CONF` scenarios in [00-edge-case-scope.md](./00-edge-case-scope.md).
 >
-> **Runner:** Use `make test-l5` (or `./scripts/run-l5-tests.py`) for L5 planning/lint.
+> **Runner:** Use `make test-edge` (or `./scripts/run-l5-tests.py`) for edge-case planning/lint.
 >
 > **TBC note:** Any scenario marked `SCOPED-TBC` in the scope catalog still needs command-level runbook guidance before execution.
 
@@ -18,8 +18,7 @@ This checklist verifies the bridge orchestration layer works correctly - scripts
 - [ ] Verify .env file exists and has correct paths
 
 ### ✅ Binary Verification
-- [ ] zephyrd binary exists at $ZEPHYR_BIN_PATH/zephyrd
-- [ ] zephyr-wallet-rpc binary exists at $ZEPHYR_BIN_PATH/zephyr-wallet-rpc
+- [ ] Zephyr binaries built in `$ZEPHYR_REPO_PATH/build/`: zephyrd, zephyr-wallet-rpc
 - [ ] Foundry installed: `forge --version` and `anvil --version`
 - [ ] Docker running: `docker ps`
 

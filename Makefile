@@ -17,8 +17,7 @@
 #   make dev APPS=bridge,engine   Bridge + engine (no dashboard)
 #
 # Testnet V2 (Production Build Mode):
-#   make testnet-v2-build
-#   make testnet-v2
+#   make testnet-v2                 Sync env + build + start (turbo-cached)
 #   make testnet-v2-stop
 #
 # Testnet V3 (Sepolia):
@@ -796,10 +795,10 @@ help:
 	@echo "  make fund WALLET=test AMOUNT=1000 ASSET=ZPH"
 	@echo ""
 	@echo "Testnet V2 (Production Build Mode):"
-	@echo "  make testnet-v2-build           Build all apps (pnpm build)"
 	@echo "  make testnet-v2-init            Init base devnet (same as dev-init)"
 	@echo "  make testnet-v2-setup           Setup bridge infra"
-	@echo "  make testnet-v2                 Start stack with production builds"
+	@echo "  make testnet-v2                 Sync env + build + start (turbo-cached)"
+	@echo "  make testnet-v2-build           Build only (no start)"
 	@echo "  make testnet-v2 APPS=bridge     Start specific app groups"
 	@echo "  make testnet-v2-stop            Stop everything"
 	@echo "  make testnet-v2-reset           Reset to post-setup state"

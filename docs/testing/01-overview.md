@@ -5,9 +5,8 @@ Master test document organized by level: Infrastructure, Component Smoke, Compon
 **Target:** Automated execution with explicit expected states and pass/fail criteria.
 
 **Automated runners:**
-- **L1-L4:** `./scripts/run-tests.py` (unified Python runner; `make test` / `make test-l1` / etc.)
-- **L5:** `./scripts/run-l5-tests.py`
-- Legacy bash wrappers (`run-tests.sh`, `run-l3-l4-tests.sh`) delegate to `run-tests.py`
+- **T1-T5:** `./scripts/run-tests.py` (unified Python runner; `make precheck` / `make test-infra` / etc.)
+- **Edge:** `./scripts/run-l5-tests.py` (`make test-edge` / `make test-edge-execute`)
 
 ---
 

@@ -4,7 +4,7 @@ Test all 4 engine strategies via the evaluate endpoint. Requires DEVNET mode wit
 
 > **Edge-case scope:** Strategy-adjacent edge tests (RR boundaries, stale data, runtime allow/deny drift) are cataloged in [00-edge-case-scope.md](./00-edge-case-scope.md).
 >
-> **Runner:** Use `make test-l5` (or `./scripts/run-l5-tests.py`) for L5 planning/lint.
+> **Runner:** Use `make test-edge` (or `./scripts/run-l5-tests.py`) for edge-case planning/lint.
 >
 > **TBC note:** Any scenario marked `SCOPED-TBC` in the scope catalog still needs command-level runbook guidance before execution.
 

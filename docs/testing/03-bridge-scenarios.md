@@ -6,7 +6,7 @@ End-to-end test flows for the Zephyr ↔ EVM bridge.
 >
 > **Edge-case scope:** This doc is the primary target for `ZB-SEC`, `ZB-SC`, `ZB-CONC`, `ZB-REC`, `ZB-CONS`, `ZB-ASSET`, `ZB-TIME`, and `ZB-PRIV` scenarios in [00-edge-case-scope.md](./00-edge-case-scope.md).
 >
-> **Runner:** Use `make test-l5` (or `./scripts/run-l5-tests.py`) for L5 planning/lint.
+> **Runner:** Use `make test-edge` (or `./scripts/run-l5-tests.py`) for edge-case planning/lint.
 >
 > **TBC note:** Any scenario marked `SCOPED-TBC` in the scope catalog still needs command-level runbook guidance before execution.
 

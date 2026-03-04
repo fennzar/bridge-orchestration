@@ -28,7 +28,11 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/compose.sh"
+source "$SCRIPT_DIR/lib/prereqs.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
+
+require_tool docker
+require_tool overmind
 
 DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
@@ -176,7 +180,7 @@ else
     # Stop first so graceful shutdown writes state.json, THEN overwrite it.
     $DC_DEV stop anvil 2>/dev/null || true
     if [ -f "$ORCH_DIR/snapshots/anvil/post-setup.json" ]; then
-        /usr/bin/cp "$ORCH_DIR/snapshots/anvil/post-setup.json" "$ORCH_DIR/snapshots/anvil/state.json"
+        cp "$ORCH_DIR/snapshots/anvil/post-setup.json" "$ORCH_DIR/snapshots/anvil/state.json"
         log_info "Restored Anvil state from checkpoint"
     else
         log_warn "No Anvil snapshot found — EVM state not restored (run dev-setup to create one)"

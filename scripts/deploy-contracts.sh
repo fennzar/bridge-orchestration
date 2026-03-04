@@ -13,12 +13,16 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 # Load shared libraries
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/prereqs.sh"
 if ! load_env "$ORCH_DIR/.env"; then
     log_error ".env not found in $ORCH_DIR"
     exit 1
 fi
 
 # Validate required variables
+require_tool cast
+require_tool forge
+
 : "${FOUNDRY_REPO_PATH:?FOUNDRY_REPO_PATH not set}"
 : "${DEPLOYER_PRIVATE_KEY:?DEPLOYER_PRIVATE_KEY not set}"
 : "${BRIDGE_SIGNER_ADDRESS:?BRIDGE_SIGNER_ADDRESS not set}"
@@ -39,13 +43,13 @@ echo ""
 cd "$FOUNDRY_REPO_PATH"
 
 # Check Anvil is running
-if ! ~/.foundry/bin/cast block-number --rpc-url "$EVM_RPC_HTTP" &> /dev/null; then
+if ! cast block-number --rpc-url "$EVM_RPC_HTTP" &> /dev/null; then
     log_error "Anvil not running at $EVM_RPC_HTTP"
     log_info "Start with: cd $ORCH_DIR && docker compose up -d anvil"
     exit 1
 fi
 
-log_info "Current block: $(~/.foundry/bin/cast block-number --rpc-url "$EVM_RPC_HTTP")"
+log_info "Current block: $(cast block-number --rpc-url "$EVM_RPC_HTTP")"
 
 # Export for forge scripts
 export RPC_URL="$EVM_RPC_HTTP"
@@ -60,7 +64,7 @@ export SIGNER="$BRIDGE_SIGNER_ADDRESS"
 # Step 1: Deploy Mock USD tokens (USDC, USDT)
 # ===========================================
 log_info "Deploying mock USD tokens..."
-~/.foundry/bin/forge script script/00_DeployMockUSD.sol:DeployMockUSD \
+forge script script/00_DeployMockUSD.sol:DeployMockUSD \
     --sig "run()" \
     --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --broadcast -vvv
 
@@ -68,7 +72,7 @@ log_info "Deploying mock USD tokens..."
 # Step 2: Deploy Zephyr wrapped tokens
 # ===========================================
 log_info "Deploying Zephyr wrapped tokens (wZEPH, wZSD, wZRS, wZYS)..."
-~/.foundry/bin/forge script script/01_DeployZephyrTokens.sol:DeployZephyrTokens \
+forge script script/01_DeployZephyrTokens.sol:DeployZephyrTokens \
     --sig "run()" \
     --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --broadcast -vvv
 
@@ -93,7 +97,7 @@ if [ -n "$EXISTING_PERMIT2" ]; then
     log_info "Found existing Permit2 at: $EXISTING_PERMIT2"
     export PERMIT2_ADDRESS="$EXISTING_PERMIT2"
 fi
-~/.foundry/bin/forge script script/uniswap/00_DeployV4Stack.s.sol:DeployV4Stack \
+forge script script/uniswap/00_DeployV4Stack.s.sol:DeployV4Stack \
     --sig "run()" \
     --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --broadcast -vvv
 
@@ -104,7 +108,7 @@ MARKETS=("USDT-USDC" "wZSD-USDT" "wZYS-wZSD" "wZEPH-wZSD" "wZRS-wZEPH")
 
 for MARKET in "${MARKETS[@]}"; do
     log_info "Creating pool: $MARKET"
-    MARKET="$MARKET" ~/.foundry/bin/forge script script/uniswap/01_CreatePoolFromJson.s.sol:CreatePoolFromJson \
+    MARKET="$MARKET" forge script script/uniswap/01_CreatePoolFromJson.s.sol:CreatePoolFromJson \
         --sig "run()" \
         --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" -vvv
 done
@@ -115,7 +119,7 @@ done
 # The deployer already has 1M USDC + 1M USDT from 00_DeployMockUSD.sol.
 # Seed this large stablecoin pool directly — engine doesn't need to waste inventory on it.
 log_info "Seeding USDT-USDC pool from deployer..."
-MARKET="USDT-USDC" ~/.foundry/bin/forge script script/uniswap/02_AddLiquidityFromJson.s.sol:AddLiquidityFromJson \
+MARKET="USDT-USDC" forge script script/uniswap/02_AddLiquidityFromJson.s.sol:AddLiquidityFromJson \
     --sig "run()" \
     --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" -vvv
 log_success "USDT-USDC pool seeded from deployer"
@@ -167,7 +171,7 @@ fi
 # ===========================================
 log_info "Creating Anvil state snapshot..."
 mkdir -p "$ANVIL_SNAPSHOT_DIR" 2>/dev/null || true
-if ~/.foundry/bin/cast rpc anvil_dumpState --rpc-url "$EVM_RPC_HTTP" > "$ANVIL_SNAPSHOT_DIR/post-deploy.hex" 2>/dev/null; then
+if cast rpc anvil_dumpState --rpc-url "$EVM_RPC_HTTP" > "$ANVIL_SNAPSHOT_DIR/post-deploy.hex" 2>/dev/null; then
     log_success "Snapshot saved: $ANVIL_SNAPSHOT_DIR/post-deploy.hex"
 else
     log_warn "Could not save Anvil snapshot (permission issue?)"
@@ -178,6 +182,6 @@ echo "==========================================="
 log_success "Deployment complete"
 echo "==========================================="
 echo ""
-echo "Block: $(~/.foundry/bin/cast block-number --rpc-url "$EVM_RPC_HTTP")"
+echo "Block: $(cast block-number --rpc-url "$EVM_RPC_HTTP")"
 echo "Addresses: $ORCH_DIR/config/addresses.json"
 echo ""

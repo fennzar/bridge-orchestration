@@ -170,9 +170,9 @@ def detect_paths() -> dict[str, str]:
             path_parts.append(str(Path(node_bin).parent))
 
     # foundry
-    foundry_bin = Path.home() / ".foundry" / "bin"
-    if foundry_bin.exists():
-        path_parts.append(str(foundry_bin))
+    cast_bin = shutil.which("cast")
+    if cast_bin:
+        path_parts.append(str(Path(cast_bin).parent))
 
     path_parts.append("$PATH")
     paths["PATH"] = ":".join(path_parts)

@@ -13,7 +13,7 @@ import sys
 import time as _time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, TypedDict
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -27,12 +27,15 @@ SKIP = "SKIP"
 ResultStatus = Literal["PASS", "FAIL", "BLOCKED", "SKIP"]
 
 
-class TestResult(TypedDict):
+class _TestResultOptional(TypedDict, total=False):
+    module: str
+    category: str
+
+
+class TestResult(_TestResultOptional):
     test_id: str
     result: str
     detail: str
-    module: NotRequired[str]
-    category: NotRequired[str]
 
 
 @dataclass

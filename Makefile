@@ -217,6 +217,7 @@ dev-start:
 
 ## Base Zephyr devnet init, then stop (~4 min). Use DEVNET_MODE=mirror for mainnet supply.
 dev-init:
+	@$(MAKE) precheck
 	@if [ ! -f .env ]; then \
 		echo "ERROR: .env not found. Run: make keygen"; \
 		exit 1; \
@@ -322,6 +323,7 @@ dev-init-mirror:
 
 ## Bridge infrastructure setup on top of dev-init, then stop (~4 min)
 dev-setup:
+	@$(MAKE) precheck
 	@if [ ! -f .env ]; then \
 		echo "ERROR: .env not found. Run: make keygen"; \
 		exit 1; \

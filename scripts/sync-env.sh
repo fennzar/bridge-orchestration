@@ -13,11 +13,15 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 # Load shared libraries
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/prereqs.sh"
 if ! load_env "$ORCH_DIR/.env"; then
     echo "Error: $ORCH_DIR/.env not found"
     echo "Run: cp .env.example .env"
     exit 1
 fi
+
+require_tool python3
+require_tool pnpm
 
 echo "==========================================="
 echo "  Sync Environment Files"

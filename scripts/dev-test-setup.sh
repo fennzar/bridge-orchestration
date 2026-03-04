@@ -271,7 +271,7 @@ mkdir -p "$ORCH_DIR/snapshots/anvil" && chmod a+w "$ORCH_DIR/snapshots/anvil"
 $DC_DEV stop anvil
 sleep 2
 if [ -s "$ORCH_DIR/snapshots/anvil/state.json" ]; then
-    /usr/bin/cp "$ORCH_DIR/snapshots/anvil/state.json" "$ORCH_DIR/snapshots/anvil/post-setup.json"
+    cp "$ORCH_DIR/snapshots/anvil/state.json" "$ORCH_DIR/snapshots/anvil/post-setup.json"
     log_success "Anvil snapshot saved ($(du -h "$ORCH_DIR/snapshots/anvil/post-setup.json" | cut -f1))"
 else
     log_warn "Anvil state.json not found after stop — dev-reset will start Anvil fresh"

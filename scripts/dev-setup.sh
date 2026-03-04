@@ -20,7 +20,13 @@ source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/compose.sh"
 source "$SCRIPT_DIR/lib/disk.sh"
+source "$SCRIPT_DIR/lib/prereqs.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
+
+require_tool docker
+require_tool overmind
+require_tool python3
+require_tool cast
 
 # Cleanup disk if low before heavy operations
 maybe_cleanup_disk
@@ -184,9 +190,9 @@ $DC_DEV stop anvil
 rm -f "$ORCH_DIR/snapshots/anvil/state.json"
 $DC_DEV start anvil
 log_info "Waiting for Anvil..."
-for i in $(seq 1 20); do
+for i in $(seq 1 30); do
     cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break
-    sleep 0.5
+    sleep 1
 done
 
 log_info "Deploying EVM contracts..."
@@ -271,7 +277,7 @@ mkdir -p "$ORCH_DIR/snapshots/anvil" && chmod a+w "$ORCH_DIR/snapshots/anvil"
 $DC_DEV stop anvil
 sleep 2
 if [ -s "$ORCH_DIR/snapshots/anvil/state.json" ]; then
-    /usr/bin/cp "$ORCH_DIR/snapshots/anvil/state.json" "$ORCH_DIR/snapshots/anvil/post-setup.json"
+    cp "$ORCH_DIR/snapshots/anvil/state.json" "$ORCH_DIR/snapshots/anvil/post-setup.json"
     log_success "Anvil snapshot saved ($(du -h "$ORCH_DIR/snapshots/anvil/post-setup.json" | cut -f1))"
 else
     log_warn "Anvil state.json not found after stop — dev-reset will start Anvil fresh"

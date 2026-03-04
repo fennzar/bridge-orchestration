@@ -323,6 +323,15 @@ check_forge() {
     fi
 }
 
+check_cast() {
+    if command -v cast &>/dev/null; then
+        local ver; ver=$(cast --version 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+' || echo "?")
+        add_result "cast" "$ver" "ok"
+    else
+        add_result "cast" "not found" "missing"
+    fi
+}
+
 check_overmind() {
     if command -v overmind &>/dev/null; then
         local ver; ver=$(overmind --version 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+' || echo "?")
@@ -648,6 +657,7 @@ phase_prereqs() {
     check_docker
     check_docker_compose
     check_forge
+    check_cast
     check_overmind
     check_tmux
     check_jq
@@ -737,7 +747,7 @@ phase_prereqs() {
 
     # Tier 2: Custom installs (one at a time, exit with re-run)
     # Process in dependency order: docker → docker compose → node → pnpm → forge → overmind
-    local -a ordered=(docker "docker compose" node pnpm forge overmind)
+    local -a ordered=(docker "docker compose" node pnpm forge cast overmind)
     for tool in "${ordered[@]}"; do
         local is_missing=false
         for name in "${missing_names[@]}"; do
@@ -750,7 +760,7 @@ phase_prereqs() {
             pnpm)            install_pnpm ;;
             docker)          install_docker ;;
             "docker compose") install_docker_compose ;;
-            forge)           install_forge ;;
+            forge|cast)      install_forge ;;
             overmind)        install_overmind ;;
         esac
     done

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -142,7 +143,7 @@ def run_forge(foundry_path: str, script: str, sig: str, rpc_url: str,
         env.update(extra_env)
 
     cmd = [
-        os.path.expanduser("~/.foundry/bin/forge"), "script", script,
+        shutil.which("forge") or "forge", "script", script,
         "--sig", sig,
         "--rpc-url", rpc_url,
         "--broadcast", "--private-key", private_key, "-vvv",
@@ -512,7 +513,7 @@ def step_add_liquidity(foundry_path: str, engine_pk: str, rpc_url: str,
         env["DEPLOYER_KEY"] = engine_pk
 
         cmd = [
-            os.path.expanduser("~/.foundry/bin/forge"), "script",
+            shutil.which("forge") or "forge", "script",
             "script/uniswap/02_AddLiquidityFromJson.s.sol:AddLiquidityFromJson",
             "--sig", "run()",
             "--rpc-url", rpc_url,

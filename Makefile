@@ -286,10 +286,10 @@ dev-init:
 	@$(MAKE) build-orderbook
 	@# 5. Pre-create Anvil state dir (writable by foundry uid 1000 in container)
 	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
-	@# 6. Build Zephyr binaries if missing, then start infrastructure
-	@DEVNET_MODE=$(or $(DEVNET_MODE),custom) $(ZEPHYR_DEVNET_SH) ensure-binaries
+	@# 6. Build Docker images (Zephyr builds from source inside container)
 	@echo ""
 	@echo "=== Building Docker images ==="
+	@DEVNET_MODE=$(or $(DEVNET_MODE),custom) $(DC_DEV) build zephyr-node1
 	@$(DC_DEV) build
 	@echo "=== Starting Docker infrastructure ==="
 	@$(DC_DEV) up -d

@@ -40,8 +40,12 @@ SHELL := /bin/bash
 # Save system PATH before .env overrides it
 SYSTEM_PATH := $(PATH)
 -include .env
-# Restore PATH (the .env PATH uses $PATH which doesn't expand in Make)
-export PATH := $(SYSTEM_PATH)
+# .env PATH looks like "/some/bin:/other/bin:$PATH" — Make can't expand the
+# literal $PATH, so we restore the real system PATH and prepend the extra dirs
+# extracted via shell. Must use SYSTEM_PATH for the shell command since -include
+# corrupts Make's PATH variable.
+ENV_PATH_EXTRA := $(shell export PATH='$(SYSTEM_PATH)'; grep '^PATH=' .env 2>/dev/null | head -1 | sed 's/^PATH=//;s/:\$$PATH$$//' | grep -v '^$$')
+export PATH := $(if $(ENV_PATH_EXTRA),$(ENV_PATH_EXTRA):)$(SYSTEM_PATH)
 
 ORCH_DIR        := $(CURDIR)
 PROCFILE        ?= $(ORCH_DIR)/Procfile.dev

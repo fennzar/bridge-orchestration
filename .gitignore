@@ -42,6 +42,9 @@ env/.env.testnet-v3
 env/.env.prod
 deployed-addresses.json
 
+# Private docs
+docs/private_docs/
+
 # AI/IDE tooling (not for public consumption)
 CLAUDE.md
 .claude/

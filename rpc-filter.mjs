@@ -3,7 +3,7 @@
  *
  * Sits between nginx and Anvil to allowlist safe JSON-RPC methods.
  * Blocks dangerous methods like eth_sendTransaction (which Anvil auto-signs
- * with dev accounts) and all anvil_*/debug_* admin methods.
+ * with dev accounts) and all anvil_/debug_ admin methods.
  *
  * eth_sendRawTransaction IS allowed — it requires a real wallet signature,
  * so MetaMask users can still send transactions normally.

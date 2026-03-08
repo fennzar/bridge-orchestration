@@ -81,5 +81,6 @@ No fake services. No second node. No test wallets.
 - Bridge wallet file must be backed up securely
 - Zephyr node RPC must not be exposed publicly
 - Database must use strong passwords and TLS
-- Caddy must be the only public-facing service
+- Caddy/nginx must be the only public-facing service — firewall all app ports
 - Engine (if deployed) should be on a separate server with its own security boundary
+- **If using Anvil** (testnet only): the `rpc-filter.mjs` proxy is mandatory for public-facing deployments — see [testnet-v2.md](./testnet-v2.md#security-rpc-filter-proxy) for details on the attack vector and proxy setup

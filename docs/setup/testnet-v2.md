@@ -87,7 +87,82 @@ Same as dev mode — all services run on localhost:
 | Engine | 7000 |
 | Dashboard | 7100 |
 | Anvil (EVM) | 8545 |
+| RPC Filter Proxy | 8546 |
 | Blockscout | 4000 |
+
+## Remote Server Deployment
+
+When deploying testnet-v2 to a public-facing server, additional hardening is required. Anvil's RPC endpoint allows arbitrary code execution if exposed — see [Security: RPC Filter Proxy](#security-rpc-filter-proxy) below.
+
+### Server Setup Checklist
+
+1. **Firewall** — only expose SSH (22) and your reverse proxy (80/443). Block all app ports:
+   ```bash
+   ufw default deny incoming
+   ufw allow 22/tcp
+   ufw allow 'Nginx Full'    # or 80/tcp and 443/tcp
+   ufw enable
+   ```
+   Never open 8545 (Anvil), 4000 (Blockscout), 7000/7050/7051/7100 (apps), or 47767 (Zephyr RPC) to the internet.
+
+2. **Reverse proxy (nginx)** — terminate TLS and proxy to localhost services:
+   ```nginx
+   # Anvil EVM RPC — MUST go through the filter proxy (port 8546), never direct to 8545
+   location = /rpc/evm {
+       proxy_pass http://127.0.0.1:8546/;
+       proxy_http_version 1.1;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+   }
+
+   # Bridge API (supports SSE streams)
+   location /api/ {
+       proxy_pass http://127.0.0.1:7051/;
+       proxy_buffering off;
+       proxy_cache off;
+       proxy_read_timeout 86400;
+   }
+
+   # Bridge UI (catch-all)
+   location / {
+       proxy_pass http://127.0.0.1:7050;
+   }
+   ```
+
+3. **Environment overrides** — set these in `.env` before running `sync-env.sh`:
+   ```bash
+   PUBLIC_HOST=your-server-ip-or-domain
+   PUBLIC_PROTOCOL=https
+   NEXT_PUBLIC_ANVIL_RPC=https://your-domain.com/rpc/evm
+   NEXT_PUBLIC_API_URL=https://your-domain.com/api
+   NEXT_PUBLIC_ANVIL_EXPLORER_URL=http://your-server-ip:4000  # or omit if Blockscout is not exposed
+   ```
+
+4. **Start the stack** — same as local, plus the RPC filter runs automatically via Procfile:
+   ```bash
+   make testnet-v2-init && make testnet-v2-setup && make testnet-v2
+   ```
+
+### Security: RPC Filter Proxy
+
+Foundry's Anvil is a development tool — it auto-signs transactions with dev accounts and supports cheatcodes like `vm.ffi()` that execute arbitrary shell commands on the host. **Exposing Anvil's RPC port (8545) to the internet allows full remote code execution.**
+
+The `rpc-filter.mjs` proxy (managed by Overmind, listening on `127.0.0.1:8546`) sits between nginx and Anvil to allowlist only safe JSON-RPC methods:
+
+| Allowed | Blocked |
+|---------|---------|
+| `eth_chainId`, `eth_blockNumber`, `eth_call`, `eth_getBalance`, `eth_getLogs`, etc. | `eth_sendTransaction` (Anvil auto-signs with dev keys) |
+| `eth_sendRawTransaction` (wallet-signed, safe) | `anvil_*` (admin/cheatcode methods) |
+| `eth_estimateGas`, `eth_gasPrice`, `eth_feeHistory` | `debug_*`, `evm_*` (state manipulation) |
+| `net_version`, `web3_clientVersion` | Any unlisted method |
+
+MetaMask and other wallets work normally — they use `eth_sendRawTransaction` which sends pre-signed transactions. The blocked method is `eth_sendTransaction`, which tells Anvil to sign with its own dev accounts (the exploit vector).
+
+Blockscout's `/api/eth-rpc` endpoint also proxies to Anvil and is a secondary attack vector. Either don't expose Blockscout publicly, or firewall port 4000.
+
+**The filter proxy runs as part of the Overmind Procfile** — no separate systemd service is needed. It starts and stops with the rest of the stack.
 
 ## Troubleshooting
 

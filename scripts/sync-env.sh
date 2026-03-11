@@ -129,6 +129,8 @@ log_success "Created $BRIDGE_REPO_PATH/.env.local"
 log_info "Syncing addresses to bridge..."
 ADDR_SRC="${ORCHESTRATION_PATH}/config/addresses.local.json"
 if [ -f "$ADDR_SRC" ]; then
+  mkdir -p "$BRIDGE_REPO_PATH/apps/api/config"
+  mkdir -p "$BRIDGE_REPO_PATH/packages/config/src/addresses"
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/apps/api/config/addresses.local.json"
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/packages/config/src/addresses/addresses.local.json"
   log_success "Copied addresses to bridge API + config package"

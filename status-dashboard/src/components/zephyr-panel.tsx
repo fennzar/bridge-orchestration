@@ -573,6 +573,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
   const [mode, setMode] = useState<"send" | "convert">("send");
   const [fromWallet, setFromWallet] = useState("gov");
   const [toWallet, setToWallet] = useState("test");
+  const [customAddress, setCustomAddress] = useState("");
   const [amount, setAmount] = useState("");
   const [sourceAsset, setSourceAsset] = useState<AssetType>("ZPH");
   const [destAsset, setDestAsset] = useState<AssetType>("ZPH");
@@ -605,7 +606,15 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
     try {
       const body =
         mode === "send"
-          ? { fromWallet, toWallet, amount: parsedAmount, sourceAsset, destAsset: sourceAsset }
+          ? {
+              fromWallet,
+              ...(toWallet === "custom"
+                ? { toAddress: customAddress.trim() }
+                : { toWallet }),
+              amount: parsedAmount,
+              sourceAsset,
+              destAsset: sourceAsset,
+            }
           : { fromWallet, toWallet: fromWallet, amount: parsedAmount, sourceAsset, destAsset };
 
       const response = await fetch("/api/chain/transfer", {
@@ -617,10 +626,11 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
 
       if (result.success) {
         const txInfo = result.txHash ? ` (tx: ${result.txHash.slice(0, 16)}...)` : "";
+        const dest = toWallet === "custom" ? customAddress.trim().slice(0, 8) + "..." : toWallet;
         setFeedback({
           type: "success",
           message: mode === "send"
-            ? `Sent ${parsedAmount} ${sourceAsset}: ${fromWallet} -> ${toWallet}${txInfo}`
+            ? `Sent ${parsedAmount} ${sourceAsset}: ${fromWallet} -> ${dest}${txInfo}`
             : `Converted ${parsedAmount} ${sourceAsset} -> ${destAsset}${txInfo}`,
         });
         setAmount("");
@@ -688,8 +698,21 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
                 {WALLET_NAMES.filter((w) => w !== fromWallet).map((w) => (
                   <option key={w} value={w}>{w}</option>
                 ))}
+                <option value="custom">custom</option>
               </select>
             </div>
+            {toWallet === "custom" && (
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Address</label>
+                <input
+                  type="text"
+                  placeholder="Zephyr address..."
+                  value={customAddress}
+                  onChange={(e) => setCustomAddress(e.target.value)}
+                  className={`${INPUT_CLASS} w-48`}
+                />
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Amount</label>
               <input
@@ -716,7 +739,7 @@ function TransferSection({ onComplete }: { onComplete: () => void }) {
             <Button
               size="sm"
               onClick={handleSubmit}
-              disabled={submitting || !amount.trim()}
+              disabled={submitting || !amount.trim() || (toWallet === "custom" && !customAddress.trim())}
             >
               {submitting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
               Send

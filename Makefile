@@ -165,11 +165,12 @@ build-orderbook:
 # Dev Environment
 # ===========================================
 
-.PHONY: dev dev-start dev-init dev-init-mirror dev-setup dev-delete dev-apps dev-stop dev-explorer dev-reset dev-reset-hard dev-checkpoint status logs clean seed-engine scan-pools
+.PHONY: dev dev-start dev-init dev-init-mirror dev-setup dev-delete dev-apps dev-stop dev-explorer dev-reset dev-reset-hard dev-checkpoint status status-git status-git-diff logs clean seed-engine scan-pools
 
 ## Start the stack (no init, no setup — just start)
 dev: dev-start
 dev-start:
+	@./scripts/check-repos.sh || { rc=$$?; if [ $$rc -eq 2 ]; then exit 0; else exit $$rc; fi; }
 	@if [ ! -f .env ]; then \
 		echo "ERROR: .env not found. Run: make keygen"; \
 		exit 1; \
@@ -444,6 +445,14 @@ sanity-check:
 ## Check health of all services and pipeline state
 status:
 	@./scripts/status.sh
+
+## Git status across all repos (file changes, untracked)
+status-git:
+	@./scripts/status-git.sh
+
+## Git diff across all repos
+status-git-diff:
+	@./scripts/status-git.sh --diff
 
 ## Tail logs for a service (usage: make logs SERVICE=zephyr-node1)
 logs:

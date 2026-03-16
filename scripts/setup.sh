@@ -30,13 +30,8 @@ NODE_MIN=22
 NVM_VERSION="0.40.1"
 OVERMIND_VERSION="2.5.1"
 
-# name|git_url|clone_flags
-REPOS=(
-    "zephyr-eth-foundry|git@github.com:fennzar/zephyr-uniswap-v4-foundry.git|--recursive"
-    "zephyr-bridge|git@github.com:fennzar/zephyr-bridge.git|"
-    "zephyr-bridge-engine|git@github.com:fennzar/zephyr-bridge-engine.git|"
-    "zephyr|git@github.com:fennzar/zephyr.git|--recursive"
-)
+# Repo definitions and shared git helpers
+source "$SCRIPT_DIR/lib/repos.sh"
 
 # ── OS Detection ──────────────────────────────
 
@@ -76,6 +71,23 @@ ask_yn() {
         return 0
     fi
     printf "\n  %s [y/N] " "$prompt"
+    read -r ans </dev/tty
+    [[ "$ans" =~ ^[yY]$ ]]
+}
+
+# Like ask_yn but NEVER auto-accepts. For destructive operations.
+# Requires explicit interactive confirmation even with --yes.
+ask_yn_destructive() {
+    local prompt="$1"
+    if ! [ -t 0 ] || ! [ -t 1 ]; then
+        printf "\n  %s [y/N] n (non-interactive, skipped)\n" "$prompt"
+        return 1
+    fi
+    if $AUTO_YES; then
+        printf "\n  %s [y/N] (--yes does not apply here) " "$prompt"
+    else
+        printf "\n  %s [y/N] " "$prompt"
+    fi
     read -r ans </dev/tty
     [[ "$ans" =~ ^[yY]$ ]]
 }
@@ -204,13 +216,14 @@ run_parallel_tasks() {
         [ "$done_count" -lt "$total" ] && sleep 0.1
     done
 
-    # Show error details
+    # Show error details (before cleanup so log files are still available)
     if [ "$failed" -gt 0 ]; then
         echo ""
         for i in "${!TASK_NAMES[@]}"; do
             if [ -n "${TASK_RESULTS[$i]}" ] && [ "${TASK_RESULTS[$i]}" != "skip" ] && [ "${TASK_RESULTS[$i]}" -ne 0 ]; then
                 echo -e "  ${RED}${TASK_NAMES[$i]}:${NC}"
-                cat "${logs[$i]}" 2>/dev/null | tail -5 | sed 's/^/    /'
+                cat "${logs[$i]}" 2>/dev/null | tail -20 | sed 's/^/    /'
+                echo ""
             fi
         done
     fi
@@ -766,28 +779,169 @@ phase_prereqs() {
     done
 }
 
-# ── Phase 3: Clone Repos ─────────────────────
+# ── Phase 3: Clone & Update Repos ────────────
+
+# Update an existing repo: fetch, check state, pull if possible.
+# Handles dirty worktrees, diverged branches, and detached HEAD.
+# Returns 0 on success (updated or already up to date), 1 on skip/error.
+update_repo() {
+    local dir="$1"
+    local repo_path="$PARENT/$dir"
+
+    # Fetch latest from remote
+    if ! git -C "$repo_path" fetch --quiet 2>/dev/null; then
+        echo -e "  ${RED}✗${NC} $(pad "$dir" 25)fetch failed"
+        return 1
+    fi
+
+    local branch; branch=$(git -C "$repo_path" branch --show-current 2>/dev/null)
+    local short_local; short_local=$(git -C "$repo_path" rev-parse --short HEAD 2>/dev/null)
+
+    # Detached HEAD, no upstream, up to date, or dirty+ahead — use shared display
+    if [ -z "$branch" ]; then
+        repo_status "$dir"
+        return 0
+    fi
+
+    local dirty=false
+    if ! git -C "$repo_path" diff --quiet 2>/dev/null || \
+       ! git -C "$repo_path" diff --cached --quiet 2>/dev/null || \
+       [ -n "$(git -C "$repo_path" ls-files --others --exclude-standard 2>/dev/null | head -1)" ]; then
+        dirty=true
+    fi
+
+    local upstream; upstream=$(git -C "$repo_path" rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "")
+    if [ -z "$upstream" ]; then
+        repo_status "$dir"
+        return 0
+    fi
+
+    local local_sha; local_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null)
+    local remote_sha; remote_sha=$(git -C "$repo_path" rev-parse "$upstream" 2>/dev/null)
+    local short_remote; short_remote=$(git -C "$repo_path" rev-parse --short "$upstream" 2>/dev/null)
+
+    # Already up to date — use shared display
+    if [ "$local_sha" = "$remote_sha" ]; then
+        repo_status "$dir"
+        return 0
+    fi
+
+    # Determine relationship: ahead, behind, or diverged
+    local merge_base; merge_base=$(git -C "$repo_path" merge-base "$local_sha" "$remote_sha" 2>/dev/null)
+    local is_behind=false
+    [ "$merge_base" = "$local_sha" ] && is_behind=true
+
+    if $dirty; then
+        local changes; changes=$(git -C "$repo_path" status --short 2>/dev/null | wc -l)
+
+        if ! $is_behind; then
+            # Dirty but not behind — use shared display (shows ahead + uncommitted)
+            repo_status "$dir"
+            return 0
+        fi
+
+        # Dirty and behind (or diverged) — need interactive prompt
+        repo_status "$dir"
+        echo ""
+        echo -e "    ${DIM}Uncommitted changes:${NC}"
+        git -C "$repo_path" status --short 2>/dev/null | head -5 | sed 's/^/      /'
+        local total; total=$(git -C "$repo_path" status --short 2>/dev/null | wc -l)
+        [ "$total" -gt 5 ] && echo -e "      ${DIM}... and $((total - 5)) more${NC}"
+        echo ""
+        echo -e "    ${DIM}New commits on remote:${NC}"
+        _show_commits "$repo_path" "$merge_base" "$remote_sha" "+"
+        echo ""
+
+        if ask_yn "Stash changes and pull? (your changes are saved in git stash)"; then
+            git -C "$repo_path" stash --quiet --include-untracked 2>/dev/null
+            if git -C "$repo_path" pull --ff-only --quiet 2>/dev/null; then
+                echo -e "  ${GREEN}✓${NC} $(pad "$dir" 25)stashed + pulled → ${short_remote}"
+                echo -e "    ${DIM}Restore later: cd $repo_path && git stash pop${NC}"
+            else
+                git -C "$repo_path" stash pop --quiet 2>/dev/null || true
+                echo -e "  ${RED}✗${NC} $(pad "$dir" 25)pull failed (changes restored)"
+                return 1
+            fi
+        else
+            echo -e "  ${DIM}-${NC} ${DIM}$(pad "$dir" 25)skipped (uncommitted changes)${NC}"
+        fi
+        return 0
+    fi
+
+    # Clean worktree — try fast-forward
+    if [ "$merge_base" = "$local_sha" ]; then
+        # Local is behind remote — show status then fast-forward
+        repo_status "$dir"
+        local behind; behind=$(git -C "$repo_path" rev-list --count "$local_sha".."$remote_sha" 2>/dev/null || echo "?")
+        if git -C "$repo_path" pull --ff-only --quiet 2>/dev/null; then
+            # Self-update: if bridge-orchestration was updated, scripts may have changed
+            if [ "$dir" = "bridge-orchestration" ]; then
+                SELF_UPDATED=true
+            fi
+        else
+            echo -e "  ${RED}✗${NC} $(pad "$dir" 25)pull failed"
+            return 1
+        fi
+    elif [ "$merge_base" = "$remote_sha" ]; then
+        # Local is ahead of remote — show status then offer reset
+        local ahead; ahead=$(git -C "$repo_path" rev-list --count "$remote_sha".."$local_sha" 2>/dev/null || echo "?")
+        repo_status "$dir"
+        echo ""
+        echo -e "    ${RED}${BOLD}WARNING:${NC} Resetting will ${RED}permanently discard${NC} these ${ahead} local commits."
+        echo -e "    ${DIM}Only do this if you're sure these commits are not needed.${NC}"
+
+        if ask_yn_destructive "Reset ${dir} to origin/${branch}? (${ahead} commits will be LOST)"; then
+            git -C "$repo_path" reset --hard "$upstream" --quiet 2>/dev/null
+            local new_short; new_short=$(git -C "$repo_path" rev-parse --short HEAD 2>/dev/null)
+            echo -e "  ${GREEN}✓${NC} $(pad "$dir" 25)reset → ${new_short}"
+        else
+            echo -e "  ${DIM}-${NC} ${DIM}$(pad "$dir" 25)kept (${ahead} unpushed commits)${NC}"
+        fi
+
+    else
+        # Diverged — show status then offer reset
+        local ahead; ahead=$(git -C "$repo_path" rev-list --count "$merge_base".."$local_sha" 2>/dev/null || echo "?")
+        local behind; behind=$(git -C "$repo_path" rev-list --count "$merge_base".."$remote_sha" 2>/dev/null || echo "?")
+        repo_status "$dir"
+        echo ""
+        echo -e "    ${RED}${BOLD}WARNING:${NC} Resetting will ${RED}permanently discard${NC} your ${ahead} local commits"
+        echo -e "    ${DIM}and replace them with the ${behind} remote commits.${NC}"
+
+        if ask_yn_destructive "Reset ${dir} to origin/${branch}? (${ahead} commits will be LOST)"; then
+            git -C "$repo_path" reset --hard "$upstream" --quiet 2>/dev/null
+            local new_short; new_short=$(git -C "$repo_path" rev-parse --short HEAD 2>/dev/null)
+            echo -e "  ${GREEN}✓${NC} $(pad "$dir" 25)reset → ${new_short}"
+        else
+            echo -e "  ${DIM}-${NC} ${DIM}$(pad "$dir" 25)kept (diverged, ${ahead} unpushed)${NC}"
+        fi
+    fi
+    return 0
+}
 
 phase_clone() {
     echo ""
-    echo "Cloning repositories..."
+    echo "Repositories..."
     echo ""
 
-    local cloned=0 existed=0 failed=0
+    local cloned=0 updated=0 failed=0
     local -a clone_dirs=() clone_urls=() clone_pids=() clone_logs=()
-    local -a all_dirs=() all_states=()  # track display order (existing + cloning)
+    local -a all_dirs=() all_states=()
+    local -a update_dirs=()
     local tmpdir; tmpdir=$(mktemp -d)
     local spinner_chars="$SPIN"
 
-    # Print initial state for all repos and kick off parallel clones
+    # Sort repos: kick off clones in parallel, queue updates for sequential processing
     for entry in "${REPOS[@]}"; do
         IFS='|' read -r dir url flags <<< "$entry"
         all_dirs+=("$dir")
 
-        if [ -d "$PARENT/$dir" ]; then
-            all_states+=("exists")
-            echo -e "  ${DIM}-${NC} ${DIM}$(pad "$dir" 23)already exists${NC}"
-            ((existed++)) || true
+        if [ -d "$PARENT/$dir/.git" ]; then
+            all_states+=("update")
+            update_dirs+=("$dir")
+        elif [ -d "$PARENT/$dir" ]; then
+            # Directory exists but not a git repo — skip
+            all_states+=("skip")
+            echo -e "  ${YELLOW}!${NC} $(pad "$dir" 23)exists but not a git repo (skipped)"
         else
             all_states+=("cloning")
             echo -e "  ${YELLOW}|${NC} $(pad "$dir" 23)cloning..."
@@ -801,18 +955,18 @@ phase_clone() {
         fi
     done
 
-    # Animate spinners and update lines as clones complete
+    # Wait for parallel clones to finish (with spinners)
     if [ ${#clone_pids[@]} -gt 0 ]; then
         local total=${#clone_pids[@]} done_count=0 spin_idx=0
         local -a clone_rc=()
         for i in "${!clone_pids[@]}"; do clone_rc+=(""); done
-        local num_lines=${#all_dirs[@]}
+        # Only redraw the clone lines (not update lines printed later)
+        local num_clone_lines=${#clone_pids[@]}
 
         while [ "$done_count" -lt "$total" ]; do
             spin_idx=$(( (spin_idx + 1) % ${#spinner_chars} ))
             local spin="${spinner_chars:$spin_idx:1}"
 
-            # Check for newly completed clones
             for i in "${!clone_pids[@]}"; do
                 [ -n "${clone_rc[$i]}" ] && continue
                 if ! kill -0 "${clone_pids[$i]}" 2>/dev/null; then
@@ -820,47 +974,30 @@ phase_clone() {
                     wait "${clone_pids[$i]}" || rc=$?
                     clone_rc[$i]="$rc"
                     ((done_count++)) || true
-                    if [ "$rc" -eq 0 ]; then
-                        ((cloned++)) || true
-                    else
-                        ((failed++)) || true
-                    fi
+                    if [ "$rc" -eq 0 ]; then ((cloned++)) || true; else ((failed++)) || true; fi
                 fi
             done
 
-            # Move cursor up to first line and redraw all
-            printf "\033[%dA" "$num_lines"
-
-            for j in "${!all_dirs[@]}"; do
-                local dir="${all_dirs[$j]}"
-                if [ "${all_states[$j]}" = "exists" ]; then
-                    printf "\r  ${DIM}-${NC} ${DIM}%-23s already exists${NC}%-20s\n" "$dir" ""
-                else
-                    # Find this dir's index in clone arrays
-                    local ci=""
-                    for k in "${!clone_dirs[@]}"; do
-                        if [ "${clone_dirs[$k]}" = "$dir" ]; then ci=$k; break; fi
-                    done
-                    if [ -n "$ci" ] && [ -n "${clone_rc[$ci]}" ]; then
-                        if [ "${clone_rc[$ci]}" -eq 0 ]; then
-                            printf "\r  ${GREEN}✓${NC} %-23s cloned%-30s\n" "$dir" ""
-                        else
-                            printf "\r  ${RED}✗${NC} %-23s clone failed%-24s\n" "$dir" ""
-                        fi
+            printf "\033[%dA" "$num_clone_lines"
+            for i in "${!clone_dirs[@]}"; do
+                if [ -n "${clone_rc[$i]}" ]; then
+                    if [ "${clone_rc[$i]}" -eq 0 ]; then
+                        printf "\r  ${GREEN}✓${NC} %-23s cloned%-30s\n" "${clone_dirs[$i]}" ""
                     else
-                        printf "\r  ${YELLOW}%s${NC} %-23s cloning...%-26s\n" "$spin" "$dir" ""
+                        printf "\r  ${RED}✗${NC} %-23s clone failed%-24s\n" "${clone_dirs[$i]}" ""
                     fi
+                else
+                    printf "\r  ${YELLOW}%s${NC} %-23s cloning...%-26s\n" "$spin" "${clone_dirs[$i]}" ""
                 fi
             done
 
             [ "$done_count" -lt "$total" ] && sleep 0.1
         done
 
-        # Show error details for failures
         if [ "$failed" -gt 0 ]; then
             echo ""
             for i in "${!clone_dirs[@]}"; do
-                if [ "${clone_rc[$i]}" -ne 0 ]; then
+                if [ -n "${clone_rc[$i]}" ] && [ "${clone_rc[$i]}" -ne 0 ]; then
                     echo -e "  ${RED}${clone_dirs[$i]}:${NC}"
                     cat "${clone_logs[$i]}" 2>/dev/null | tail -3 | sed 's/^/    /'
                 fi
@@ -870,8 +1007,8 @@ phase_clone() {
 
     rm -rf "$tmpdir"
 
-    echo ""
     if [ "$failed" -gt 0 ]; then
+        echo ""
         log_error "$failed clone(s) failed"
         echo ""
         echo -e "  ${DIM}Hint: verify SSH access with: ssh -T git@github.com${NC}"
@@ -879,44 +1016,51 @@ phase_clone() {
         echo "  Fix SSH access, then: make setup"
         exit 1
     fi
-    log_success "$cloned cloned, $existed already existed"
-}
 
-# ── Phase 4: Branch Display + Pause ──────────
+    # Update existing repos sequentially (may need user prompts)
+    if [ ${#update_dirs[@]} -gt 0 ]; then
+        for dir in "${update_dirs[@]}"; do
+            update_repo "$dir" || ((failed++)) || true
+        done
+    fi
 
-phase_branches() {
     echo ""
-    echo "Repository branches:"
-    echo ""
+    local parts=()
+    [ "$cloned" -gt 0 ] && parts+=("$cloned cloned")
+    [ "${#update_dirs[@]}" -gt 0 ] && parts+=("${#update_dirs[@]} checked")
+    local summary; summary=$(IFS=', '; echo "${parts[*]}")
+    [ -z "$summary" ] && summary="all repos ready"
+    log_success "$summary"
 
-    for entry in "${REPOS[@]}"; do
-        IFS='|' read -r dir _ _ <<< "$entry"
-        local repo_path="$PARENT/$dir"
-        [ -d "$repo_path/.git" ] || continue
-
-        local branch; branch=$(git -C "$repo_path" branch --show-current 2>/dev/null || echo "detached")
-        echo -e "  ${BOLD}$dir${NC}     $repo_path"
-        echo "    branch: $branch"
-
-        # Show remote branches (max 10)
-        local remotes; remotes=$(git -C "$repo_path" branch -r 2>/dev/null | grep -v HEAD | sed 's|origin/||;s/^[[:space:]]*//' | sort -u)
-        local count; count=$(echo "$remotes" | wc -l)
-        if [ "$count" -gt 10 ]; then
-            local shown; shown=$(echo "$remotes" | head -10 | paste -sd', ')
-            echo "    remote: $shown (+$((count - 10)) more)"
-        elif [ -n "$remotes" ]; then
-            local shown; shown=$(echo "$remotes" | paste -sd', ')
-            echo "    remote: $shown"
-        fi
+    # Self-update: if bridge-orchestration pulled new commits, restart
+    if [ "${SELF_UPDATED:-false}" = true ]; then
         echo ""
-    done
+        echo -e "  ${YELLOW}${BOLD}bridge-orchestration was updated.${NC}"
+        echo -e "  Scripts may have changed — re-run to use the latest version."
+        echo ""
+        echo -e "  ${BOLD}Run again:${NC} make setup"
+        echo ""
+        exit 0
+    fi
 
-    echo -e "  Verify you're on the correct branches before continuing."
-    echo -e "  ${DIM}For devnet: cd $PARENT/zephyr && git checkout fresh-dev-bootstrap${NC}"
-    echo ""
-    if ! $AUTO_YES; then
-        printf "  Press Enter to continue (or Ctrl-C to check out branches first)..."
-        read -r </dev/tty
+    # Check zephyr repo is on the expected devnet branch
+    local zephyr_path="$PARENT/zephyr"
+    if [ -d "$zephyr_path/.git" ]; then
+        local zephyr_branch; zephyr_branch=$(git -C "$zephyr_path" branch --show-current 2>/dev/null)
+        if [ "$zephyr_branch" != "$ZEPHYR_DEVNET_BRANCH" ]; then
+            echo ""
+            echo -e "  ${YELLOW}Note:${NC} The zephyr repo is on branch ${BOLD}${zephyr_branch}${NC}"
+            echo -e "  The devnet branch ${BOLD}${ZEPHYR_DEVNET_BRANCH}${NC} is required for dev and testnet-v2."
+            echo ""
+            if ask_yn "Switch to ${ZEPHYR_DEVNET_BRANCH}? (recommended)"; then
+                if git -C "$zephyr_path" checkout "$ZEPHYR_DEVNET_BRANCH" --quiet 2>/dev/null; then
+                    echo -e "  ${GREEN}✓${NC} Switched to ${ZEPHYR_DEVNET_BRANCH}"
+                else
+                    echo -e "  ${RED}✗${NC} Checkout failed — switch manually:"
+                    echo -e "    cd $zephyr_path && git checkout $ZEPHYR_DEVNET_BRANCH"
+                fi
+            fi
+        fi
     fi
 }
 
@@ -950,19 +1094,19 @@ phase_deps() {
     # CI=1 prevents pnpm from aborting on no-TTY (background tasks have no TTY)
     if [ -d "$bridge_dir" ]; then
         TASK_NAMES+=("[pnpm]  zephyr-bridge")
-        TASK_CMDS+=("cd '$bridge_dir' && CI=1 pnpm install --reporter=silent")
+        TASK_CMDS+=("cd '$bridge_dir' && pnpm install --no-frozen-lockfile --reporter=append-only")
         TASK_STATES+=("pending")
     fi
 
     # pnpm: zephyr-bridge-engine
     if [ -d "$engine_dir" ]; then
         TASK_NAMES+=("[pnpm]  zephyr-bridge-engine")
-        TASK_CMDS+=("cd '$engine_dir' && CI=1 pnpm install --reporter=silent")
+        TASK_CMDS+=("cd '$engine_dir' && pnpm install --no-frozen-lockfile --reporter=append-only")
         TASK_STATES+=("pending")
 
         if [ -d "$engine_dir/apps/web" ]; then
             TASK_NAMES+=("[pnpm]  engine/apps/web")
-            TASK_CMDS+=("cd '$engine_dir/apps/web' && CI=1 pnpm install --reporter=silent")
+            TASK_CMDS+=("cd '$engine_dir/apps/web' && pnpm install --no-frozen-lockfile --reporter=append-only")
             TASK_STATES+=("pending")
         fi
     fi
@@ -970,7 +1114,7 @@ phase_deps() {
     # pnpm: status-dashboard
     if [ -d "$ROOT/status-dashboard" ]; then
         TASK_NAMES+=("[pnpm]  status-dashboard")
-        TASK_CMDS+=("cd '$ROOT/status-dashboard' && CI=1 pnpm install --reporter=silent")
+        TASK_CMDS+=("cd '$ROOT/status-dashboard' && pnpm install --no-frozen-lockfile --reporter=append-only")
         TASK_STATES+=("pending")
     fi
 
@@ -994,6 +1138,7 @@ phase_deps() {
     echo ""
     if [ "$dep_failed" -gt 0 ]; then
         log_warn "$dep_failed dependency install(s) failed — review errors above"
+        SETUP_ERRORS+=("$dep_failed dependency install(s) failed")
     else
         log_success "All dependencies installed"
     fi
@@ -1105,9 +1250,22 @@ phase_keygen() {
 # ── Phase 7: Summary + Next Steps ────────────
 
 phase_summary() {
-    echo "=========================================="
-    echo "  Setup Complete"
-    echo "=========================================="
+    if [ ${#SETUP_ERRORS[@]} -gt 0 ]; then
+        echo -e "${RED}==========================================${NC}"
+        echo -e "${RED}  Setup Complete — with errors${NC}"
+        echo -e "${RED}==========================================${NC}"
+        echo ""
+        echo -e "  ${RED}Issues:${NC}"
+        for err in "${SETUP_ERRORS[@]}"; do
+            echo -e "    ${RED}✗${NC} $err"
+        done
+        echo ""
+        echo -e "  Fix the issues above, then run ${BOLD}make setup${NC} again."
+    else
+        echo -e "${GREEN}==========================================${NC}"
+        echo -e "${GREEN}  Setup Complete — ready to go${NC}"
+        echo -e "${GREEN}==========================================${NC}"
+    fi
     echo ""
     echo "  Repos:"
 
@@ -1121,27 +1279,69 @@ phase_summary() {
     done
 
     echo ""
-    echo "  Next steps:"
-    echo ""
-    if env_is_valid; then
-        echo "    1. make dev-init && make dev-setup && make dev"
-    else
-        echo "    1. make keygen       (generates keys + auto-sets ROOT and PATH)"
-        echo "    2. make dev-init && make dev-setup && make dev"
+    if [ ${#SETUP_ERRORS[@]} -eq 0 ]; then
+        # Detect current state to give the right next steps
+        local has_init=false has_setup=false
+        if docker volume ls -q --filter name=zephyr-checkpoint 2>/dev/null | grep -q .; then
+            has_init=true
+        fi
+        if [ -f "$ROOT/config/addresses.json" ]; then
+            has_setup=true
+        fi
+
+        echo "  Next steps:"
+        echo ""
+        if ! env_is_valid; then
+            echo "    1. make keygen  (generates keys + auto-sets ROOT and PATH)"
+            echo ""
+        fi
+
+        if $has_setup; then
+            echo -e "  ${DIM}Stack is initialized and set up (post-setup state).${NC}"
+            echo ""
+            echo -e "  ${BOLD}Testnet-v2 ${DIM}(deployed bridge server only)${NC}${BOLD}:${NC}"
+            echo -e "    make testnet-v2                                                   ${DIM}start${NC}"
+            echo -e "    make testnet-v2-reset && make testnet-v2                          ${DIM}soft reset${NC}"
+            echo -e "    ${DIM}make testnet-v2-reset-hard && make testnet-v2-setup && make testnet-v2  deep reset${NC}"
+            echo -e "    ${DIM}make testnet-v2-delete && make testnet-v2-init && make testnet-v2-setup && make testnet-v2  nuke${NC}"
+            echo ""
+            echo -e "  ${BOLD}Local development:${NC}"
+            echo -e "    make dev                                                          ${DIM}start${NC}"
+            echo -e "    make dev-reset && make dev                                        ${DIM}soft reset${NC}"
+            echo -e "    ${DIM}make dev-reset-hard && make dev-setup && make dev                        deep reset${NC}"
+            echo -e "    ${DIM}make dev-delete && make dev-init && make dev-setup && make dev            nuke${NC}"
+        elif $has_init; then
+            echo -e "  ${DIM}Stack is initialized but not yet set up (post-init state).${NC}"
+            echo ""
+            echo -e "  ${BOLD}Testnet-v2 ${DIM}(deployed bridge server only)${NC}${BOLD}:${NC}"
+            echo -e "    make testnet-v2-setup && make testnet-v2"
+            echo ""
+            echo -e "  ${BOLD}Local development:${NC}"
+            echo -e "    make dev-setup && make dev"
+        else
+            echo -e "  ${DIM}Fresh install — stack needs initialization.${NC}"
+            echo ""
+            echo -e "  ${BOLD}Testnet-v2 ${DIM}(deployed bridge server only)${NC}${BOLD}:${NC}"
+            echo -e "    make testnet-v2-init && make testnet-v2-setup && make testnet-v2"
+            echo ""
+            echo -e "  ${BOLD}Local development:${NC}"
+            echo -e "    make dev-init && make dev-setup && make dev"
+        fi
+        echo ""
     fi
-    echo ""
-    echo -e "  ${DIM}Docs: docs/setup/dev.md${NC}"
+    echo -e "  ${DIM}Docs: docs/setup/dev.md | docs/setup/testnet-v2.md${NC}"
     echo "=========================================="
     echo ""
 }
 
 # ── Main ──────────────────────────────────────
 
+SETUP_ERRORS=()
+
 detect_os
 print_header
 phase_prereqs
 phase_clone
-phase_branches
 phase_deps
 phase_zephyr_deps
 phase_verify_zephyr

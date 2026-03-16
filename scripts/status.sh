@@ -19,6 +19,9 @@ source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 load_env "$ORCH_DIR/.env" 2>/dev/null || true
 
+PARENT="$(cd "$ORCH_DIR/.." && pwd)"
+source "$SCRIPT_DIR/lib/repos.sh"
+
 ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
 
 # ── Docker Compose command ──────────────────
@@ -560,8 +563,18 @@ print_chain_vitals() {
 # Main
 # ===========================================
 
+print_repos() {
+    echo -e "${CYAN}━━━ Repositories (local only — run 'make status-git' to fetch) ━━━${NC}"
+    for entry in "${REPOS[@]}"; do
+        IFS='|' read -r dir _ _ <<< "$entry"
+        repo_status "$dir"
+    done
+    echo ""
+}
+
 detect_stage
 print_stage
+print_repos
 print_persisted_state
 print_docker_services
 print_docker_warnings
@@ -569,3 +582,5 @@ print_overmind_processes
 print_chain_vitals
 
 echo -e "${BOLD}==========================================${NC}"
+echo -e "  ${DIM}make status-git        file changes across all repos${NC}"
+echo -e "  ${DIM}make status-git-diff   full diff across all repos${NC}"

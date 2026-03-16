@@ -10,7 +10,8 @@ export const meta: RouteMeta = {
     "Transfer assets between wallets or convert between asset types (ZPH\u2194ZSD, ZPH\u2194ZRS, ZSD\u2194ZYS).",
   request: [
     { name: "fromWallet", type: "string", required: true, description: "Source wallet (gov, miner, test, bridge, engine)" },
-    { name: "toWallet", type: "string", description: "Destination wallet (for same-asset transfers)" },
+    { name: "toWallet", type: "string", description: "Destination wallet name (for same-asset transfers to known wallets)" },
+    { name: "toAddress", type: "string", description: "Destination Zephyr address (for same-asset transfers to arbitrary addresses)" },
     { name: "amount", type: "number", required: true, description: "Amount to transfer" },
     { name: "sourceAsset", type: "string", required: true, description: "Source asset (ZPH, ZSD, ZRS, ZYS)" },
     { name: "destAsset", type: "string", required: true, description: "Destination asset (same for transfer, different for conversion)" },
@@ -36,7 +37,8 @@ const VALID_CONVERSIONS: [string, string][] = [
 
 interface TransferRequest {
   fromWallet: string;
-  toWallet: string;
+  toWallet?: string;
+  toAddress?: string;
   amount: number;
   sourceAsset: string;
   destAsset: string;
@@ -53,7 +55,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { fromWallet, toWallet, amount, sourceAsset, destAsset } = body;
+  const { fromWallet, toWallet, toAddress, amount, sourceAsset, destAsset } = body;
 
   if (!fromWallet || !amount || !sourceAsset || !destAsset) {
     return NextResponse.json(
@@ -79,30 +81,37 @@ export async function POST(request: Request) {
 
   try {
     if (sourceAsset === destAsset) {
-      // Same-asset transfer between wallets
-      if (!toWallet || toWallet === fromWallet) {
-        return NextResponse.json(
-          { success: false, error: "Must specify a different destination wallet for transfers" },
-          { status: 400 }
-        );
+      // Same-asset transfer — either to a known wallet or a custom address
+      let resolvedAddress: string | null = null;
+
+      if (toAddress) {
+        // Custom address provided directly
+        resolvedAddress = toAddress.trim();
+      } else if (toWallet) {
+        if (toWallet === fromWallet) {
+          return NextResponse.json(
+            { success: false, error: "Must specify a different destination wallet for transfers" },
+            { status: 400 }
+          );
+        }
+        const toPort = WALLET_PORTS[toWallet];
+        if (!toPort) {
+          return NextResponse.json(
+            { success: false, error: `Unknown wallet: ${toWallet}` },
+            { status: 400 }
+          );
+        }
+        resolvedAddress = await getWalletAddress(toPort);
       }
-      const toPort = WALLET_PORTS[toWallet];
-      if (!toPort) {
+
+      if (!resolvedAddress) {
         return NextResponse.json(
-          { success: false, error: `Unknown wallet: ${toWallet}` },
+          { success: false, error: "Must specify toWallet or toAddress for transfers" },
           { status: 400 }
         );
       }
 
-      const toAddress = await getWalletAddress(toPort);
-      if (!toAddress) {
-        return NextResponse.json(
-          { success: false, error: `Could not get address for wallet: ${toWallet}` },
-          { status: 500 }
-        );
-      }
-
-      const result = await walletTransfer(fromPort, toAddress, amount, sourceAsset, destAsset);
+      const result = await walletTransfer(fromPort, resolvedAddress, amount, sourceAsset, destAsset);
       return NextResponse.json(result);
     } else {
       // Asset conversion (self-transfer)

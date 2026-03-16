@@ -29,22 +29,31 @@ echo "==========================================="
 echo ""
 
 # ===========================================
-# Prompt for PUBLIC_HOST if not yet configured
+# Resolve public-facing URLs from PUBLIC_HOST
 # ===========================================
-# Only prompt on first run (PUBLIC_HOST not in .env). Once set, reuse silently.
-if [ -t 0 ] && [ -t 1 ] && ! grep -q '^PUBLIC_HOST=' "$ORCH_DIR/.env" 2>/dev/null; then
-    printf "Public host (how browsers reach this machine) [127.0.0.1]: "
-    read -r input_host
-    input_host="${input_host:-127.0.0.1}"
-    # Append to .env so future runs skip the prompt
-    cat >> "$ORCH_DIR/.env" << PUBHOST
+# PUBLIC_HOST and PUBLIC_PROTOCOL come from the master .env (set by keygen).
+# When PUBLIC_HOST is non-loopback (testnet/staging), auto-derive the browser-
+# facing URLs so the user only needs to set PUBLIC_HOST + PUBLIC_PROTOCOL.
+_PUB_HOST="${PUBLIC_HOST:-127.0.0.1}"
+_PUB_PROTO="${PUBLIC_PROTOCOL:-http}"
 
-# Public Host (how browsers reach this machine)
-PUBLIC_HOST=$input_host
-PUBLIC_PROTOCOL=http
-PUBHOST
-    export PUBLIC_HOST="$input_host"
-    log_info "PUBLIC_HOST=$input_host saved to .env"
+_is_loopback() {
+    case "$1" in
+        localhost|0.0.0.0|127.*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+if _is_loopback "$_PUB_HOST"; then
+    # Local dev — direct to localhost ports
+    _ANVIL_RPC="${NEXT_PUBLIC_ANVIL_RPC:-}"
+    _API_URL="${NEXT_PUBLIC_API_URL:-http://${_PUB_HOST}:7051}"
+    _ANVIL_EXPLORER="${NEXT_PUBLIC_ANVIL_EXPLORER_URL:-http://${_PUB_HOST}:${BLOCKSCOUT_PORT:-4000}}"
+else
+    # Remote (testnet/staging) — route through reverse proxy
+    _ANVIL_RPC="${NEXT_PUBLIC_ANVIL_RPC:-${_PUB_PROTO}://${_PUB_HOST}/rpc/evm}"
+    _API_URL="${NEXT_PUBLIC_API_URL:-${_PUB_PROTO}://${_PUB_HOST}/api}"
+    _ANVIL_EXPLORER="${NEXT_PUBLIC_ANVIL_EXPLORER_URL:-}"
 fi
 
 # ===========================================
@@ -93,9 +102,11 @@ NEXT_PUBLIC_ENABLE_DEV_CONTROLS=${NEXT_PUBLIC_ENABLE_DEV_CONTROLS}
 NEXT_PUBLIC_ZEPHYR_EXPLORER_BASE=https://explorer.zephyrprotocol.com/tx/
 
 # === Public Host (browser-facing URLs) ===
-NEXT_PUBLIC_ANVIL_LOCAL_HOST=${PUBLIC_HOST:-127.0.0.1}
-NEXT_PUBLIC_ZEPHYR_DAEMON_RPC=${PUBLIC_HOST:-127.0.0.1}:47767
-NEXT_PUBLIC_ANVIL_EXPLORER_URL=${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-127.0.0.1}:${BLOCKSCOUT_PORT:-4000}
+NEXT_PUBLIC_ANVIL_LOCAL_HOST=${_PUB_HOST}
+NEXT_PUBLIC_ANVIL_RPC=${_ANVIL_RPC}
+NEXT_PUBLIC_API_URL=${_API_URL}
+NEXT_PUBLIC_ZEPHYR_DAEMON_RPC=${_PUB_HOST}:47767
+NEXT_PUBLIC_ANVIL_EXPLORER_URL=${_ANVIL_EXPLORER}
 
 # === Token Config ===
 NEXT_PUBLIC_USE_WZSD=1
@@ -106,6 +117,9 @@ NEXT_PUBLIC_USE_WZRS=1
 # === Confirmations ===
 NEXT_PUBLIC_EVM_CONFIRMATIONS=5
 NEXT_PUBLIC_ZEPH_CONFIRMATIONS=5
+
+# === Beta Access Gate ===
+NEXT_PUBLIC_BETA_TOKEN=${NEXT_PUBLIC_BETA_TOKEN:-}
 
 # === Background Workers (disabled - use Procfile) ===
 BOOTSTRAP_ZEPHYR_LISTENER=0
@@ -124,6 +138,8 @@ log_success "Created $BRIDGE_REPO_PATH/.env.local"
 log_info "Syncing addresses to bridge..."
 ADDR_SRC="${ORCHESTRATION_PATH}/config/addresses.local.json"
 if [ -f "$ADDR_SRC" ]; then
+  mkdir -p "$BRIDGE_REPO_PATH/apps/api/config"
+  mkdir -p "$BRIDGE_REPO_PATH/packages/config/src/addresses"
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/apps/api/config/addresses.local.json"
   cp "$ADDR_SRC" "$BRIDGE_REPO_PATH/packages/config/src/addresses/addresses.local.json"
   log_success "Copied addresses to bridge API + config package"

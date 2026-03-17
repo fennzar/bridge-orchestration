@@ -98,8 +98,8 @@ export function getEvmConfig(env?: EvmEnv): EvmConfig {
     default:
       return {
         rpcUrl: process.env.EVM_RPC_HTTP || "http://127.0.0.1:8545",
-        chainId: 31337,
-        networkName: "Anvil (Local)",
+        chainId: Number(process.env.EVM_CHAIN_ID || "271337"),
+        networkName: "Zephyr EVM",
         addressesFile: path.join(ORCH_DIR, "config/addresses.local.json"),
       };
   }

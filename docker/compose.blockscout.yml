@@ -58,7 +58,7 @@ services:
       ETHEREUM_JSONRPC_VARIANT: anvil
       NETWORK: "Zephyr Devnet"
       SUBNETWORK: "Zephyr Devnet"
-      CHAIN_ID: "31337"
+      CHAIN_ID: "${EVM_CHAIN_ID:-271337}"
       COIN: "ETH"
       # Anvil uses --state + --preserve-historical-states so all historical
       # block queries (eth_getBalance, eth_getCode at old blocks) work.
@@ -98,7 +98,7 @@ services:
       NEXT_PUBLIC_API_BASE_PATH: /
       NEXT_PUBLIC_NETWORK_NAME: "Zephyr Devnet"
       NEXT_PUBLIC_NETWORK_SHORT_NAME: "ZephDev"
-      NEXT_PUBLIC_NETWORK_ID: "31337"
+      NEXT_PUBLIC_NETWORK_ID: "${EVM_CHAIN_ID:-271337}"
       NEXT_PUBLIC_NETWORK_CURRENCY_NAME: "Ether"
       NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: "ETH"
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: "18"

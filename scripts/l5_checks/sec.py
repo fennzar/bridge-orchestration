@@ -74,8 +74,9 @@ def check_sec_003(row, probes):
     if err:
         return _r(row, FAIL, f"eth_chainId failed: {err}")
     chain_id = int(parsed.get("result", "0x0"), 16)
-    if chain_id != 31337:
-        return _r(row, FAIL, f"Expected chainId 31337, got {chain_id}")
+    expected_chain_id = int(os.environ.get("EVM_CHAIN_ID", "271337"))
+    if chain_id != expected_chain_id:
+        return _r(row, FAIL, f"Expected chainId {expected_chain_id}, got {chain_id}")
     return _r(row, PASS, f"eip712Domain set on wZEPH, chainId={chain_id}")
 
 

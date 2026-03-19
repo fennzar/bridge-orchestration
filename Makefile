@@ -345,10 +345,11 @@ dev-infra:
 ## Start native apps via Overmind (usage: make dev-apps APPS=bridge)
 dev-apps:
 	@echo "=== Starting apps (Overmind) ==="
-	@# Clean stale socket if Overmind is dead
+	@# Clean stale socket and zombie processes from previous runs
 	@if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
 		rm -f $(OVERMIND_SOCK); \
 	fi
+	@source scripts/lib/cleanup.sh && kill_stale_app_processes && echo "  Killed stale processes" || true
 	@# Sync env vars to sub-repos before starting (keygen passwords, etc.)
 	@if [ ! -S "$(OVERMIND_SOCK)" ]; then \
 		./scripts/sync-env.sh; \
@@ -377,11 +378,7 @@ dev-apps:
 ## Stop everything (apps + infra), preserves all data
 dev-stop:
 	@echo "=== Stopping apps ==="
-	@if [ -S "$(OVERMIND_SOCK)" ]; then \
-		overmind quit -s $(OVERMIND_SOCK) 2>/dev/null || true; \
-		for i in $$(seq 1 10); do [ ! -S "$(OVERMIND_SOCK)" ] && break; sleep 0.5; done; \
-	fi
-	@rm -f $(OVERMIND_SOCK)
+	@source scripts/lib/cleanup.sh && shutdown_overmind "$(OVERMIND_SOCK)"
 	@echo "=== Stopping Docker infrastructure ==="
 	$(DC_DEV) --profile explorer down
 	@echo "=== Stopped ==="

@@ -39,19 +39,14 @@ ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/
 # Target oracle price for this setup run (USD)
 SETUP_PRICE="${SETUP_PRICE:-2.00}"
 
+source "$SCRIPT_DIR/lib/cleanup.sh"
+
 # Cleanup handler: stop apps + infra on exit (success or failure)
 cleanup() {
     local exit_code=$?
     echo ""
     log_info "Stopping apps + infrastructure..."
-    if [ -S "$OVERMIND_SOCK" ]; then
-        overmind quit -s "$OVERMIND_SOCK" 2>/dev/null || true
-        for i in $(seq 1 10); do
-            [ ! -S "$OVERMIND_SOCK" ] && break
-            sleep 0.5
-        done
-        rm -f "$OVERMIND_SOCK"
-    fi
+    shutdown_overmind "$OVERMIND_SOCK"
     $DC_DEV down --remove-orphans 2>/dev/null || true
     if [ $exit_code -eq 0 ]; then
         log_success "Setup complete — everything stopped"
@@ -206,9 +201,8 @@ echo ""
 # Step 9: Sync env + start Overmind apps
 # ===========================================
 log_info "Starting apps (bridge + engine)..."
-if [ -S "$OVERMIND_SOCK" ] && ! overmind status -s "$OVERMIND_SOCK" >/dev/null 2>&1; then
-    rm -f "$OVERMIND_SOCK"
-fi
+# Clean stale overmind socket and zombie processes from previous runs
+shutdown_overmind "$OVERMIND_SOCK"
 "$SCRIPT_DIR/sync-env.sh"
 # Always use dev Procfile for setup — prod builds don't exist yet
 SETUP_PROCFILE="$ORCH_DIR/Procfile.dev"

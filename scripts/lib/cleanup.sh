@@ -4,6 +4,10 @@
 # ===========================================
 # Kill stale app processes, overmind instances, and tmux sockets.
 
+# Overmind uses its own tmux server (-L), so unset TMUX to prevent
+# conflicts when running from inside an existing tmux/zmux session.
+export TMUX=
+
 # App ports that should be free before starting overmind
 APP_PORTS=(7050 7051 7000 7100)
 

@@ -190,10 +190,10 @@ dev-start:
 		echo "ERROR: Contracts not deployed. Run: make dev-setup"; \
 		exit 1; \
 	fi
-	@# Clean stale Overmind socket if process is dead
-	@if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
+	@# Clean stale Overmind socket and zombies if process is dead
+	@export TMUX=; if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
 		echo "Cleaning stale Overmind socket..."; \
-		rm -f $(OVERMIND_SOCK); \
+		source scripts/lib/cleanup.sh && shutdown_overmind "$(OVERMIND_SOCK)"; \
 	fi
 	@# Start infrastructure (Blockscout on by default, EXPLORER=0 to skip)
 	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
@@ -346,12 +346,11 @@ dev-infra:
 dev-apps:
 	@echo "=== Starting apps (Overmind) ==="
 	@# Clean stale socket and zombie processes from previous runs
-	@if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
-		rm -f $(OVERMIND_SOCK); \
+	@export TMUX=; if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
+		source scripts/lib/cleanup.sh && shutdown_overmind "$(OVERMIND_SOCK)"; \
 	fi
-	@source scripts/lib/cleanup.sh && kill_stale_app_processes && echo "  Killed stale processes" || true
 	@# Sync env vars to sub-repos before starting (keygen passwords, etc.)
-	@if [ ! -S "$(OVERMIND_SOCK)" ]; then \
+	@export TMUX=; if [ ! -S "$(OVERMIND_SOCK)" ]; then \
 		./scripts/sync-env.sh; \
 	fi
 	@if [ -S "$(OVERMIND_SOCK)" ]; then \
@@ -393,12 +392,8 @@ dev-explorer:
 dev-delete:
 	@echo "=== Deleting all dev state ==="
 	@# Stop Overmind
-	@if [ -S "$(OVERMIND_SOCK)" ]; then \
-		echo "  Stopping Overmind..."; \
-		overmind quit -s $(OVERMIND_SOCK) 2>/dev/null || true; \
-		for i in $$(seq 1 10); do [ ! -S "$(OVERMIND_SOCK)" ] && break; sleep 0.5; done; \
-	fi
-	@rm -f $(OVERMIND_SOCK)
+	@echo "  Stopping Overmind..."
+	@source scripts/lib/cleanup.sh && shutdown_overmind "$(OVERMIND_SOCK)"
 	@# Remove containers + volumes
 	@echo "  Removing containers and volumes..."
 	@$(DC_DEV) --profile explorer down -v 2>/dev/null || true

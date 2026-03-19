@@ -61,6 +61,10 @@ OVERMIND_PROCESSES=(
     "dashboard:7100"
 )
 
+# Overmind uses its own tmux server — unset TMUX to prevent
+# conflicts when running from inside tmux/zmux.
+export TMUX=
+
 # Auto-detect which overmind socket is active (dev or prod)
 # Prefer an active socket over the Makefile default.
 if [ -S "$ORCH_DIR/.overmind-prod.sock" ] && overmind status -s "$ORCH_DIR/.overmind-prod.sock" &>/dev/null; then

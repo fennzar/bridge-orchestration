@@ -492,13 +492,24 @@ print_zombie_check() {
         pid=$(lsof -t -i ":$port" -sTCP:LISTEN 2>/dev/null | head -1) || true
         [ -z "$pid" ] && continue
 
-        # If overmind is running, check if this pid belongs to it
+        # If overmind is running, check if this pid is a descendant of any overmind process
         if overmind_running; then
-            local overmind_pids
-            overmind_pids=$(env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$OVERMIND_SOCK" 2>/dev/null | awk '{print $2}') || true
-            if echo "$overmind_pids" | grep -q "^${pid}$"; then
-                continue  # belongs to current overmind — not a zombie
-            fi
+            local overmind_pids is_descendant=false
+            overmind_pids=$(env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$OVERMIND_SOCK" 2>/dev/null | awk '$2 ~ /^[0-9]+$/ {print $2}') || true
+            for opid in $overmind_pids; do
+                [ -z "$opid" ] || [ "$opid" = "0" ] && continue
+                # Walk up from the port-holding pid to see if it's a child of this overmind process
+                local check_pid="$pid"
+                while [ -n "$check_pid" ] && [ "$check_pid" != "1" ]; do
+                    if [ "$check_pid" = "$opid" ]; then
+                        is_descendant=true
+                        break
+                    fi
+                    check_pid=$(ps -o ppid= -p "$check_pid" 2>/dev/null | tr -d ' ') || break
+                done
+                $is_descendant && break
+            done
+            $is_descendant && continue
         fi
 
         cmd=$(ps -p "$pid" -o comm= 2>/dev/null || echo "?")

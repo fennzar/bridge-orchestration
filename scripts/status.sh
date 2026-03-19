@@ -476,6 +476,43 @@ print_overmind_processes() {
 }
 
 # ===========================================
+# Section 4b: Zombie Process Detection
+# ===========================================
+
+print_zombie_check() {
+    local APP_PORTS=(7050 7051 7000 7100)
+    local zombies=()
+
+    for port in "${APP_PORTS[@]}"; do
+        local pid cmd
+        pid=$(lsof -t -i ":$port" -sTCP:LISTEN 2>/dev/null | head -1) || true
+        [ -z "$pid" ] && continue
+
+        # If overmind is running, check if this pid belongs to it
+        if overmind_running; then
+            local overmind_pids
+            overmind_pids=$(overmind status -s "$OVERMIND_SOCK" 2>/dev/null | awk '{print $2}') || true
+            if echo "$overmind_pids" | grep -q "^${pid}$"; then
+                continue  # belongs to current overmind — not a zombie
+            fi
+        fi
+
+        cmd=$(ps -p "$pid" -o comm= 2>/dev/null || echo "?")
+        zombies+=("port $port: pid $pid ($cmd)")
+    done
+
+    if [ ${#zombies[@]} -gt 0 ]; then
+        echo -e "${CYAN}━━━ Zombie Processes ━━━${NC}"
+        for z in "${zombies[@]}"; do
+            fail "$z"
+        done
+        echo ""
+        echo -e "  ${DIM}Kill with: source scripts/lib/cleanup.sh && kill_stale_app_processes${NC}"
+        echo ""
+    fi
+}
+
+# ===========================================
 # Section 5: Chain Vitals (only when running)
 # ===========================================
 
@@ -579,6 +616,7 @@ print_persisted_state
 print_docker_services
 print_docker_warnings
 print_overmind_processes
+print_zombie_check
 print_chain_vitals
 
 echo -e "${BOLD}==========================================${NC}"

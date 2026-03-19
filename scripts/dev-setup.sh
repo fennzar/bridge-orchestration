@@ -207,7 +207,8 @@ shutdown_overmind "$OVERMIND_SOCK"
 # Always use dev Procfile for setup — prod builds don't exist yet
 SETUP_PROCFILE="$ORCH_DIR/Procfile.dev"
 FORM="bridge-web=1,bridge-api=1,bridge-watchers=1,engine-web=1,engine-watchers=1,dashboard=0"
-cd "$ORCH_DIR" && OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK"
+# Unset TMUX so overmind can create its own tmux server when run from inside tmux
+cd "$ORCH_DIR" && TMUX="" OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK"
 log_success "Apps started"
 
 log_info "Waiting for bridge-api health..."

@@ -2,13 +2,12 @@
 # ===========================================
 # Shared Cleanup Functions
 # ===========================================
-# Kill stale app processes and clean overmind sockets.
+# Kill stale app processes, overmind instances, and tmux sockets.
 
 # App ports that should be free before starting overmind
 APP_PORTS=(7050 7051 7000 7100)
 
 # Kill any processes listening on app ports.
-# Called before starting overmind and during cleanup.
 kill_stale_app_processes() {
     local killed=0
     for port in "${APP_PORTS[@]}"; do
@@ -16,7 +15,6 @@ kill_stale_app_processes() {
         pids=$(lsof -t -i ":$port" 2>/dev/null) || true
         if [ -n "$pids" ]; then
             for pid in $pids; do
-                # Don't kill ourselves
                 [ "$pid" = "$$" ] && continue
                 kill "$pid" 2>/dev/null && ((killed++)) || true
             done
@@ -39,20 +37,37 @@ kill_stale_app_processes() {
     return "$killed"
 }
 
-# Full overmind shutdown: quit + kill zombies + clean socket
+# Kill ALL overmind processes and clean their tmux sockets + temp dirs.
+# This is the nuclear option — use when overmind is stuck or stale.
+kill_all_overmind() {
+    # Kill overmind processes
+    killall -9 overmind 2>/dev/null || true
+    sleep 1
+
+    # Clean stale tmux sockets (overmind uses per-instance tmux servers)
+    rm -f /tmp/tmux-"$(id -u)"/overmind-bridge-orchestration-* 2>/dev/null || true
+
+    # Clean overmind temp dirs
+    rm -rf /tmp/overmind-bridge-orchestration-* 2>/dev/null || true
+}
+
+# Full overmind shutdown: quit + kill zombies + clean everything
 # Usage: shutdown_overmind <socket_path>
 shutdown_overmind() {
     local sock="$1"
 
-    # Quit overmind if running
+    # Try graceful quit first
     if [ -S "$sock" ]; then
         overmind quit -s "$sock" 2>/dev/null || true
         for i in $(seq 1 10); do
             [ ! -S "$sock" ] && break
             sleep 0.5
         done
-        rm -f "$sock"
     fi
+    rm -f "$sock" 2>/dev/null || true
+
+    # Kill any stale overmind instances + their tmux sockets
+    kill_all_overmind
 
     # Kill any zombie app processes that survived
     local killed=0

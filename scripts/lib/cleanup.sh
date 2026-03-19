@@ -6,7 +6,7 @@
 
 # Overmind uses its own tmux server (-L), so unset TMUX to prevent
 # conflicts when running from inside an existing tmux/zmux session.
-export TMUX=
+unset TMUX 2>/dev/null || true
 
 # App ports that should be free before starting overmind
 APP_PORTS=(7050 7051 7000 7100)
@@ -62,7 +62,7 @@ shutdown_overmind() {
 
     # Try graceful quit first
     if [ -S "$sock" ]; then
-        overmind quit -s "$sock" 2>/dev/null || true
+        env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind quit -s "$sock" 2>/dev/null || true
         for i in $(seq 1 10); do
             [ ! -S "$sock" ] && break
             sleep 0.5

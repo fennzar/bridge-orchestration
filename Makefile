@@ -367,10 +367,10 @@ dev-apps:
 			esac; \
 		done; \
 		echo "  Formation: $$FORM"; \
-		cd $(ORCH_DIR) && TMUX="" OVERMIND_FORMATION="$$FORM" overmind start -D -f $(PROCFILE) -s $(OVERMIND_SOCK); \
+		cd $(ORCH_DIR) && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM OVERMIND_FORMATION="$$FORM" overmind start -D -f $(PROCFILE) -s $(OVERMIND_SOCK); \
 		echo "  Overmind started"; \
 	else \
-		cd $(ORCH_DIR) && TMUX="" overmind start -D -f $(PROCFILE) -s $(OVERMIND_SOCK); \
+		cd $(ORCH_DIR) && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind start -D -f $(PROCFILE) -s $(OVERMIND_SOCK); \
 		echo "  Overmind started"; \
 	fi
 

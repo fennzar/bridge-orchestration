@@ -63,13 +63,13 @@ OVERMIND_PROCESSES=(
 
 # Overmind uses its own tmux server — unset TMUX to prevent
 # conflicts when running from inside tmux/zmux.
-export TMUX=
+unset TMUX 2>/dev/null || true
 
 # Auto-detect which overmind socket is active (dev or prod)
 # Prefer an active socket over the Makefile default.
-if [ -S "$ORCH_DIR/.overmind-prod.sock" ] && overmind status -s "$ORCH_DIR/.overmind-prod.sock" &>/dev/null; then
+if [ -S "$ORCH_DIR/.overmind-prod.sock" ] && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$ORCH_DIR/.overmind-prod.sock" &>/dev/null; then
     OVERMIND_SOCK="$ORCH_DIR/.overmind-prod.sock"
-elif [ -S "$ORCH_DIR/.overmind-dev.sock" ] && overmind status -s "$ORCH_DIR/.overmind-dev.sock" &>/dev/null; then
+elif [ -S "$ORCH_DIR/.overmind-dev.sock" ] && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$ORCH_DIR/.overmind-dev.sock" &>/dev/null; then
     OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
 else
     OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
@@ -109,7 +109,7 @@ count_running_containers() {
 # ===========================================
 
 overmind_running() {
-    [ -S "$OVERMIND_SOCK" ] && overmind status -s "$OVERMIND_SOCK" &>/dev/null
+    [ -S "$OVERMIND_SOCK" ] && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$OVERMIND_SOCK" &>/dev/null
 }
 
 # ===========================================
@@ -429,14 +429,14 @@ print_overmind_processes() {
         return
     fi
 
-    # Parse overmind status output
+    # Parse env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status output
     local overmind_output
-    overmind_output=$(overmind status -s "$OVERMIND_SOCK" 2>&1)
+    overmind_output=$(env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$OVERMIND_SOCK" 2>&1)
 
     for proc in "${OVERMIND_PROCESSES[@]}"; do
         IFS=: read -r name port <<< "$proc"
 
-        # Match the process line from overmind status
+        # Match the process line from env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status
         local proc_line
         proc_line=$(echo "$overmind_output" | grep "^${name}" || true)
 
@@ -495,7 +495,7 @@ print_zombie_check() {
         # If overmind is running, check if this pid belongs to it
         if overmind_running; then
             local overmind_pids
-            overmind_pids=$(overmind status -s "$OVERMIND_SOCK" 2>/dev/null | awk '{print $2}') || true
+            overmind_pids=$(env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$OVERMIND_SOCK" 2>/dev/null | awk '{print $2}') || true
             if echo "$overmind_pids" | grep -q "^${pid}$"; then
                 continue  # belongs to current overmind — not a zombie
             fi

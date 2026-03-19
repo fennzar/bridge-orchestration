@@ -171,6 +171,7 @@ build-orderbook:
 dev: dev-start
 dev-start:
 	@./scripts/check-repos.sh || { rc=$$?; if [ $$rc -eq 2 ]; then exit 0; else exit $$rc; fi; }
+	@./scripts/check-reset.sh
 	@if [ ! -f .env ]; then \
 		echo "ERROR: .env not found. Run: make keygen"; \
 		exit 1; \

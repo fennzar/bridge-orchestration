@@ -289,7 +289,16 @@ rm -f "$ORCH_DIR/snapshots/anvil/post-seed.hex"
 echo ""
 
 # ===========================================
-# Step 14: Stop (handled by cleanup trap)
+# Step 14: Write build state + clear reset marker
+# ===========================================
+log_info "Recording build state..."
+"$SCRIPT_DIR/write-build-state.sh"
+echo '{"reset": "none"}' > "$ORCH_DIR/config/reset-required.json"
+log_success "Reset marker cleared"
+echo ""
+
+# ===========================================
+# Step 15: Stop (handled by cleanup trap)
 # ===========================================
 echo ""
 echo "==========================================="

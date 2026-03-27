@@ -15,6 +15,7 @@ snapshots/
 
 # Logs
 logs/
+*.log
 
 # Node
 node_modules/

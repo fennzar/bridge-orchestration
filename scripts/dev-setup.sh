@@ -60,7 +60,7 @@ cleanup() {
     fi
     exit $exit_code
 }
-trap cleanup EXIT
+# trap cleanup EXIT
 
 echo "==========================================="
 echo "  Dev Setup — Bridge Infrastructure"
@@ -212,17 +212,27 @@ fi
 "$SCRIPT_DIR/sync-env.sh"
 # Always use dev Procfile for setup — prod builds don't exist yet
 SETUP_PROCFILE="$ORCH_DIR/Procfile.dev"
-FORM="bridge-web=1,bridge-api=1,bridge-watchers=1,engine-web=1,engine-watchers=1,dashboard=0"
-cd "$ORCH_DIR" && OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK"
+FORM="bridge-web=0,bridge-api=1,bridge-watchers=1,engine-web=0,engine-watchers=1,dashboard=0"
+ulimit -n 4096
+cd "$ORCH_DIR" && OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK" > overmind-startup.log 2>&1
 log_success "Apps started"
 
-log_info "Waiting for bridge-api health..."
+log_info "Waiting for bridge-api health (using 127.0.0.1:7051/health)..."
 for i in $(seq 1 60); do
-    if curl -sf http://localhost:7051/health >/dev/null 2>&1; then
+    if curl -sf http://127.0.0.1:7051/health >/dev/null 2>&1; then
         log_success "Bridge API healthy"
         break
     fi
-    [ "$i" -eq 60 ] && { log_error "Bridge API not healthy after 60s"; exit 1; }
+    [ "$i" -eq 1 ] && log_info "   (Still waiting... if this persists, check bridge-api.log)"
+    [ "$i" -eq 60 ] && { 
+        log_error "Bridge API not healthy after 60s"
+        echo "DEBUG: overmind full status:"
+        overmind status -s "$OVERMIND_SOCK" || true
+        echo "DEBUG: curl test output:"
+        curl -v http://127.0.0.1:7051/health 2>&1 | tail -n 20
+        log_info "DEBUG: Skipping stop for inspection (MANUAL CLEANUP REQUIRED)"
+        exit 1 
+    }
     sleep 2
 done
 echo ""

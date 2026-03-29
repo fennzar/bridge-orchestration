@@ -171,6 +171,7 @@ build-orderbook:
 dev: dev-start
 dev-start:
 	@./scripts/check-repos.sh || { rc=$$?; if [ $$rc -eq 2 ]; then exit 0; else exit $$rc; fi; }
+	@./scripts/check-reset.sh
 	@if [ ! -f .env ]; then \
 		echo "ERROR: .env not found. Run: make keygen"; \
 		exit 1; \
@@ -189,10 +190,10 @@ dev-start:
 		echo "ERROR: Contracts not deployed. Run: make dev-setup"; \
 		exit 1; \
 	fi
-	@# Clean stale Overmind socket if process is dead
-	@if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
+	@# Clean stale Overmind socket and zombies if process is dead
+	@export TMUX=; if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
 		echo "Cleaning stale Overmind socket..."; \
-		rm -f $(OVERMIND_SOCK); \
+		source scripts/lib/cleanup.sh && shutdown_overmind "$(OVERMIND_SOCK)"; \
 	fi
 	@# Start infrastructure (Blockscout on by default, EXPLORER=0 to skip)
 	@mkdir -p snapshots/anvil && chmod a+w snapshots/anvil
@@ -344,12 +345,12 @@ dev-infra:
 ## Start native apps via Overmind (usage: make dev-apps APPS=bridge)
 dev-apps:
 	@echo "=== Starting apps (Overmind) ==="
-	@# Clean stale socket if Overmind is dead
-	@if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
-		rm -f $(OVERMIND_SOCK); \
+	@# Clean stale socket and zombie processes from previous runs
+	@export TMUX=; if [ -S "$(OVERMIND_SOCK)" ] && ! overmind status -s $(OVERMIND_SOCK) >/dev/null 2>&1; then \
+		source scripts/lib/cleanup.sh && shutdown_overmind "$(OVERMIND_SOCK)"; \
 	fi
 	@# Sync env vars to sub-repos before starting (keygen passwords, etc.)
-	@if [ ! -S "$(OVERMIND_SOCK)" ]; then \
+	@export TMUX=; if [ ! -S "$(OVERMIND_SOCK)" ]; then \
 		./scripts/sync-env.sh; \
 	fi
 	@if [ -S "$(OVERMIND_SOCK)" ]; then \
@@ -366,21 +367,17 @@ dev-apps:
 			esac; \
 		done; \
 		echo "  Formation: $$FORM"; \
-		cd $(ORCH_DIR) && OVERMIND_FORMATION="$$FORM" overmind start -D -f $(PROCFILE) -s $(OVERMIND_SOCK); \
+		cd $(ORCH_DIR) && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM OVERMIND_FORMATION="$$FORM" overmind start -D -f $(PROCFILE) -s $(OVERMIND_SOCK); \
 		echo "  Overmind started"; \
 	else \
-		cd $(ORCH_DIR) && overmind start -D -f $(PROCFILE) -s $(OVERMIND_SOCK); \
+		cd $(ORCH_DIR) && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind start -D -f $(PROCFILE) -s $(OVERMIND_SOCK); \
 		echo "  Overmind started"; \
 	fi
 
 ## Stop everything (apps + infra), preserves all data
 dev-stop:
 	@echo "=== Stopping apps ==="
-	@if [ -S "$(OVERMIND_SOCK)" ]; then \
-		overmind quit -s $(OVERMIND_SOCK) 2>/dev/null || true; \
-		for i in $$(seq 1 10); do [ ! -S "$(OVERMIND_SOCK)" ] && break; sleep 0.5; done; \
-	fi
-	@rm -f $(OVERMIND_SOCK)
+	@source scripts/lib/cleanup.sh && shutdown_overmind "$(OVERMIND_SOCK)"
 	@echo "=== Stopping Docker infrastructure ==="
 	$(DC_DEV) --profile explorer down
 	@echo "=== Stopped ==="
@@ -395,12 +392,8 @@ dev-explorer:
 dev-delete:
 	@echo "=== Deleting all dev state ==="
 	@# Stop Overmind
-	@if [ -S "$(OVERMIND_SOCK)" ]; then \
-		echo "  Stopping Overmind..."; \
-		overmind quit -s $(OVERMIND_SOCK) 2>/dev/null || true; \
-		for i in $$(seq 1 10); do [ ! -S "$(OVERMIND_SOCK)" ] && break; sleep 0.5; done; \
-	fi
-	@rm -f $(OVERMIND_SOCK)
+	@echo "  Stopping Overmind..."
+	@source scripts/lib/cleanup.sh && shutdown_overmind "$(OVERMIND_SOCK)"
 	@# Remove containers + volumes
 	@echo "  Removing containers and volumes..."
 	@$(DC_DEV) --profile explorer down -v 2>/dev/null || true

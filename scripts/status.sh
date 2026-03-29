@@ -61,11 +61,15 @@ OVERMIND_PROCESSES=(
     "dashboard:7100"
 )
 
+# Overmind uses its own tmux server — unset TMUX to prevent
+# conflicts when running from inside tmux/zmux.
+unset TMUX 2>/dev/null || true
+
 # Auto-detect which overmind socket is active (dev or prod)
 # Prefer an active socket over the Makefile default.
-if [ -S "$ORCH_DIR/.overmind-prod.sock" ] && overmind status -s "$ORCH_DIR/.overmind-prod.sock" &>/dev/null; then
+if [ -S "$ORCH_DIR/.overmind-prod.sock" ] && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$ORCH_DIR/.overmind-prod.sock" &>/dev/null; then
     OVERMIND_SOCK="$ORCH_DIR/.overmind-prod.sock"
-elif [ -S "$ORCH_DIR/.overmind-dev.sock" ] && overmind status -s "$ORCH_DIR/.overmind-dev.sock" &>/dev/null; then
+elif [ -S "$ORCH_DIR/.overmind-dev.sock" ] && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$ORCH_DIR/.overmind-dev.sock" &>/dev/null; then
     OVERMIND_SOCK="$ORCH_DIR/.overmind-dev.sock"
 else
     OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
@@ -105,7 +109,7 @@ count_running_containers() {
 # ===========================================
 
 overmind_running() {
-    [ -S "$OVERMIND_SOCK" ] && overmind status -s "$OVERMIND_SOCK" &>/dev/null
+    [ -S "$OVERMIND_SOCK" ] && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$OVERMIND_SOCK" &>/dev/null
 }
 
 # ===========================================
@@ -425,14 +429,14 @@ print_overmind_processes() {
         return
     fi
 
-    # Parse overmind status output
+    # Parse env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status output
     local overmind_output
-    overmind_output=$(overmind status -s "$OVERMIND_SOCK" 2>&1)
+    overmind_output=$(env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$OVERMIND_SOCK" 2>&1)
 
     for proc in "${OVERMIND_PROCESSES[@]}"; do
         IFS=: read -r name port <<< "$proc"
 
-        # Match the process line from overmind status
+        # Match the process line from env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status
         local proc_line
         proc_line=$(echo "$overmind_output" | grep "^${name}" || true)
 
@@ -473,6 +477,54 @@ print_overmind_processes() {
     done
 
     echo ""
+}
+
+# ===========================================
+# Section 4b: Zombie Process Detection
+# ===========================================
+
+print_zombie_check() {
+    local APP_PORTS=(7050 7051 7000 7100)
+    local zombies=()
+
+    for port in "${APP_PORTS[@]}"; do
+        local pid cmd
+        pid=$(lsof -t -i ":$port" -sTCP:LISTEN 2>/dev/null | head -1) || true
+        [ -z "$pid" ] && continue
+
+        # If overmind is running, check if this pid is a descendant of any overmind process
+        if overmind_running; then
+            local overmind_pids is_descendant=false
+            overmind_pids=$(env -u TMUX -u TMUX_PANE -u TERM_PROGRAM overmind status -s "$OVERMIND_SOCK" 2>/dev/null | awk '$2 ~ /^[0-9]+$/ {print $2}') || true
+            for opid in $overmind_pids; do
+                [ -z "$opid" ] || [ "$opid" = "0" ] && continue
+                # Walk up from the port-holding pid to see if it's a child of this overmind process
+                local check_pid="$pid"
+                while [ -n "$check_pid" ] && [ "$check_pid" != "1" ]; do
+                    if [ "$check_pid" = "$opid" ]; then
+                        is_descendant=true
+                        break
+                    fi
+                    check_pid=$(ps -o ppid= -p "$check_pid" 2>/dev/null | tr -d ' ') || break
+                done
+                $is_descendant && break
+            done
+            $is_descendant && continue
+        fi
+
+        cmd=$(ps -p "$pid" -o comm= 2>/dev/null || echo "?")
+        zombies+=("port $port: pid $pid ($cmd)")
+    done
+
+    if [ ${#zombies[@]} -gt 0 ]; then
+        echo -e "${CYAN}━━━ Zombie Processes ━━━${NC}"
+        for z in "${zombies[@]}"; do
+            fail "$z"
+        done
+        echo ""
+        echo -e "  ${DIM}Kill with: source scripts/lib/cleanup.sh && kill_stale_app_processes${NC}"
+        echo ""
+    fi
 }
 
 # ===========================================
@@ -579,6 +631,7 @@ print_persisted_state
 print_docker_services
 print_docker_warnings
 print_overmind_processes
+print_zombie_check
 print_chain_vitals
 
 echo -e "${BOLD}==========================================${NC}"

@@ -29,6 +29,7 @@ source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/compose.sh"
 source "$SCRIPT_DIR/lib/prereqs.sh"
+source "$SCRIPT_DIR/lib/cleanup.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
 require_tool docker
@@ -71,18 +72,9 @@ echo ""
 # ===========================================
 # Phase 0: Stop apps if running
 # ===========================================
-if [ -S "$OVERMIND_SOCK" ]; then
-    if overmind status -s "$OVERMIND_SOCK" >/dev/null 2>&1; then
-        log_info "Stopping Overmind apps..."
-        overmind quit -s "$OVERMIND_SOCK" 2>/dev/null || true
-        for i in $(seq 1 10); do
-            [ ! -S "$OVERMIND_SOCK" ] && break
-            sleep 0.5
-        done
-        log_success "Apps stopped"
-    fi
-    rm -f "$OVERMIND_SOCK"
-fi
+log_info "Stopping Overmind apps..."
+shutdown_overmind "$OVERMIND_SOCK"
+log_success "Apps stopped"
 
 # Clean bridge-web cache to prevent ENOENT errors on restart
 # Skip when using prod Procfile — the build output is needed

@@ -39,19 +39,14 @@ ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/
 # Target oracle price for this setup run (USD)
 SETUP_PRICE="${SETUP_PRICE:-2.00}"
 
+source "$SCRIPT_DIR/lib/cleanup.sh"
+
 # Cleanup handler: stop apps + infra on exit (success or failure)
 cleanup() {
     local exit_code=$?
     echo ""
     log_info "Stopping apps + infrastructure..."
-    if [ -S "$OVERMIND_SOCK" ]; then
-        overmind quit -s "$OVERMIND_SOCK" 2>/dev/null || true
-        for i in $(seq 1 10); do
-            [ ! -S "$OVERMIND_SOCK" ] && break
-            sleep 0.5
-        done
-        rm -f "$OVERMIND_SOCK"
-    fi
+    shutdown_overmind "$OVERMIND_SOCK"
     $DC_DEV down --remove-orphans 2>/dev/null || true
     if [ $exit_code -eq 0 ]; then
         log_success "Setup complete — everything stopped"
@@ -206,15 +201,15 @@ echo ""
 # Step 9: Sync env + start Overmind apps
 # ===========================================
 log_info "Starting apps (bridge + engine)..."
-if [ -S "$OVERMIND_SOCK" ] && ! overmind status -s "$OVERMIND_SOCK" >/dev/null 2>&1; then
-    rm -f "$OVERMIND_SOCK"
-fi
+# Clean stale overmind socket and zombie processes from previous runs
+shutdown_overmind "$OVERMIND_SOCK"
 "$SCRIPT_DIR/sync-env.sh"
 # Always use dev Procfile for setup — prod builds don't exist yet
 SETUP_PROCFILE="$ORCH_DIR/Procfile.dev"
-FORM="bridge-web=0,bridge-api=1,bridge-watchers=1,engine-web=0,engine-watchers=1,dashboard=0"
+FORM="bridge-web=1,bridge-api=1,bridge-watchers=1,engine-web=1,engine-watchers=1,dashboard=0"
 ulimit -n 4096
-cd "$ORCH_DIR" && OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK" > overmind-startup.log 2>&1
+cd "$ORCH_DIR" && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK"
+
 log_success "Apps started"
 
 log_info "Waiting for bridge-api health (using 127.0.0.1:7051/health)..."
@@ -296,6 +291,12 @@ fi
 rm -f "$ORCH_DIR/snapshots/anvil/post-setup.hex"
 rm -f "$ORCH_DIR/snapshots/anvil/post-deploy.hex"
 rm -f "$ORCH_DIR/snapshots/anvil/post-seed.hex"
+
+# Write build state now — setup is complete regardless of final stop outcome
+log_info "Recording build state..."
+"$SCRIPT_DIR/write-build-state.sh"
+echo '{"reset": "none"}' > "$ORCH_DIR/config/reset-required.json"
+log_success "Reset marker cleared"
 echo ""
 
 # ===========================================

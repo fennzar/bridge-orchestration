@@ -34,7 +34,7 @@ services:
       - "--host"
       - "0.0.0.0"
       - "--chain-id"
-      - "31337"
+      - "${EVM_CHAIN_ID:-271337}"
       - "--accounts"
       - "20"
       - "--balance"

@@ -932,7 +932,7 @@ phase_clone() {
 
     # Sort repos: kick off clones in parallel, queue updates for sequential processing
     for entry in "${REPOS[@]}"; do
-        IFS='|' read -r dir url flags <<< "$entry"
+        IFS='|' read -r dir url flags _ <<< "$entry"
         all_dirs+=("$dir")
 
         if [ -d "$PARENT/$dir/.git" ]; then

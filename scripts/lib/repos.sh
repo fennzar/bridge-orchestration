@@ -12,12 +12,13 @@ if ! declare -f pad &>/dev/null; then
 fi
 
 # All repos in the stack
+# Format: dir|url|clone_flags|expected_branch
 REPOS=(
-    "bridge-orchestration|git@github.com:fennzar/bridge-orchestration.git|"
-    "zephyr-eth-foundry|git@github.com:fennzar/zephyr-uniswap-v4-foundry.git|--recursive"
-    "zephyr-bridge|git@github.com:fennzar/zephyr-bridge.git|"
-    "zephyr-bridge-engine|git@github.com:fennzar/zephyr-bridge-engine.git|"
-    "zephyr|git@github.com:fennzar/zephyr.git|--recursive"
+    "bridge-orchestration|git@github.com:fennzar/bridge-orchestration.git||main"
+    "zephyr-eth-foundry|git@github.com:fennzar/zephyr-uniswap-v4-foundry.git|--recursive|main"
+    "zephyr-bridge|git@github.com:fennzar/zephyr-bridge.git||master"
+    "zephyr-bridge-engine|git@github.com:fennzar/zephyr-bridge-engine.git||master"
+    "zephyr|git@github.com:fennzar/zephyr.git|--recursive|fresh-devnet-bootstrap"
 )
 
 ZEPHYR_DEVNET_BRANCH="fresh-devnet-bootstrap"
@@ -147,6 +148,170 @@ repo_status() {
     if [ "$behind" -gt 0 ] && [ -n "$local_sha" ]; then
         _show_commits "$repo_path" "$local_sha" "$remote_sha" "+"
     fi
+}
+
+# Print tracking context for current branch.
+# Shows: expected branch warning, upstream remote sync.
+# Usage: repo_tracking_info <dir> [expected_branch]
+repo_tracking_info() {
+    local dir="$1"
+    local expected_branch="${2:-}"
+    local repo_path="$PARENT/$dir"
+
+    [ -d "$repo_path/.git" ] || return
+
+    local branch; branch=$(git -C "$repo_path" branch --show-current 2>/dev/null)
+    [ -z "$branch" ] && return
+
+    # ── Expected branch warning ──
+    if [ -n "$expected_branch" ] && [ "$branch" != "$expected_branch" ]; then
+        echo -e "      ${YELLOW}⚠${NC} expected branch: ${BOLD}${expected_branch}${NC}"
+    fi
+
+    # ── Upstream remote sync (fork tracking) ──
+    if git -C "$repo_path" remote 2>/dev/null | grep -q '^upstream$'; then
+        local upstream_ref=""
+        for candidate in upstream/master upstream/main; do
+            if git -C "$repo_path" rev-parse --verify "$candidate" &>/dev/null; then
+                upstream_ref="$candidate"
+                break
+            fi
+        done
+
+        if [ -n "$upstream_ref" ]; then
+            local local_sha; local_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null)
+            local upstream_sha; upstream_sha=$(git -C "$repo_path" rev-parse "$upstream_ref" 2>/dev/null)
+
+            if [ "$local_sha" = "$upstream_sha" ]; then
+                echo -e "      ${DIM}⇡ ${upstream_ref}: in sync${NC}"
+            else
+                local merge_base; merge_base=$(git -C "$repo_path" merge-base "$local_sha" "$upstream_sha" 2>/dev/null || echo "")
+                if [ -z "$merge_base" ]; then
+                    echo -e "      ${DIM}⇡ ${upstream_ref}: no common ancestor${NC}"
+                elif [ "$merge_base" = "$local_sha" ]; then
+                    local u_behind; u_behind=$(git -C "$repo_path" rev-list --count "$local_sha".."$upstream_sha" 2>/dev/null)
+                    echo -e "      ${YELLOW}⇣${NC} ${upstream_ref}: ${YELLOW}${u_behind} behind${NC}"
+                elif [ "$merge_base" = "$upstream_sha" ]; then
+                    local u_ahead; u_ahead=$(git -C "$repo_path" rev-list --count "$upstream_sha".."$local_sha" 2>/dev/null)
+                    echo -e "      ${CYAN}⇡${NC} ${upstream_ref}: ${u_ahead} ahead"
+                else
+                    local u_ahead; u_ahead=$(git -C "$repo_path" rev-list --count "$merge_base".."$local_sha" 2>/dev/null)
+                    local u_behind; u_behind=$(git -C "$repo_path" rev-list --count "$merge_base".."$upstream_sha" 2>/dev/null)
+                    echo -e "      ${RED}⇡⇣${NC} ${upstream_ref}: ${u_ahead} ahead, ${YELLOW}${u_behind} behind${NC}"
+                fi
+            fi
+        fi
+    fi
+}
+
+# Print detailed info for all branches except current.
+# Usage: repo_other_branches <dir> [expected_branch]
+repo_other_branches() {
+    local dir="$1"
+    local expected_branch="${2:-}"
+    local repo_path="$PARENT/$dir"
+
+    [ -d "$repo_path/.git" ] || return
+
+    local branch; branch=$(git -C "$repo_path" branch --show-current 2>/dev/null)
+    [ -z "$branch" ] && return
+
+    local all_branches; all_branches=$(git -C "$repo_path" branch --format='%(refname:short)' 2>/dev/null)
+    local branch_count; branch_count=$(echo "$all_branches" | wc -l)
+    local other_count=$((branch_count - 1))
+
+    [ "$other_count" -eq 0 ] && return
+
+    # Default branch for comparisons
+    local default_ref="${expected_branch:-$branch}"
+    local default_sha; default_sha=$(git -C "$repo_path" rev-parse "$default_ref" 2>/dev/null || true)
+
+    local TCOL=16  # tracking column visible width
+
+    echo ""
+    echo -e "      ${DIM}─ other branches ────────────────────── vs ${default_ref} ──${NC}"
+
+    while IFS= read -r b; do
+        [ "$b" = "$branch" ] && continue
+
+        local b_sha; b_sha=$(git -C "$repo_path" rev-parse "$b" 2>/dev/null || true)
+        [ -z "$b_sha" ] && continue
+
+        # ── Tracking status (build colored + plain for padding) ──
+        local track_color="" track_plain=""
+        local up; up=$(git -C "$repo_path" rev-parse --abbrev-ref "${b}@{upstream}" 2>/dev/null || true)
+        if [ -n "$up" ] && [ "$up" != "${b}@{upstream}" ]; then
+            local remote_name="${up%%/*}"
+            local remote_sha; remote_sha=$(git -C "$repo_path" rev-parse "$up" 2>/dev/null || true)
+            if [ -z "$remote_sha" ] || [ "$b_sha" = "$remote_sha" ]; then
+                track_plain="● ${remote_name} ="
+                track_color="${GREEN}●${NC} ${DIM}${remote_name} =${NC}"
+            else
+                local t_ahead=0 t_behind=0
+                t_ahead=$(git -C "$repo_path" rev-list --count "${remote_sha}..${b_sha}" 2>/dev/null || echo 0)
+                t_behind=$(git -C "$repo_path" rev-list --count "${b_sha}..${remote_sha}" 2>/dev/null || echo 0)
+                local tp="" tc=""
+                if [ "$t_ahead" -gt 0 ]; then
+                    tp="↑${t_ahead}"
+                    tc="${CYAN}↑${t_ahead}${NC}"
+                fi
+                if [ "$t_behind" -gt 0 ]; then
+                    [ -n "$tp" ] && tp="${tp} " && tc="${tc} "
+                    tp="${tp}↓${t_behind}"
+                    tc="${tc}${YELLOW}↓${t_behind}${NC}"
+                fi
+                track_plain="● ${remote_name} ${tp}"
+                track_color="${GREEN}●${NC} ${remote_name} ${tc}"
+            fi
+        else
+            track_plain="○ local"
+            track_color="${DIM}○ local${NC}"
+        fi
+
+        # Pad tracking column to fixed visible width
+        local tpad=$((TCOL - ${#track_plain}))
+        [ "$tpad" -lt 1 ] && tpad=1
+        local tspace; tspace=$(printf "%${tpad}s" "")
+
+        # ── vs default branch ──
+        local vs_str=""
+        if [ "$b" = "$default_ref" ]; then
+            vs_str="◆ ${BOLD}default${NC}"
+        elif [ -n "$default_sha" ]; then
+            local d_ahead=0 d_behind=0
+            d_ahead=$(git -C "$repo_path" rev-list --count "${default_sha}..${b_sha}" 2>/dev/null || echo 0)
+            d_behind=$(git -C "$repo_path" rev-list --count "${b_sha}..${default_sha}" 2>/dev/null || echo 0)
+
+            if [ "$d_ahead" -eq 0 ]; then
+                vs_str="${GREEN}✓ merged${NC}"
+            elif [ "$d_behind" -eq 0 ]; then
+                vs_str="${CYAN}+${d_ahead}${NC}"
+            else
+                vs_str="${CYAN}+${d_ahead}${NC} ${YELLOW}−${d_behind}${NC}"
+            fi
+        fi
+
+        # ── Last commit age ──
+        local age; age=$(git -C "$repo_path" log -1 --format='%cr' "$b" 2>/dev/null || true)
+        age=$(echo "$age" | sed \
+            -e 's/ seconds\? ago/s/' \
+            -e 's/ minutes\? ago/m/' \
+            -e 's/ hours\? ago/h/' \
+            -e 's/ days\? ago/d/' \
+            -e 's/ weeks\? ago/w/' \
+            -e 's/ months\? ago/mo/' \
+            -e 's/ years\? ago/y/')
+
+        # ── Print line ──
+        local padded; padded=$(printf "%-35s" "$b")
+        echo -e "        ${padded} ${track_color}${tspace}${vs_str}  ${DIM}◷ ${age}${NC}"
+    done <<< "$all_branches"
+}
+
+# Legacy wrapper — calls both parts. Used by callers that don't need the split.
+repo_branch_info() {
+    repo_tracking_info "$@"
+    repo_other_branches "$@"
 }
 
 # Fetch all repos, print status, return count of repos that are behind.

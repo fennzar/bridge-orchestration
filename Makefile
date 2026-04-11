@@ -435,6 +435,10 @@ dev-checkpoint:
 sanity-check:
 	@python3 ./scripts/sanity-check-post-setup-state.py $(if $(PRICE),--price $(PRICE),)
 
+## Proof-of-Reserves reconciliation: EVM totalSupply vs bridge wallet holdings
+verify-reserves:
+	@python3 ./scripts/verify-reserves.py
+
 ## Check health of all services and pipeline state
 status:
 	@./scripts/status.sh

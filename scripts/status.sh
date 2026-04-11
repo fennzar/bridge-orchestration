@@ -340,18 +340,28 @@ print_docker_services() {
         local health
         health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || echo "unknown")
 
+        # Check logs for errors
+        local error_count=0
+        local log_sample
+        log_sample=$(docker logs --tail 100 "$container" 2>&1) || log_sample=""
+        error_count=$(echo "$log_sample" | grep -ciE '(error|fatal|panic|ENOSPC|BlockOutOfRange|TransportError|no space left|OOM)' || echo 0)
+
+        local grade="✅"
+        [ "$error_count" -gt 0 ] && grade="⚠️"
+        [ "$error_count" -gt 20 ] && grade="❌"
+
         case "$health" in
             healthy)
-                ok "$(printf '%-18s' "$display") healthy (port $port)"
+                ok "$grade $(printf '%-18s' "$display") healthy ($error_count err, port $port)"
                 ;;
             starting)
-                warn "$(printf '%-18s' "$display") starting (port $port)"
+                warn "$grade $(printf '%-18s' "$display") starting ($error_count err, port $port)"
                 ;;
             none)
-                ok "$(printf '%-18s' "$display") running (port $port)"
+                ok "$grade $(printf '%-18s' "$display") running ($error_count err, port $port)"
                 ;;
             *)
-                warn "$(printf '%-18s' "$display") unhealthy (port $port)"
+                warn "$grade $(printf '%-18s' "$display") unhealthy ($error_count err, port $port)"
                 ;;
         esac
     done
@@ -454,25 +464,30 @@ print_overmind_processes() {
         status=$(echo "$proc_line" | awk '{print $3}')
 
         if [ "$status" = "running" ]; then
+            # Health check: capture logs via tmux
+            local logs error_count grade="✅"
+            logs=$(tmux capture-pane -p -t "bridge-orchestration:${name}" 2>/dev/null | tail -100) || logs=""
+            error_count=$(echo "$logs" | grep -ciE '(error|fatal|panic|restarting|crashed|Cannot find module)' || echo 0)
+            
+            [ "$error_count" -gt 0 ] && grade="⚠️"
+            [ "$error_count" -gt 10 ] && grade="❌"
+
             if [ "$port" != "-" ]; then
                 # Verify the port is actually responding (detect crash-looping)
                 if curl -sf -o /dev/null --connect-timeout 2 "http://127.0.0.1:$port/" 2>/dev/null; then
-                    ok "$(printf '%-18s' "$name") running (port $port, pid $pid)"
+                    ok "$grade $(printf '%-18s' "$name") running ($error_count err, port $port, pid $pid)"
                 else
-                    fail "$(printf '%-18s' "$name") crash-looping (port $port not responding)"
+                    fail "❌ $(printf '%-18s' "$name") crash-looping (port $port not responding)"
                 fi
             else
-                # Portless process: check tmux logs for crash patterns
-                local logs
-                logs=$(tmux capture-pane -p -t "bridge-orchestration:${name}" 2>/dev/null | tail -20) || logs=""
-                if echo "$logs" | grep -qE '(Process crashed|restarting in [0-9]+s|FATAL|Cannot find module)'; then
-                    fail "$(printf '%-18s' "$name") crash-looping (pid $pid)"
+                if [ "$grade" = "❌" ]; then
+                     fail "❌ $(printf '%-18s' "$name") crash-looping (pid $pid)"
                 else
-                    ok "$(printf '%-18s' "$name") running (pid $pid)"
+                     ok "$grade $(printf '%-18s' "$name") running ($error_count err, pid $pid)"
                 fi
             fi
         else
-            fail "$(printf '%-18s' "$name") $status"
+            fail "❌ $(printf '%-18s' "$name") $status"
         fi
     done
 

@@ -580,6 +580,10 @@ test-all:
 	$(MAKE) test-engine
 	$(MAKE) test-e2e
 
+## All tiers + L5 edge-cases with unified report
+test-all-report:
+	./scripts/full-test-report.sh
+
 ## Edge-case framework default pass (summary + lint + logical)
 test-edge:
 	./scripts/run-l5-tests.py

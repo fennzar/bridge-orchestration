@@ -258,38 +258,9 @@ cd ../zephyr-bridge-engine && pnpm test
 cd ../zephyr-eth-foundry && forge test
 ```
 
-## Common Issues
+## Troubleshooting
 
-### Docker Permission Denied
-```bash
-sudo usermod -aG docker $USER
-newgrp docker
-```
-
-### Foundry Not Found
-```bash
-curl -L https://foundry.paradigm.xyz | bash
-~/.foundry/bin/foundryup
-export PATH="$HOME/.foundry/bin:$PATH"
-```
-
-### Anvil State Issues
-```bash
-# Reset to post-setup state (restores Anvil snapshot + pops Zephyr chain):
-make dev-reset && make dev
-
-# Reset to post-init state (wipes Anvil, need to re-deploy contracts):
-make dev-reset-hard && make dev-setup && make dev
-
-# Nuclear option (destroys everything):
-make dev-delete
-```
-
-### Prerequisites Check Failed
-```bash
-# Run status check to see all issues:
-make status
-```
+See **[docs/troubleshooting.md](./docs/troubleshooting.md)** for common issues covering setup, Zephyr daemon, EVM/Anvil, bridge, engine, and environment-specific problems.
 
 ## More Documentation
 

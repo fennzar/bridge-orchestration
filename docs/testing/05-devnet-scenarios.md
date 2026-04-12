@@ -498,42 +498,7 @@ Legend: ✓ = Supported, ○ = Limited, ✗ = Not supported
 
 ## Troubleshooting
 
-### Fake Oracle Not Responding
-
-```bash
-# Check if services are running
-make status
-
-# Check logs for a specific service
-make logs SERVICE=fake-oracle
-
-# Or check Docker Compose status directly
-docker compose ps
-```
-
-### Engine Not Seeing Price Changes
-
-1. Check fake orderbook is tracking oracle:
-   ```bash
-   curl -s http://127.0.0.1:5556/status | jq '.oraclePriceUsd'
-   ```
-
-2. Verify engine is using fake orderbook:
-   ```bash
-   grep FAKE_ORDERBOOK $ENGINE_REPO_PATH/.env
-   ```
-
-3. Restart engine watchers:
-   ```bash
-   overmind restart engine-watchers
-   ```
-
-### Mode Not Transitioning
-
-- Reserve ratio calculation depends on total supply
-- Fresh DEVNET has minimal supply, affecting RR calculation
-- Mine blocks to increase supply: Mine some blocks first
-- Check engine logs for RR calculation details
+See **[troubleshooting.md](../troubleshooting.md#engine)** for engine and devnet-specific issues (fake oracle, price changes, mode transitions, auto-execute blocking).
 
 ---
 

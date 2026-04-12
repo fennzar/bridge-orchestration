@@ -208,15 +208,24 @@ shutdown_overmind "$OVERMIND_SOCK"
 SETUP_PROCFILE="$ORCH_DIR/Procfile.dev"
 FORM="bridge-web=1,bridge-api=1,bridge-watchers=1,engine-web=1,engine-watchers=1,dashboard=0"
 cd "$ORCH_DIR" && env -u TMUX -u TMUX_PANE -u TERM_PROGRAM OVERMIND_FORMATION="$FORM" overmind start -D -f "$SETUP_PROCFILE" -s "$OVERMIND_SOCK"
+
 log_success "Apps started"
 
-log_info "Waiting for bridge-api health..."
+log_info "Waiting for bridge-api health (using 127.0.0.1:7051/health)..."
 for i in $(seq 1 60); do
-    if curl -sf http://localhost:7051/health >/dev/null 2>&1; then
+    if curl -sf http://127.0.0.1:7051/health >/dev/null 2>&1; then
         log_success "Bridge API healthy"
         break
     fi
-    [ "$i" -eq 60 ] && { log_error "Bridge API not healthy after 60s"; exit 1; }
+    [ "$i" -eq 1 ] && log_info "   (Still waiting... if this persists, try: overmind connect bridge-api)"
+    [ "$i" -eq 60 ] && {
+        log_error "Bridge API not healthy after 60s"
+        echo "DEBUG: overmind full status:"
+        overmind status -s "$OVERMIND_SOCK" || true
+        echo "DEBUG: curl test output:"
+        curl -v http://127.0.0.1:7051/health 2>&1 | tail -n 20
+        exit 1
+    }
     sleep 2
 done
 echo ""

@@ -166,13 +166,4 @@ Blockscout's `/api/eth-rpc` endpoint also proxies to Anvil and is a secondary at
 
 ## Troubleshooting
 
-**Apps won't start / "module not found":**
-- `make testnet-v2` auto-builds, but if builds are stale, run `make testnet-v2-stop && make testnet-v2` to force a fresh sync + rebuild.
-
-**Bridge web shows wrong host/IP:**
-- `NEXT_PUBLIC_*` vars are baked at build time. After changing `PUBLIC_HOST` in `.env`, run `make testnet-v2` — the auto-build picks up the new values.
-- Note: `make testnet-v2-reset` preserves the `.next` directory automatically.
-
-**Switching between dev and testnet-v2:**
-- Stop the current mode first (`make dev-stop` or `make testnet-v2-stop`).
-- They share the same Docker infrastructure but use different Overmind sockets.
+See **[troubleshooting.md](../troubleshooting.md#testnet-v2)** for Testnet V2 specific issues (build errors, host/IP mismatches, mode switching).

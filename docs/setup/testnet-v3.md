@@ -184,15 +184,4 @@ make testnet-v3-down && make testnet-v3-up
 
 ## Troubleshooting
 
-**Caddy won't start / TLS errors:**
-- Verify domain DNS points to this server
-- Ports 80 and 443 must be open (no other reverse proxy in front)
-- Check Caddy logs: `make testnet-v3-logs SERVICE=caddy`
-
-**Sepolia RPC errors:**
-- Verify `EVM_RPC_HTTP` and `EVM_RPC_WS` in `env/.env.testnet-v3`
-- Check rate limits on your RPC provider
-
-**Bridge watchers not connecting:**
-- Zephyr nodes must be healthy first: `make testnet-v3-logs SERVICE=zephyr-node1`
-- Check bridge-watchers logs: `make testnet-v3-logs SERVICE=bridge-watchers`
+See **[troubleshooting.md](../troubleshooting.md#testnet-v3-sepolia)** for Testnet V3 specific issues (Caddy/TLS, Sepolia RPC, watcher connectivity).

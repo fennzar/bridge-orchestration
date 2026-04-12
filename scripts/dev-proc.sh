@@ -13,8 +13,6 @@ HEALTHY_THRESHOLD=60
 
 trap 'RESTART=false' SIGTERM SIGINT SIGHUP
 
-ulimit -n 65535 2>/dev/null || true
-
 while $RESTART; do
     START=$(date +%s)
     bash -c "$*"

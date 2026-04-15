@@ -544,31 +544,36 @@ dev-test-setup:
 
 ## T1: Environment readiness — repos, binaries, .env (instant, no infra)
 precheck:
+	@mkdir -p reports
 	@./scripts/test-gate.sh precheck
-	./scripts/run-tests.py --tier precheck
+	./scripts/run-tests.py --tier precheck --report-json reports/L1-precheck.json
 
 ## T2: Infrastructure health — Docker, wallets, chain, oracle (post dev-init)
 ## Gate: dev-reset-hard + start infra
 test-infra:
+	@mkdir -p reports
 	@./scripts/test-gate.sh infra
-	./scripts/run-tests.py --tier infra
+	./scripts/run-tests.py --tier infra --report-json reports/L2-infra.json
 
 ## T3: Basic operations — transfers, oracle, RR mode (post dev-init, mutating)
 ## Gate: dev-reset-hard + start infra
 test-ops:
+	@mkdir -p reports
 	@./scripts/test-gate.sh ops
-	./scripts/run-tests.py --tier ops
+	./scripts/run-tests.py --tier ops --report-json reports/L3-ops.json
 
 ## T4A: Bridge health + flows — contracts, APIs, wrap/unwrap (post dev-setup)
 ## Gate: dev-reset (or dev-test-setup if needed) + make dev
 test-bridge:
+	@mkdir -p reports
 	@./scripts/test-gate.sh bridge
-	./scripts/run-tests.py --tier bridge
+	./scripts/run-tests.py --tier bridge --report-json reports/L4A-bridge.json
 
 ## T5: Full system tests — placeholder
 test-e2e:
+	@mkdir -p reports
 	@./scripts/test-gate.sh e2e
-	./scripts/run-tests.py --tier e2e
+	./scripts/run-tests.py --tier e2e --report-json reports/L6-e2e.json
 
 ## All tiers in order: precheck → infra → ops → bridge → engine → e2e
 ## Each tier handles its own state.
@@ -579,6 +584,10 @@ test-all:
 	$(MAKE) test-bridge
 	$(MAKE) test-engine
 	$(MAKE) test-e2e
+	$(MAKE) test-edge-execute
+	@if [ "$$REPORT" != "0" ]; then \
+		python3 ./scripts/merge-reports.py reports/; \
+	fi
 
 ## Edge-case framework default pass (summary + lint + logical)
 test-edge:
@@ -637,8 +646,9 @@ test-edge-seed:
 ## T4B: Engine strategy tests (332 tests, post dev-setup)
 ## Gate: dev-reset (or dev-test-setup if needed) + make dev
 test-engine:
+	@mkdir -p reports
 	@./scripts/test-gate.sh engine
-	python3 scripts/engine_tests/runner.py
+	python3 scripts/engine_tests/runner.py --report-json reports/L4B-engine.json
 
 ## Run engine tests verbose
 test-engine-verbose:

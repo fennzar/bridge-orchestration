@@ -1,6 +1,6 @@
 # Edge-Case Test Scope (ZB Catalog)
 
-Master scope index for the 168 ZB edge-case tests (138 catalog + 8 SEED + 22 ARB) integrated across the testing docs.
+Master scope index for the 169 ZB edge-case tests (139 catalog + 8 SEED + 22 ARB) integrated across the testing docs.
 
 ## Integrated Locations
 
@@ -51,7 +51,7 @@ See [08-edge-framework.md](./08-edge-framework.md) for the full framework.
 | Sublevel | Name | Categories | Tests |
 |----------|------|------------|-------|
 | L5.1 | Security & Contracts | SEC + SC | 24 |
-| L5.2 | Runtime & Consistency | CONS + RR + CONC + SEED + ARB | 58 |
+| L5.2 | Runtime & Consistency | CONS + RR + CONC + SEED + ARB | 59 |
 | L5.3 | Infra & Watchers | WATCH + CONF + REC | 32 |
 | L5.4 | Asset & DEX | ASSET + DEX | 20 |
 | L5.5 | Privacy & Load | PRIV + LOAD + TIME | 22 |
@@ -67,7 +67,7 @@ See [08-edge-framework.md](./08-edge-framework.md) for the full framework.
 
 | Total | SCOPED-READY | SCOPED-EXPAND | SCOPED-TBC |
 |---:|---:|---:|---:|
-| 151 | 116 | 27 | 8 |
+| 152 | 117 | 27 | 8 |
 
 ## Category Summary
 
@@ -77,7 +77,7 @@ See [08-edge-framework.md](./08-edge-framework.md) for the full framework.
 | Smart Contract Edge Cases (12) | 12 | `docs/testing/03-bridge-scenarios.md` |
 | Concurrency & Race Conditions (10) | 10 | `docs/testing/03-bridge-scenarios.md` |
 | Failure Recovery (10) | 10 | `docs/testing/03-bridge-scenarios.md` |
-| Data Consistency (10) | 10 | `docs/testing/03-bridge-scenarios.md` |
+| Data Consistency (11) | 11 | `docs/testing/03-bridge-scenarios.md` |
 | RR Mode Boundaries (8) | 8 | `docs/testing/05-devnet-scenarios.md` |
 | Watcher Reliability (12) | 12 | `docs/testing/04-full-stack-scenarios.md` |
 | Multi-Asset Interactions (10) | 10 | `docs/testing/03-bridge-scenarios.md` |
@@ -154,7 +154,7 @@ See [08-edge-framework.md](./08-edge-framework.md) for the full framework.
 | `ZB-REC-009` | Anvil WS disconnect + reconnect | P0 | Critical | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Automated check implemented. |
 | `ZB-REC-010` | Engine watchers restart: cursor-based recovery | P0 | High | `SCOPED-EXPAND` | `docs/testing/03-bridge-scenarios.md` | Extend existing scenario with explicit edge assertions. |
 
-## 5. Data Consistency (10)
+## 5. Data Consistency (11)
 
 | ID | Test | Priority | Severity | Status | Primary Doc | Next Action |
 |---|---|---|---|---|---|---|
@@ -168,6 +168,7 @@ See [08-edge-framework.md](./08-edge-framework.md) for the full framework.
 | `ZB-CONS-008` | BridgeAccount uniqueness constraints | P0 | Critical | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Automated check implemented. |
 | `ZB-CONS-009` | SystemState + Lock TTL correctness | P0 | High | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Automated check implemented. |
 | `ZB-CONS-010` | Engine DB snapshots align with current on-chain pool state | P0 | High | `SCOPED-EXPAND` | `docs/testing/03-bridge-scenarios.md` | Extend existing scenario with explicit edge assertions. |
+| `ZB-CONS-011` | EVM totalSupply must not exceed native bridge wallet custody | P0 | High | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Automated check implemented. |
 
 ## 6. RR Mode Boundaries (8)
 

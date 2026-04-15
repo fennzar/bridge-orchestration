@@ -10,7 +10,7 @@ from ._helpers import (
     _r, _needs, _jget, _get, _rpc,
     _total_supply,
     API, ENGINE, ZNODE,
-    TK, GOV_W,
+    TK, GOV_W, BRIDGE_W,
     FAKE_EVM,
 )
 
@@ -215,6 +215,60 @@ def check_cons_010(row, probes):
     return _r(row, PASS, f"Engine state has EVM={has_evm}; snapshot alignment verifiable")
 
 
+def check_cons_011(row, probes):
+    """EVM totalSupply must not exceed native bridge wallet custody."""
+    b = _needs(row, probes, "bridge_wallet", "anvil")
+    if b:
+        return b
+
+    WRAPPED_TO_NATIVE = {
+        "wZEPH": "ZPH",
+        "wZSD": "ZSD",
+        "wZRS": "ZRS",
+        "wZYS": "ZYS",
+    }
+
+    # Get bridge wallet native balances
+    result, err = _rpc(BRIDGE_W, "get_balance", {
+        "account_index": 0,
+        "all_assets": True,
+    })
+    if err:
+        return _r(row, FAIL, f"Bridge wallet RPC error: {err}")
+
+    native_balances = {}
+    for entry in (result or {}).get("balances", []):
+        asset = entry.get("asset_type", "")
+        balance_atomic = int(entry.get("balance", 0))
+        native_balances[asset] = balance_atomic
+
+    violations = []
+    details = []
+    for sym in ["wZEPH", "wZSD", "wZRS", "wZYS"]:
+        addr = TK.get(sym)
+        if not addr:
+            continue
+        evm_supply, err = _total_supply(addr)
+        if err:
+            return _r(row, FAIL, f"{sym} totalSupply: {err}")
+
+        native_asset = WRAPPED_TO_NATIVE[sym]
+        native_held = native_balances.get(native_asset, 0)
+        
+        # Asymmetric check with small tolerance
+        TOLERANCE_ATOMIC = 100
+        if evm_supply > (native_held + TOLERANCE_ATOMIC):
+            diff_pct = ((evm_supply - native_held) / evm_supply * 100) if evm_supply > 0 else 0
+            violations.append(f"{sym}: EVM={evm_supply/1e12:.4f} > native={native_held/1e12:.4f} ({diff_pct:.2f}% over)")
+        else:
+            details.append(f"{sym}={evm_supply/1e12:.4f}")
+
+    if violations:
+        return _r(row, FAIL, f"Over-minted: {'; '.join(violations)}")
+
+    return _r(row, PASS, f"All EVM supplies <= native custody ({', '.join(details)})")
+
+
 CHECKS = {
     "ZB-CONS-001": check_cons_001,
     "ZB-CONS-002": check_cons_002,
@@ -226,4 +280,5 @@ CHECKS = {
     "ZB-CONS-008": check_cons_008,
     "ZB-CONS-009": check_cons_009,
     "ZB-CONS-010": check_cons_010,
+    "ZB-CONS-011": check_cons_011,
 }

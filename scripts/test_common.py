@@ -81,6 +81,7 @@ ORDERBOOK_PORT = int(os.environ.get("FAKE_ORDERBOOK_PORT", "5556"))
 GOV_WALLET_PORT = int(os.environ.get("DEVNET_GOV_WALLET_RPC", "48769"))
 MINER_WALLET_PORT = int(os.environ.get("DEVNET_MINER_WALLET_RPC", "48767"))
 TEST_WALLET_PORT = int(os.environ.get("DEVNET_TEST_WALLET_RPC", "48768"))
+BRIDGE_WALLET_PORT = int(os.environ.get("DEVNET_BRIDGE_WALLET_RPC", "48770"))
 
 # Service URLs
 NODE1_RPC = f"http://127.0.0.1:{NODE1_RPC_PORT}/json_rpc"
@@ -90,6 +91,7 @@ ORDERBOOK_URL = f"http://127.0.0.1:{ORDERBOOK_PORT}"
 GOV_W = f"http://127.0.0.1:{GOV_WALLET_PORT}/json_rpc"
 MINER_W = f"http://127.0.0.1:{MINER_WALLET_PORT}/json_rpc"
 TEST_W = f"http://127.0.0.1:{TEST_WALLET_PORT}/json_rpc"
+BRIDGE_W = f"http://127.0.0.1:{BRIDGE_WALLET_PORT}/json_rpc"
 ANVIL_URL = "http://127.0.0.1:8545"
 BRIDGE_API_URL = "http://127.0.0.1:7051"
 ENGINE_URL = "http://127.0.0.1:7000"
@@ -343,7 +345,7 @@ def probe_services() -> dict[str, bool]:
             probes[name] = False
 
     # Wallets
-    for name, url in [("gov_wallet", GOV_W), ("miner_wallet", MINER_W), ("test_wallet", TEST_W)]:
+    for name, url in [("gov_wallet", GOV_W), ("miner_wallet", MINER_W), ("test_wallet", TEST_W), ("bridge_wallet", BRIDGE_W)]:
         try:
             result, err = _rpc(url, "get_version", timeout=3.0)
             probes[name] = err is None and result is not None

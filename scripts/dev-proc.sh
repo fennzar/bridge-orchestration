@@ -11,6 +11,14 @@ DELAY=2
 MAX_DELAY=30
 HEALTHY_THRESHOLD=60
 
+if [[ "$*" =~ cd\ ([^[:space:]\&]+) ]]; then
+    DIR=$(eval echo "${BASH_REMATCH[1]}")
+    if [ -n "$DIR" ] && [ ! -d "$DIR" ]; then
+        echo "[dev-proc] Target directory '$DIR' not found. Exiting cleanly (process skipped)."
+        exit 0
+    fi
+fi
+
 trap 'RESTART=false' SIGTERM SIGINT SIGHUP
 
 while $RESTART; do

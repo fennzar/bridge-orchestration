@@ -356,14 +356,15 @@ dev-apps:
 	@if [ -S "$(OVERMIND_SOCK)" ]; then \
 		echo "  Overmind already running"; \
 	elif [ -n "$(APPS)" ]; then \
-		FORM="bridge-web=0,bridge-api=0,bridge-watchers=0,engine-web=0,engine-watchers=0,engine-run=0,dashboard=0"; \
+		FORM="bridge-web=0,bridge-api=0,bridge-watchers=0,engine-web=0,engine-watchers=0,engine-run=0,dashboard=0,scanner=0"; \
 		IFS=',' read -ra APP_LIST <<< "$(APPS)"; \
 		for grp in "$${APP_LIST[@]}"; do \
 			case "$$grp" in \
 				bridge)    FORM=$$(echo "$$FORM" | sed 's/bridge-web=0/bridge-web=1/;s/bridge-api=0/bridge-api=1/;s/bridge-watchers=0/bridge-watchers=1/') ;; \
 				engine)    FORM=$$(echo "$$FORM" | sed 's/engine-web=0/engine-web=1/;s/engine-watchers=0/engine-watchers=1/') ;; \
 				dashboard) FORM=$$(echo "$$FORM" | sed 's/dashboard=0/dashboard=1/') ;; \
-				*)         echo "Error: Unknown app group '$$grp'. Valid groups: bridge, engine, dashboard"; exit 1 ;; \
+				scanner)   FORM=$$(echo "$$FORM" | sed 's/scanner=0/scanner=1/') ;; \
+				*)         echo "Error: Unknown app group '$$grp'. Valid groups: bridge, engine, dashboard, scanner"; exit 1 ;; \
 			esac; \
 		done; \
 		echo "  Formation: $$FORM"; \

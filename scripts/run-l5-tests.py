@@ -128,6 +128,13 @@ def probe_services() -> dict[str, bool]:
     except Exception:
         probes["zephyr_node"] = False
 
+    try:
+        from test_common import BRIDGE_W
+        result, err = _rpc(BRIDGE_W, "get_version", timeout=3.0)
+        probes["bridge_wallet"] = err is None and result is not None
+    except Exception:
+        probes["bridge_wallet"] = False
+
     return probes
 
 
@@ -357,8 +364,8 @@ def lint_catalog(rows: list[TestCase]) -> bool:
     errors: list[str] = []
     warnings: list[str] = []
 
-    if len(rows) != 168:
-        errors.append(f"Expected 168 tests, found {len(rows)}")
+    if len(rows) != 169:
+        errors.append(f"Expected 169 tests, found {len(rows)}")
 
     ids = [r.test_id for r in rows]
     duplicate_ids = sorted({test_id for test_id in ids if ids.count(test_id) > 1})

@@ -61,6 +61,18 @@ OVERMIND_PROCESSES=(
     "dashboard:7100"
 )
 
+# ── Log pattern definitions ───────────────────
+# Infrastructure: disk, memory, segfaults (not application "error" lines)
+CRITICAL_LOG_RE='(ENOSPC|no space left on device|out of memory|OOM killed|panic:|Segmentation fault|SIGKILL|BlockOutOfRange)'
+# App crash: unhandled JS exceptions, missing modules
+APP_CRASH_RE='(uncaughtException|unhandledRejection|Cannot find module|FATAL|heap out of memory|ENOMEM)'
+# Overmind crash-loop: dev-proc.sh output patterns
+CRASH_LOOP_RE='(\[dev-proc\] Process crashed|restarting in [0-9]+s|FATAL|Cannot find module)'
+
+# ── Pre-computed Docker log warnings ──────────
+declare -A DOCKER_WARN_COUNT
+declare -A DOCKER_WARN_SAMPLE
+
 # Overmind uses its own tmux server — unset TMUX to prevent
 # conflicts when running from inside tmux/zmux.
 unset TMUX 2>/dev/null || true
@@ -311,6 +323,33 @@ print_persisted_state() {
 # Section 3: Docker Services
 # ===========================================
 
+# Pre-scan Docker logs for critical patterns (called once, used by both
+# print_docker_services and print_docker_warnings).
+compute_docker_warnings() {
+    if ! docker_available; then return; fi
+
+    for svc in "${DOCKER_SERVICES[@]}"; do
+        IFS=: read -r container display port flags <<< "$svc"
+
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+            continue
+        fi
+
+        local log_sample count=0 sample=""
+        log_sample=$(docker logs --tail 50 "$container" 2>&1) || continue
+
+        while IFS= read -r line; do
+            if echo "$line" | grep -qE "$CRITICAL_LOG_RE"; then
+                count=$((count + 1))
+                [ -z "$sample" ] && sample="${line:0:120}"
+            fi
+        done <<< "$log_sample"
+
+        DOCKER_WARN_COUNT["$container"]="$count"
+        DOCKER_WARN_SAMPLE["$container"]="$sample"
+    done
+}
+
 print_docker_services() {
     echo -e "${CYAN}━━━ Docker Services ━━━${NC}"
 
@@ -340,15 +379,25 @@ print_docker_services() {
         local health
         health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || echo "unknown")
 
+        local warn_count="${DOCKER_WARN_COUNT[$container]:-0}"
+
         case "$health" in
             healthy)
-                ok "$(printf '%-18s' "$display") healthy (port $port)"
+                if [ "$warn_count" -gt 0 ]; then
+                    warn "$(printf '%-18s' "$display") healthy (port $port) — $warn_count log warnings"
+                else
+                    ok "$(printf '%-18s' "$display") healthy (port $port)"
+                fi
                 ;;
             starting)
                 warn "$(printf '%-18s' "$display") starting (port $port)"
                 ;;
             none)
-                ok "$(printf '%-18s' "$display") running (port $port)"
+                if [ "$warn_count" -gt 0 ]; then
+                    warn "$(printf '%-18s' "$display") running (port $port) — $warn_count log warnings"
+                else
+                    ok "$(printf '%-18s' "$display") running (port $port)"
+                fi
                 ;;
             *)
                 warn "$(printf '%-18s' "$display") unhealthy (port $port)"
@@ -364,48 +413,27 @@ print_docker_services() {
 # ===========================================
 
 print_docker_warnings() {
-    if ! docker_available; then
-        return
-    fi
+    if ! docker_available; then return; fi
 
-    local found_issues=false
-    local warnings=""
+    local found=false
+    local output=""
 
     for svc in "${DOCKER_SERVICES[@]}"; do
         IFS=: read -r container display port flags <<< "$svc"
+        local count="${DOCKER_WARN_COUNT[$container]:-0}"
+        [ "$count" -le 0 ] && continue
 
-        # Skip containers that aren't running
-        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
-            continue
+        if [ "$found" = false ]; then
+            found=true
+            output+="$(echo -e "${CYAN}━━━ Docker Log Warnings ━━━${NC}")\n"
         fi
-
-        # Sample last 50 lines and count error patterns
-        local log_sample
-        log_sample=$(docker logs --tail 50 "$container" 2>&1) || continue
-
-        local error_count=0
-        local sample_line=""
-        while IFS= read -r line; do
-            if echo "$line" | grep -qiE '(error|fatal|panic|ENOSPC|BlockOutOfRange|TransportError|no space left|OOM)'; then
-                error_count=$((error_count + 1))
-                if [ -z "$sample_line" ]; then
-                    sample_line="${line:0:100}"
-                fi
-            fi
-        done <<< "$log_sample"
-
-        if [ "$error_count" -gt 10 ]; then
-            if [ "$found_issues" = false ]; then
-                found_issues=true
-                warnings+="$(echo -e "${CYAN}━━━ Docker Log Warnings ━━━${NC}")\n"
-            fi
-            warnings+="$(warn "$(printf '%-18s' "$display") $error_count errors in last 50 lines")\n"
-            warnings+="$(dim "  ${sample_line}")\n"
-        fi
+        output+="$(warn "$(printf '%-18s' "$display") $count critical patterns in last 50 lines")\n"
+        local sample="${DOCKER_WARN_SAMPLE[$container]:-}"
+        [ -n "$sample" ] && output+="$(dim "  ${sample}")\n"
     done
 
-    if [ "$found_issues" = true ]; then
-        echo -e "$warnings"
+    if [ "$found" = true ]; then
+        echo -e "$output"
     fi
 }
 
@@ -455,20 +483,26 @@ print_overmind_processes() {
 
         if [ "$status" = "running" ]; then
             if [ "$port" != "-" ]; then
-                # Verify the port is actually responding (detect crash-looping)
+                # Port-based process: curl check is the primary signal
                 if curl -sf -o /dev/null --connect-timeout 2 "http://127.0.0.1:$port/" 2>/dev/null; then
                     ok "$(printf '%-18s' "$name") running (port $port, pid $pid)"
                 else
                     fail "$(printf '%-18s' "$name") crash-looping (port $port not responding)"
                 fi
             else
-                # Portless process: check tmux logs for crash patterns
+                # Portless process: check tmux logs for crash-loop and degraded state
                 local logs
                 logs=$(tmux capture-pane -p -t "bridge-orchestration:${name}" 2>/dev/null | tail -20) || logs=""
-                if echo "$logs" | grep -qE '(Process crashed|restarting in [0-9]+s|FATAL|Cannot find module)'; then
+                if echo "$logs" | grep -qE "$CRASH_LOOP_RE"; then
                     fail "$(printf '%-18s' "$name") crash-looping (pid $pid)"
                 else
-                    ok "$(printf '%-18s' "$name") running (pid $pid)"
+                    local degraded_count
+                    degraded_count=$(echo "$logs" | grep -cE "$APP_CRASH_RE" || true)
+                    if [ "$degraded_count" -gt 0 ]; then
+                        warn "$(printf '%-18s' "$name") running (pid $pid) — $degraded_count warnings"
+                    else
+                        ok "$(printf '%-18s' "$name") running (pid $pid)"
+                    fi
                 fi
             fi
         else
@@ -628,6 +662,7 @@ detect_stage
 print_stage
 print_repos
 print_persisted_state
+compute_docker_warnings
 print_docker_services
 print_docker_warnings
 print_overmind_processes

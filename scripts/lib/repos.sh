@@ -19,6 +19,7 @@ REPOS=(
     "zephyr-bridge|git@github.com:fennzar/zephyr-bridge.git||master"
     "zephyr-bridge-engine|git@github.com:fennzar/zephyr-bridge-engine.git||master"
     "zephyr|git@github.com:fennzar/zephyr.git|--recursive|fresh-devnet-bootstrap"
+    "zephyrd-scanner|git@github.com:fennzar/zephyrd-scanner.git||main"
 )
 
 ZEPHYR_DEVNET_BRANCH="fresh-devnet-bootstrap"

@@ -23,7 +23,7 @@ services:
     image: ghcr.io/foundry-rs/foundry:latest
     container_name: orch-anvil
     ports:
-      - "8545:8545"
+      - "127.0.0.1:8545:8545"
     entrypoint: anvil
     command:
       - --host
@@ -58,7 +58,7 @@ services:
     image: zephyr-devnet
     container_name: orch-wallet-cex
     ports:
-      - "48772:48772"
+      - "127.0.0.1:48772:48772"
     environment:
       ZEPHYR_MODE: wallet
     command:
@@ -98,7 +98,7 @@ services:
     image: zephyr-fake-orderbook
     container_name: orch-fake-orderbook
     ports:
-      - "5556:5556"
+      - "127.0.0.1:5556:5556"
     environment:
       FAKE_ORDERBOOK_PORT: "5556"
       FAKE_ORACLE_URL: "http://zephyr-node1:5555"
@@ -138,40 +138,40 @@ services:
   # Oracle shares node1's network namespace, so oracle port is exposed via node1
   zephyr-node1:
     ports:
-      - "47767:47767"
-      - "5555:5555"
+      - "127.0.0.1:47767:47767"
+      - "127.0.0.1:5555:5555"
 
   zephyr-node2:
     ports:
-      - "47867:47867"
+      - "127.0.0.1:47867:47867"
 
   wallet-gov:
     ports:
-      - "48769:48769"
+      - "127.0.0.1:48769:48769"
 
   wallet-miner:
     ports:
-      - "48767:48767"
+      - "127.0.0.1:48767:48767"
 
   wallet-test:
     ports:
-      - "48768:48768"
+      - "127.0.0.1:48768:48768"
 
   wallet-bridge:
     ports:
-      - "48770:48770"
+      - "127.0.0.1:48770:48770"
 
   wallet-engine:
     ports:
-      - "48771:48771"
+      - "127.0.0.1:48771:48771"
 
   redis:
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
 
   postgres:
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
 volumes:
   wallet-data:

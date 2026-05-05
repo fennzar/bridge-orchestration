@@ -126,7 +126,7 @@ services:
       - blockscout-backend
       - blockscout-frontend
     ports:
-      - "${BLOCKSCOUT_PORT:-4000}:80"
+      - "127.0.0.1:${BLOCKSCOUT_PORT:-4000}:80"
     volumes:
       - ${ORCH_DIR}/config/blockscout-proxy.conf:/etc/nginx/conf.d/default.conf:ro
     logging: *default-logging

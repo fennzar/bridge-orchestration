@@ -33,6 +33,7 @@ from lib.seed_helpers import (
     start_continuous_mining,
     stop_continuous_mining,
     wait_daemon_ready,
+    wait_watcher_synced,
     zephyr_balance,
     zephyr_rpc,
     zephyr_transfer,
@@ -137,6 +138,13 @@ def _wrap_flow(
     if not wait_daemon_ready(timeout=60):
         return _r(test_id, lvl, lane, FAIL, "Daemon not ready after 60s")
 
+    # 3b. Ensure the bridge watcher is caught up to the chain tip before
+    # depositing. Without this, a deposit sent while the watcher is replaying
+    # a backlog (e.g. right after a reset) isn't ingested in time and the
+    # claim poll below spuriously times out (observed flake, not a bridge bug).
+    log_step(f"[{test_id}] Waiting for bridge watcher to sync to tip...")
+    synced = wait_watcher_synced(BRIDGE_API_URL, timeout=90)
+
     log_step(f"[{test_id}] Sending {amount} {asset} to bridge subaddress...")
     tx_hash, err = zephyr_transfer(GOV_WALLET_PORT, sub_addr, amount, asset)
     if err:
@@ -146,11 +154,12 @@ def _wrap_flow(
     log_step(f"[{test_id}] Mining and waiting for claimable claims...")
     start_continuous_mining()
 
-    claims, err = bridge_poll_claims(BRIDGE_API_URL, test_addr, 1, timeout=180)
+    claims, err = bridge_poll_claims(BRIDGE_API_URL, test_addr, 1, timeout=240)
 
     if err or not claims:
         stop_continuous_mining()
-        return _r(test_id, lvl, lane, FAIL, f"No claimable claims after 180s: {err}")
+        return _r(test_id, lvl, lane, FAIL,
+                  f"No claimable claims after 240s (watcherSynced={synced}): {err}")
 
     # 5. Claim on EVM
     log_step(f"[{test_id}] Claiming {len(claims)} claim(s) on EVM...")

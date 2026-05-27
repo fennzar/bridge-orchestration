@@ -507,7 +507,19 @@ def execute_rows(
             continue
 
         check = ALL_CHECKS.get(row.test_id, generic_lane_check)
-        results.append(check(row, probes))
+        try:
+            results.append(check(row, probes))
+        except Exception as exc:  # isolate a broken check so it can't kill the run
+            results.append(
+                L5Result(
+                    test_id=row.test_id,
+                    result=EXEC_FAIL,
+                    detail=f"check raised {type(exc).__name__}: {exc}",
+                    lane=row.lane,
+                    status=row.status,
+                    priority=row.priority,
+                )
+            )
 
     counts = Counter(result.result for result in results)
     print("L5 Execute")

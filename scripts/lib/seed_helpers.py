@@ -128,6 +128,34 @@ def wait_daemon_ready(timeout: float = 120.0) -> bool:
     return False
 
 
+def wait_watcher_synced(api_url: str = BRIDGE_API_URL, timeout: float = 90.0) -> bool:
+    """Wait until the Zephyr bridge watcher has caught up to the daemon tip.
+
+    Guards a race where a deposit is sent while the watcher is still replaying
+    a backlog (e.g. right after a reset it auto-mines many blocks to catch up).
+    In that window a fresh deposit isn't ingested promptly and the wrap claim
+    poll spuriously times out. Best-effort: returns False on timeout but the
+    caller should proceed anyway (the subsequent poll has its own timeout).
+    """
+    deadline = time.time() + timeout
+    lag = None
+    while time.time() < deadline:
+        info, err = daemon_rpc("get_info")
+        tip = int((info or {}).get("height", 0)) if not err else 0
+        try:
+            q = _json_request(f"{api_url}/debug/claims/queues")
+            wh = int(q.get("zephyr", {}).get("lastWalletHeight", 0))
+        except Exception:
+            wh = 0
+        if tip and wh and wh >= tip - 1:
+            return True
+        lag = (tip - wh) if tip else None
+        time.sleep(3)
+    if lag is not None:
+        log_step(f"    Watcher still ~{lag} blocks behind tip after {timeout:.0f}s — proceeding")
+    return False
+
+
 def zephyr_balance(port: int, asset: str) -> float:
     """Get wallet balance for specific asset type, returns float."""
     result, err = zephyr_rpc(port, "refresh")

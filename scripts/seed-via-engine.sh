@@ -20,6 +20,7 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 # Load shared libraries
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/zephyr.sh"
 source "$SCRIPT_DIR/lib/prereqs.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
 
@@ -38,7 +39,7 @@ DEPLOYER_KEY="${DEPLOYER_PRIVATE_KEY}"
 SNAPSHOT_DIR="${ANVIL_SNAPSHOT_DIR:-$ORCH_DIR/snapshots/anvil}"
 BRIDGE_API="${BRIDGE_API_URL:-http://127.0.0.1:7051}"
 CAST="cast"
-ZEPHYR_CLI="${ZEPHYR_REPO_PATH}/tools/zephyr-cli/cli"
+ZEPHYR_CLI=$(get_zephyr_cli "$ORCH_DIR")
 
 log_info "Engine EVM:  $ENGINE_ADDR"
 log_info "RPC:         $RPC_URL"

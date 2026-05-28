@@ -19,6 +19,7 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/compose.sh"
+source "$SCRIPT_DIR/lib/zephyr.sh"
 source "$SCRIPT_DIR/lib/disk.sh"
 source "$SCRIPT_DIR/lib/prereqs.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
@@ -34,7 +35,7 @@ maybe_cleanup_disk
 DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
 PROCFILE="${PROCFILE:-$ORCH_DIR/Procfile.dev}"
-ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
+ZEPHYR_CLI=$(get_zephyr_cli "$ORCH_DIR")
 
 # Target oracle price for this setup run (USD)
 SETUP_PRICE="${SETUP_PRICE:-2.00}"

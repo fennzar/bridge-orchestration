@@ -21,6 +21,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from lib.env_loader import load_env as _load_env
 from lib.seed_helpers import (
     ANVIL_URL,
     ATOMIC,
@@ -50,24 +51,11 @@ ORCH_DIR = SCRIPT_DIR.parent
 
 def load_env():
     """Load .env from ORCH_DIR, expanding variable references."""
-    env_file = ORCH_DIR / ".env"
-    if not env_file.exists():
-        log_err(f".env not found at {env_file}")
+    try:
+        _load_env(ORCH_DIR / ".env", required=True)
+    except FileNotFoundError as exc:
+        log_err(str(exc))
         sys.exit(1)
-
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if not key:
-            continue
-        # Expand ${VAR} and $VAR references against current env
-        expanded = os.path.expandvars(value)
-        os.environ.setdefault(key, expanded)
 
 
 def require_env(name: str) -> str:

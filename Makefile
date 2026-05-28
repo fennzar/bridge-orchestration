@@ -73,7 +73,6 @@ COMPOSE_DEV    := docker/compose.dev.yml
 COMPOSE_BS     := docker/compose.blockscout.yml
 COMPOSE_V2     := docker/compose.testnet-v2.yml
 COMPOSE_V3     := docker/compose.testnet-v3.yml
-COMPOSE_PROD   := docker/compose.prod.yml
 
 # Guard: verify Zephyr base exists (only warn when .env exists — fresh installs haven't run keygen yet)
 $(if $(wildcard .env),$(if $(wildcard $(ZEPHYR_BASE)),,$(warning Zephyr compose.yml not found at $(ZEPHYR_BASE). Check ZEPHYR_REPO_PATH in .env)))
@@ -165,7 +164,7 @@ build-orderbook:
 # Dev Environment
 # ===========================================
 
-.PHONY: dev dev-start dev-init dev-init-mirror dev-setup dev-delete dev-apps dev-stop dev-explorer dev-reset dev-reset-hard dev-checkpoint status status-git status-git-diff logs clean seed-engine scan-pools
+.PHONY: dev dev-start dev-init dev-init-mirror dev-setup dev-infra dev-apps dev-stop dev-explorer dev-delete dev-reset dev-reset-hard dev-checkpoint sanity-check status status-git status-git-diff logs clean seed-engine seed-engine-legacy scan-pools
 
 ## Start the stack (no init, no setup — just start)
 dev: dev-start
@@ -651,8 +650,6 @@ typecheck-tests:
 # ===========================================
 # Cleanup
 # ===========================================
-
-.PHONY: clean
 
 ## Alias for dev-delete
 clean: dev-delete

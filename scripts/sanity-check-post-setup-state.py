@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 from pathlib import Path
@@ -23,6 +22,10 @@ from urllib.request import Request, urlopen
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ORCH_DIR = SCRIPT_DIR.parent
+
+sys.path.insert(0, str(SCRIPT_DIR))
+from lib.env_loader import load_env as _load_env  # noqa: E402
+
 ATOMIC = 1_000_000_000_000  # 1e12
 
 # Spec constants
@@ -121,17 +124,7 @@ def check(label: str, actual: float, expected: float, tolerance_pct: float = 5.0
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 def load_env() -> None:
-    env_file = ORCH_DIR / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if key:
-            os.environ.setdefault(key, os.path.expandvars(value))
+    _load_env(ORCH_DIR / ".env")
 
 
 def rpc_call(url: str, method: str, params: dict | None = None, timeout: int = 5) -> dict | None:

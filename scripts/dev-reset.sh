@@ -28,6 +28,7 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/compose.sh"
+source "$SCRIPT_DIR/lib/zephyr.sh"
 source "$SCRIPT_DIR/lib/prereqs.sh"
 source "$SCRIPT_DIR/lib/cleanup.sh"
 load_env "$ORCH_DIR/.env" || { echo "Error: .env not found"; exit 1; }
@@ -37,8 +38,8 @@ require_tool overmind
 
 DC_DEV=$(get_dc_dev "$ORCH_DIR")
 OVERMIND_SOCK="${OVERMIND_SOCK:-$ORCH_DIR/.overmind-dev.sock}"
-ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
-ZEPHYR_DEVNET_SH="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/devnet.sh"
+ZEPHYR_CLI=$(get_zephyr_cli "$ORCH_DIR")
+ZEPHYR_DEVNET_SH=$(get_zephyr_devnet_sh "$ORCH_DIR")
 
 # Parse flags
 HARD_RESET=false

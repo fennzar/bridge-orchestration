@@ -185,7 +185,6 @@ services:
     profiles: ["full"]
     environment:
       PORT: "7100"
-      ZEPHYR_CHAIN_MODE: "devnet"
     logging: *default-logging
     networks:
       - zephyr-net

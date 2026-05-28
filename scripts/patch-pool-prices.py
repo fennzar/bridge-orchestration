@@ -32,23 +32,16 @@ from urllib.request import Request, urlopen
 SCRIPT_DIR = Path(__file__).resolve().parent
 ORCH_DIR = SCRIPT_DIR.parent
 
+sys.path.insert(0, str(SCRIPT_DIR))
+from lib.env_loader import load_env as _load_env  # noqa: E402
+
 # Atomic unit divisor (1e12)
 ATOMIC = 1_000_000_000_000
 
 
 def load_env():
     """Load .env from ORCH_DIR."""
-    env_file = ORCH_DIR / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if key:
-            os.environ.setdefault(key, os.path.expandvars(value))
+    _load_env(ORCH_DIR / ".env")
 
 
 def get_reserve_info(daemon_url: str) -> dict:

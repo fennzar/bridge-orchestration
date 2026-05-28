@@ -17,12 +17,13 @@ ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/zephyr.sh"
 load_env "$ORCH_DIR/.env" 2>/dev/null || true
 
 PARENT="$(cd "$ORCH_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/repos.sh"
 
-ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
+ZEPHYR_CLI=$(get_zephyr_cli "$ORCH_DIR")
 
 # ── Docker Compose command ──────────────────
 

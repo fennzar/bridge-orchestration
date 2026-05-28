@@ -13,8 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_DIR="$(dirname "$SCRIPT_DIR")"
 
 source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/zephyr.sh"
 load_env "$ORCH_DIR/.env" 2>/dev/null || true
 
-ZEPHYR_CLI="${ZEPHYR_REPO_PATH:-$(dirname "$ORCH_DIR")/zephyr}/tools/zephyr-cli/cli"
+ZEPHYR_CLI=$(get_zephyr_cli "$ORCH_DIR")
 
 "$ZEPHYR_CLI" wallet open all

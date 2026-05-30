@@ -178,6 +178,12 @@ RPC_URL_SEPOLIA_HTTP=${EVM_RPC_HTTP_SEPOLIA:-}
 RPC_URL_SEPOLIA_WS=${EVM_RPC_WS_SEPOLIA:-}
 RPC_URL_MAINNET_HTTP=
 
+# === EVM Chain IDs (by environment) ===
+# Devnet chainId is collision-free (271337 local / 271338 testnet-v2), NOT Anvil's
+# default 31337. The engine signs txs with this — must match the running Anvil node.
+EVM_CHAIN_ID_LOCAL=${EVM_CHAIN_ID}
+EVM_CHAIN_ID_SEPOLIA=11155111
+
 # === Zephyr Daemon ===
 ZEPHYR_D_RPC_URL=${ZEPHYR_D_RPC_URL}
 ZEPHYR_PAPER=false

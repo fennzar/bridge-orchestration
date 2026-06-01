@@ -41,8 +41,9 @@ for entry in "${REPOS[@]}"; do
 done
 REPO_JSON="$REPO_JSON"$'\n'"  }"
 
-# Read chain ID from env
-CHAIN_ID="${EVM_CHAIN_ID:-31337}"
+# Read chain ID from env. Fallback matches the collision-free local default used
+# everywhere else (compose.dev.yml, sec.py, network.ts) — NOT Anvil's default 31337.
+CHAIN_ID="${EVM_CHAIN_ID:-271337}"
 
 # Write build state
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

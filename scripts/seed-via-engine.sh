@@ -175,6 +175,69 @@ log_success "Blocks mined, CEX funds maturing"
 echo ""
 
 # ===========================================
+# Step 2.6: Stock faucet wallet (miner = 48767) with ZSD/ZRS
+# ===========================================
+# The bridge-web testnet faucet dispenses ZSD/ZRS as plain same-asset transfers.
+# When the faucet wallet holds less than the requested amount it falls back to an
+# on-chain ZPH->asset CONVERSION, which needs a daemon oracle pricing record —
+# that throws "Failed to get pricing record" on hosts where the oracle is stalled
+# (the deployed testnet symptom). Pre-stock a buffer here via a self-conversion
+# (done while the oracle is healthy at setup time) so the faucet only ever does
+# plain sends and never depends on the oracle at request time.
+log_info "Step 2.6: Stocking faucet wallet (miner) with ZSD/ZRS..."
+
+FAUCET_WALLET_PORT="${ZEPHYR_FAUCET_WALLET_PORT:-48767}"
+FAUCET_STOCK_ZSD="${FAUCET_STOCK_ZSD:-250}"
+FAUCET_STOCK_ZRS="${FAUCET_STOCK_ZRS:-250}"
+
+faucet_balance() {  # $1 = asset_type → floored whole-unit balance, 0 on any error
+    python3 - "$FAUCET_WALLET_PORT" "$1" <<'PY'
+import sys, json, urllib.request
+port, asset = sys.argv[1], sys.argv[2]
+try:
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/json_rpc",
+        data=json.dumps({"jsonrpc": "2.0", "id": "0", "method": "get_balance",
+                         "params": {"all_assets": True}}).encode(),
+        headers={"Content-Type": "application/json"})
+    r = json.load(urllib.request.urlopen(req, timeout=5))
+    bal = next((x for x in r.get("result", {}).get("balances", [])
+                if x.get("asset_type") == asset), {})
+    print(int(bal.get("balance", 0)) // 10**12)
+except Exception:
+    print(0)
+PY
+}
+
+FAUCET_NEED_MINE=0
+for pair in "ZSD:$FAUCET_STOCK_ZSD" "ZRS:$FAUCET_STOCK_ZRS"; do
+    ASSET="${pair%%:*}"; TARGET="${pair##*:}"
+    HAVE=$(faucet_balance "$ASSET")
+    if [ "${HAVE:-0}" -ge "$TARGET" ] 2>/dev/null; then
+        log_success "Faucet already holds ${HAVE} ${ASSET} (>= ${TARGET}), skipping"
+        continue
+    fi
+    MINT=$(( TARGET - ${HAVE:-0} ))
+    if "$ZEPHYR_CLI" convert miner "$MINT" ZPH "$ASSET" >/dev/null 2>&1; then
+        log_success "Converted ${MINT} ZPH -> ${ASSET} in faucet wallet"
+        FAUCET_NEED_MINE=1
+    else
+        log_warn "Faucet ${ASSET} stock failed (oracle down or low ZPH?) — faucet will fall back to conversion"
+    fi
+done
+
+if [ "$FAUCET_NEED_MINE" = "1" ]; then
+    log_info "Mining 32 blocks for faucet conversion-output maturity..."
+    python3 -c "
+import sys; sys.path.insert(0, '$SCRIPT_DIR')
+from lib.seed_helpers import mine_blocks
+mine_blocks(32)
+"
+    log_success "Faucet stock maturing"
+fi
+echo ""
+
+# ===========================================
 # Step 3: Run engine seeder (wrap → claim → LP)
 # ===========================================
 # Refresh bridge wallet so it's caught up with blocks mined during funding.

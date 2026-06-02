@@ -1,6 +1,6 @@
 # Edge-Case Test Scope (ZB Catalog)
 
-Master scope index for the 169 ZB edge-case tests (139 catalog + 8 SEED + 22 ARB) integrated across the testing docs.
+Master scope index for the 182 ZB edge-case tests (139 catalog + 8 SEED + 22 ARB + 13 LP) integrated across the testing docs.
 
 ## Integrated Locations
 
@@ -13,6 +13,7 @@ Master scope index for the 169 ZB edge-case tests (139 catalog + 8 SEED + 22 ARB
 | `docs/testing/06-engine-strategies.md` | Strategy-adjacent edge validations (`ZB-RR-007`, `ZB-RR-008`, `ZB-TIME-008`, etc.) |
 | `scripts/l5_checks/seed.py` | `ZB-SEED` |
 | `scripts/l5_checks/engine_arb.py` | `ZB-ARB` |
+| `scripts/l5_checks/lp.py` (mirrored in `04-full-stack-scenarios.md`) | `ZB-LP` |
 
 ## Runner
 
@@ -340,6 +341,26 @@ See [08-edge-framework.md](./08-edge-framework.md) for the full framework.
 | `ZB-ARB-020` | High spread blocks auto-execute | P1 | Medium | `SCOPED-TBC` | `scripts/l5_checks/engine_arb.py` | TBC: >5% spot/MA spread blocks non-stable auto-execute. |
 | `ZB-ARB-021` | Manual mode queues instead of executing | P1 | Medium | `SCOPED-TBC` | `scripts/l5_checks/engine_arb.py` | TBC: --manual flag queues to operationQueue. |
 | `ZB-ARB-022` | Inventory snapshot matches seeded state | P0 | High | `SCOPED-TBC` | `scripts/l5_checks/engine_arb.py` | TBC: /api/inventory/balances matches expected seeded state. |
+
+## 17. LP Management — Bridge-Web (13)
+
+Data layer behind the bridge-web `/lps` Liquidity Pools page (Uniswap V4 LP management UI). Each row is an automated check in `scripts/l5_checks/lp.py`; run with `make test-edge-lp`.
+
+| Test ID | Title | Priority | Severity | Status | Primary Doc | Next Action |
+|---|---|---|---|---|---|---|
+| `ZB-LP-001` | `/uniswap/config` returns contracts + tokens + pool plans | P0 | High | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-002` | Config `positionManager` is deployed on-chain | P0 | High | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-003` | `/uniswap/pools/full` feed shape (record+metrics+activity+positions) | P0 | High | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-004` | Pool metrics shape (tvl, volume24h/7d, sqrtPriceX96) | P0 | Medium | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-005` | Activity event shape (kind valid, mints carry tick range) | P1 | Medium | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-006` | Owner-scoped positions `/uniswap/positions?owner=` | P1 | Medium | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-007` | Pool detail drill-down `/uniswap/pool/:id/full` | P0 | High | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-008` | Pool metrics drill-down `/uniswap/pool/:id/metrics` | P1 | Medium | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-009` | Pool positions drill-down `/uniswap/pool/:id/positions` | P1 | Medium | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-010` | Pool activity + pagination `/uniswap/pool/:id/activity` | P1 | Medium | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-011` | OHLC candles `/uniswap/pool/:id/ohlc` | P1 | Low | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-012` | SSE live updates `/uniswap/stream` (text/event-stream) | P1 | Medium | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
+| `ZB-LP-013` | `/lps` page renders (HTTP 200 + title) | P0 | High | `SCOPED-READY` | `scripts/l5_checks/lp.py` | Automated check implemented. |
 
 ## Notes
 

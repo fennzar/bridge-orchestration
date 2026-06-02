@@ -175,7 +175,7 @@ def lane_for_test(test_id: str) -> str:
         return "runtime-policy"
     if prefix == "DEX":
         return "dex-routing"
-    if prefix == "FE":
+    if prefix in {"FE", "LP"}:
         return "browser"
     if prefix == "PRIV":
         return "privacy-observability"
@@ -364,8 +364,8 @@ def lint_catalog(rows: list[TestCase]) -> bool:
     errors: list[str] = []
     warnings: list[str] = []
 
-    if len(rows) != 169:
-        errors.append(f"Expected 169 tests, found {len(rows)}")
+    if len(rows) != 182:
+        errors.append(f"Expected 182 tests, found {len(rows)}")
 
     ids = [r.test_id for r in rows]
     duplicate_ids = sorted({test_id for test_id in ids if ids.count(test_id) > 1})

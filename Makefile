@@ -534,7 +534,7 @@ scan-pools:
 # Test Framework
 # ===========================================
 
-.PHONY: dev-test-setup precheck test-infra test-ops test-bridge test-e2e test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-engine test-engine-verbose typecheck-tests
+.PHONY: dev-test-setup precheck test-infra test-ops test-bridge test-e2e test-all test-edge test-edge-lint test-edge-summary test-edge-browser-preflight test-edge-execute test-edge-execute-all test-edge-sec test-edge-runtime test-edge-infra test-edge-asset test-edge-stress test-edge-fe test-edge-seed test-edge-lp test-engine test-engine-verbose typecheck-tests
 
 ## Frozen test setup — independent of dev-setup.sh (~4 min)
 ## Leaves stack running on success. Use for test-owned infrastructure.
@@ -632,6 +632,10 @@ test-edge-fe:
 ## SEED edge checks (part of L5.2, also runnable standalone)
 test-edge-seed:
 	./scripts/run-l5-tests.py --execute --category SEED --verbose
+
+## LP management edge checks — bridge-web /lps data layer (part of L5.6, also standalone)
+test-edge-lp:
+	./scripts/run-l5-tests.py --execute --category LP --verbose
 
 ## T4B: Engine strategy tests (332 tests, post dev-setup)
 ## Gate: dev-reset (or dev-test-setup if needed) + make dev
@@ -836,3 +840,4 @@ help:
 	@echo "  make test-e2e                   T5: Full system (placeholder)"
 	@echo "  make test-all                   All tiers in order"
 	@echo "  make test-edge                  Edge-case framework pass"
+	@echo "  make test-edge-lp               LP management checks (bridge-web /lps data layer)"

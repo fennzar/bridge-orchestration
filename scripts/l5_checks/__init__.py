@@ -1,4 +1,4 @@
-"""L5 edge-case checks package (168 catalog tests across 16 categories)."""
+"""L5 edge-case checks package (182 catalog tests across 17 categories)."""
 from .sec import CHECKS as _SEC
 from .sc import CHECKS as _SC
 from .cons import CHECKS as _CONS
@@ -15,9 +15,10 @@ from .timeouts import CHECKS as _TIME
 from .fe import CHECKS as _FE
 from .seed import CHECKS as _SEED
 from .engine_arb import CHECKS as _ARB
+from .lp import CHECKS as _LP
 
 ALL_CHECKS: dict = {}
-for _m in [_SEC, _SC, _CONS, _RR, _CONC, _WATCH, _CONF, _REC, _ASSET, _DEX, _PRIV, _LOAD, _TIME, _FE, _SEED, _ARB]:
+for _m in [_SEC, _SC, _CONS, _RR, _CONC, _WATCH, _CONF, _REC, _ASSET, _DEX, _PRIV, _LOAD, _TIME, _FE, _SEED, _ARB, _LP]:
     ALL_CHECKS.update(_m)
 
 CATEGORY_MAP = {
@@ -29,6 +30,7 @@ CATEGORY_MAP = {
     "FE": sorted(_FE),
     "SEED": sorted(_SEED),
     "ARB": sorted(_ARB),
+    "LP": sorted(_LP),
 }
 
 SUBLEVEL_MAP = {
@@ -37,5 +39,5 @@ SUBLEVEL_MAP = {
     "L5.3": sorted(list(_WATCH) + list(_CONF) + list(_REC)),
     "L5.4": sorted(list(_ASSET) + list(_DEX)),
     "L5.5": sorted(list(_PRIV) + list(_LOAD) + list(_TIME)),
-    "L5.6": sorted(list(_FE)),
+    "L5.6": sorted(list(_FE) + list(_LP)),
 }

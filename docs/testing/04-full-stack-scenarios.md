@@ -1812,7 +1812,7 @@ This section fully integrates the scoped ZB edge-case tests that belong in this 
 
 | Total | SCOPED-READY | SCOPED-EXPAND | SCOPED-TBC |
 |---:|---:|---:|---:|
-| 34 | 3 | 7 | 24 |
+| 47 | 16 | 7 | 24 |
 
 Tests marked `SCOPED-TBC` are intentionally included now and require additional runbook detail in a follow-up pass.
 
@@ -1864,5 +1864,25 @@ Tests marked `SCOPED-TBC` are intentionally included now and require additional 
 | `ZB-FE-010` | Swap quote mismatch vs execution (price moves) | P1 | Medium | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
 | `ZB-FE-011` | Token approvals persisted correctly per token/router | P2 | Low | `SCOPED-TBC` | Add detailed runbook steps (TBC). |
 | `ZB-FE-012` | SSE reconnect logic: step UI never gets "stuck" | P0 | High | `SCOPED-EXPAND` | Expand nearby scenario with explicit edge assertions. |
+
+### 17. LP Management — Bridge-Web (13)
+
+Data layer behind the `/lps` Liquidity Pools page (Scenario 2 above). Automated checks in `scripts/l5_checks/lp.py`; run with `make test-edge-lp`.
+
+| ID | Test | Priority | Severity | Runbook Status | Integration Action |
+|---|---|---|---|---|---|
+| `ZB-LP-001` | `/uniswap/config` returns contracts + tokens + pool plans | P0 | High | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-002` | Config `positionManager` is deployed on-chain | P0 | High | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-003` | `/uniswap/pools/full` feed shape (record+metrics+activity+positions) | P0 | High | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-004` | Pool metrics shape (tvl, volume24h/7d, sqrtPriceX96) | P0 | Medium | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-005` | Activity event shape (kind valid, mints carry tick range) | P1 | Medium | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-006` | Owner-scoped positions `/uniswap/positions?owner=` | P1 | Medium | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-007` | Pool detail drill-down `/uniswap/pool/:id/full` | P0 | High | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-008` | Pool metrics drill-down `/uniswap/pool/:id/metrics` | P1 | Medium | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-009` | Pool positions drill-down `/uniswap/pool/:id/positions` | P1 | Medium | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-010` | Pool activity + pagination `/uniswap/pool/:id/activity` | P1 | Medium | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-011` | OHLC candles `/uniswap/pool/:id/ohlc` | P1 | Low | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-012` | SSE live updates `/uniswap/stream` (text/event-stream) | P1 | Medium | `SCOPED-READY` | Automated check implemented. |
+| `ZB-LP-013` | `/lps` page renders (HTTP 200 + title) | P0 | High | `SCOPED-READY` | Automated check implemented. |
 
 <!-- L5-CATALOG-END -->

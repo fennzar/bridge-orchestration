@@ -40,10 +40,10 @@ tagged so the run renders the holes as a worklist.
 | INV-11 | no payout before finality | LB-CONF-*, RES-REORG-UNWRAP | K |
 | INV-12 | watcher exactly-once | RES-EXACTLY-ONCE | K |
 | INV-13 | unwrap status truthfulness | LB-REC-STATUS, FLOW-UNWRAP-*, RES-STATUS-TRUTH, UI-UNWRAP-HAPPY | K |
-| INV-14 | engine can't drain on bad price | LE-APPROVAL/RISK, MKT-STALE-PRICE, MKT-SLIPPAGE-FLOOR, MKT-RISK-DEFAULT-OFF | K |
-| INV-15 | realized accounting | MKT-PNL-REALIZED, MKT-LOSS-BREAKER | K |
-| INV-16 | no fund-burning loop | MKT-NO-PINGPONG | K |
-| INV-17 | execution-time gating | LE-CONFORM-GATES, MKT-RRMODE-SWEEP, MKT-GATE-CONFORM-*, MKT-EXEC-TIME-GATE | K |
+| INV-14 | engine can't drain on bad price | MKT-ARB-DETECT, MKT-APPROVAL-RRMODE, MKT-PEG-DEFENSE (G); MKT-STALE-PRICE (K); LE: SLIPPAGE-FLOOR, RISK-DEFAULT-OFF (K) | K |
+| INV-15 | realized accounting | LE: PNL-REALIZED, LOSS-BREAKER (K) | K |
+| INV-16 | no fund-burning loop | LE: NO-PINGPONG (K) | K |
+| INV-17 | execution-time gating | MKT-RRMODE-SWEEP, MKT-GATE-CONFORM-ZSD/ZRS-redeem, MKT-NO-DOOMED-PLAN (G); MKT-GATE-CONFORM-ZRS-mint-floor (K); MKT-ARB-EXECUTE/EXEC-TIME-GATE (—); LE-CONFORM-GATES (K) | K |
 | INV-18 | privileged routes need auth | SEC-DEBUG-RESET-OPEN, SEC-ENGINE-CTRL-UNAUTH, CT-PAUSE-ABSENT, UI-CONNECT | K / A |
 | INV-19 | /unwraps/prepare not weaponizable | SEC-PREPARE-UNAUTH, SEC-PREPARE-BADADDR/OVERMAX | K |
 
@@ -94,20 +94,34 @@ tagged so the run renders the holes as a worklist.
 | FLOW-PREPARE-CANCEL | prepare then cancel/never-burn → no payout | 3,4 | G |
 
 ### MKT (`market/`) — engine ↔ market dynamics (the heart)
-| id | scenario | INV | St |
-|---|---|---|---|
-| MKT-RRMODE-SWEEP | price sweep ⇒ RR crosses 800/400/200; engine rrMode + /runtime track protocol gates | 17 | K |
-| MKT-GATE-CONFORM-{ZSD,ZRS,ZYS} | RR<400% ⇒ daemon rejects MINT_STABLE; engine must not auto-plan it | 17 | K |
-| MKT-ARB-DETECT-{prem,disc}×{4} | pool push ⇒ engine detects opp, correct sign+gapBps | 14 | G |
-| MKT-ARB-EXECUTE | normal mode ⇒ full multi-step arb auto-executes; inventory returns | 14 | G |
-| MKT-STALE-PRICE | pricing record stale (age>10 blk) ⇒ engine refuses to execute | 14 | K |
-| MKT-SLIPPAGE-FLOOR | realized<expected ⇒ engine aborts (not amountOutMin ?? 0n) | 14 | K |
-| MKT-PNL-REALIZED | recorded PnL = actual fill, not expectedPnl | 15 | K |
-| MKT-LOSS-BREAKER | cumulative realized loss>max ⇒ breaker trips | 15 | K |
-| MKT-NO-PINGPONG | no wrap/unwrap fee-burning loop on accounting-only CEX legs | 16 | K |
-| MKT-EXEC-TIME-GATE | approve in normal, flip RR→crisis pre-exec ⇒ re-check aborts | 17 | K |
-| MKT-PEG-DEFENSE | wZSD off $1 ⇒ peg-keeper proposes corrective mint/redeem within gates | 14 | G |
-| MKT-RISK-DEFAULT-OFF | risk controls enabled:false default ⇒ $2000 op not blocked | 14 | K |
+St: G green · K known-gap red · — not yet built. "Built" = file:test present and collecting.
+Method: drive oracle (`control.settle_price`) / push a pool (`pool.move_price` under `anvil_snapshot`);
+observe via `/api/runtime` `enabled`, `/api/arbitrage/analysis|plans`, `/api/engine/evaluate`; assert
+against the protocol gate oracle (`market/protocol_gates.py`, cited to zephyr-reference.md).
+
+| id | scenario | INV | St | Built |
+|---|---|---|---|---|
+| MKT-RRMODE-SWEEP | oracle sweep $1.50→0.35 ⇒ measured RR drops; engine rrMode + reported RR track the daemon at every regime | 17 | G | `test_rrmode_sweep.py` |
+| MKT-GATE-CONFORM-ZSD-mint | ZEPH→ZSD `enabled` == protocol MINT_STABLE(rr,ma) — matches | 17 | G | `test_gate_conformance.py` |
+| MKT-GATE-CONFORM-ZRS-mint-floor | <400%: protocol allows ZEPH→ZRS (no floor), engine blocks (rr<4) — divergence | 17 | K | `test_gate_conformance.py` |
+| MKT-GATE-CONFORM-ZRS-redeem / ZSD-redeem | ZRS→ZEPH / ZSD→ZEPH `enabled` == protocol gate — matches at baseline | 17 | G | `test_gate_conformance.py` |
+| MKT-NO-DOOMED-PLAN | no auto-exec plan closes via a native hop the protocol blocks at measured RR (doomed tx) | 17 | G | `test_doomed_plans.py` |
+| MKT-ARB-DETECT-ZSD-{prem,disc} | wZSD/USDT push ⇒ analysis reports correctly-signed gapBps + direction | 14 | G | `test_arb_dynamics.py` |
+| MKT-APPROVAL-RRMODE | defensive RR ⇒ no ZRS plan auto-executable (`shouldAutoExecuteForRRMode`) | 14 | G | `test_arb_dynamics.py` |
+| MKT-PEG-DEFENSE | wZSD off $1 ⇒ peg-keeper proposes a corrective op (not into the drop) | 14 | G | `test_peg_defense.py` |
+| MKT-STALE-PRICE | engine exposes NO native price-freshness signal ⇒ can't refuse a stale oracle (absence assertion) | 14 | K | `test_price_safety.py` |
+| MKT-ARB-EXECUTE | normal mode ⇒ full multi-step arb auto-executes; inventory returns | 14 | — | needs runner harness (queue/runner API) |
+| MKT-EXEC-TIME-GATE | approve in normal, flip RR→crisis pre-exec ⇒ re-check aborts | 17 | — | needs runner harness; temporal gate |
+
+**Reassigned to LE (deterministic vitest) — in-memory in the runner process, not observable via the
+stateless read APIs; tested as pure conformance reds instead (task #14):**
+| id | scenario | INV | St | Where |
+|---|---|---|---|---|
+| MKT-RISK-DEFAULT-OFF | `DEFAULT_RISK_LIMITS.enabled === false` ⇒ breaker `canExecute()` always allows | 14 | K | LE: `risk/limits.ts`, `circuitBreaker.ts` |
+| MKT-LOSS-BREAKER | cumulative realized loss > max ⇒ breaker opens (FSM) | 15 | K | LE: `circuitBreaker.ts` |
+| MKT-PNL-REALIZED | execution records expected score (`netUsdChangeUsd`), no realized-fill reconciliation | 15 | K | LE: execution/view |
+| MKT-SLIPPAGE-FLOOR | swap uses `amountOutMin ?? 0n` (no slippage floor) ⇒ no abort on adverse fill | 14 | K | LE: execution swap step |
+| MKT-NO-PINGPONG | offsetting wrap/unwrap loop burns real fees on accounting-only CEX legs | 16 | K | LE: routing / dedupe |
 
 ### SEC (`security/`) — adversarial
 | id | scenario | INV | St |

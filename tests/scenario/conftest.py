@@ -62,6 +62,42 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "asset(name): the Zephyr asset under test (ZEPH/ZSD/ZRS/ZYS).")
 
 
+def pytest_addoption(parser):
+    g = parser.getgroup("scenario")
+    g.addoption("--inv", default=None, help="run only tests pinning this invariant (e.g. INV-14).")
+    g.addoption("--asset", default=None, help="run only tests for this asset (ZEPH/ZSD/ZRS/ZYS).")
+
+
+def _marker_values(item, name: str) -> list:
+    vals = []
+    for m in item.iter_markers(name=name):
+        vals.extend(str(a) for a in m.args)
+        if name == "known_gap" or name == "accepted_risk":
+            if m.kwargs.get("inv"):
+                vals.append(str(m.kwargs["inv"]))
+    return vals
+
+
+def pytest_collection_modifyitems(config, items):
+    want_inv = config.getoption("--inv")
+    want_asset = config.getoption("--asset")
+    if not want_inv and not want_asset:
+        return
+    kept, deselected = [], []
+    for it in items:
+        ok = True
+        if want_inv:
+            invs = _marker_values(it, "inv") + _marker_values(it, "known_gap") + _marker_values(it, "accepted_risk")
+            ok = ok and any(want_inv.upper() == v.upper() for v in invs)
+        if want_asset:
+            assets = _marker_values(it, "asset")
+            ok = ok and any(want_asset.upper() == v.upper() for v in assets)
+        (kept if ok else deselected).append(it)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = kept
+
+
 # ── stack probe + skip gate ───────────────────────────────────────────────────
 def _probe_stack() -> dict:
     if not _STACK["probed"]:

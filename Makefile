@@ -647,6 +647,24 @@ test-engine:
 test-engine-verbose:
 	python3 scripts/engine_tests/runner.py --verbose
 
+## ── Rebuilt invariant framework (tests/) — see tests/CATALOG.md ──────────────
+## SCENARIO layer (pytest, needs a live `make dev` stack). Self-bootstraps a venv.
+## Selectors: SUITE=market|flows|security|ops|resilience · INV=INV-14 · ASSET=ZSD · ARGS="-k name"
+SCENARIO_DIR := $(ORCH_DIR)/tests/scenario
+SCENARIO_VENV := $(SCENARIO_DIR)/.venv
+
+$(SCENARIO_VENV)/bin/pytest:
+	python3 -m venv $(SCENARIO_VENV)
+	$(SCENARIO_VENV)/bin/pip -q install -r $(SCENARIO_DIR)/requirements.txt
+
+## Run the invariant SCENARIO suite (red = a hole, tagged to an INVARIANTS.md row)
+test-scenario: $(SCENARIO_VENV)/bin/pytest
+	cd $(SCENARIO_DIR) && ./.venv/bin/python -m pytest \
+		$(if $(SUITE),$(SUITE),.) \
+		$(if $(INV),--inv $(INV)) \
+		$(if $(ASSET),--asset $(ASSET)) \
+		$(ARGS)
+
 ## Type-check test suite with pyright
 typecheck-tests:
 	pyright

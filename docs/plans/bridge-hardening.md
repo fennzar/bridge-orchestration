@@ -45,9 +45,20 @@ Each item: the fix + the invariant test that proves it. Order = by expected loss
   before any wallet interaction; rate-limit; reject `amountWei` exceeding a configured per-tx cap.
 
 ### 1.2 — HIGH-2 reorg-safe payout (INV-11) — 2★
-- ☐ Gate `ingestEvmBurn` relay on `headBlock − burnBlock ≥ getEvmConfirmationTarget()` (the function
-  already exists, just unused). Config the depth per chain (Anvil=0/1, Sepolia/mainnet=N).
-- ☐ **Test:** burn at head ⇒ no relay until depth reached; reorg before depth ⇒ never relays.
+- ✅ **Primitives done + unit-proven:** `packages/bridge/src/unwraps/confirmations.ts`
+  (`evmConfirmations`, `isBurnConfirmed`, `safeHeadBlock`, `nextUnwrapCursor`) + 10 INV-11 tests
+  (`confirmations.test.ts`, green via `pnpm test`). `getEvmConfirmationTarget()` (default 20) already
+  exists in `@zephyr-bridge/config`.
+- ☐ **Wire into the watcher (needs live-stack verification):** in `apps/watcher-evm/src/index.ts`
+  `handleBurnLogs`, gate the `ingestEvmBurn` relay on `isBurnConfirmed(head, burnBlock, target)` and
+  persist `nextUnwrapCursor(...)` instead of `setLastUnwrapsBlock(maxBlock)`. **Critical constraint
+  (why this needs the stack):** the cursor must NOT advance past a deferred burn (else it's skipped
+  forever) AND must not re-scan already-relayed blocks (the relay is not yet idempotent — HIGH-8).
+  viem `watchEvent` live-poll vs historical-scan semantics for the `fromBlock`/safe-head bound must be
+  verified against the running watcher, not assumed. Config depth per chain (Anvil=0 disables the
+  gate, Sepolia/mainnet=N).
+- ☐ **Verify:** stress-test runbook Leg D reorg-sim — burn at head ⇒ no relay until depth; reorg
+  before depth ⇒ never relays; deferred burn ⇒ re-scanned, not skipped.
 
 ### 1.3 — HIGH-8 double-relay idempotency (INV-4) — 2★
 - ☐ Persist a durable `broadcastAttempted` marker **before** `relayZephyrTransfer`; on restart,

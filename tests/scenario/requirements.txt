@@ -1,0 +1,4 @@
+# Scenario suite (pytest) — self-contained; installed into tests/scenario/.venv by
+# `make test-scenario`. Kept separate from the stdlib-only scripts/ control plane.
+pytest>=8.0,<9
+pytest-timeout>=2.3

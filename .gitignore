@@ -38,7 +38,14 @@ __pycache__/
 
 # Test reports (local only)
 reports/
-tests/
+
+# Test framework: commit source, ignore deps + ephemeral artifacts
+tests/**/node_modules/
+tests/**/.venv/
+tests/**/.report/
+tests/**/.pytest_cache/
+tests/**/__pycache__/
+tests/e2e/test-results/
 
 # Testnet/prod env (contains secrets)
 env/.env.testnet-v2

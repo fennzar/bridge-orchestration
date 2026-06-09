@@ -46,8 +46,38 @@ def reserve_info() -> tuple[dict | None, str | None]:
 
 
 def reserve_ratio() -> tuple[float | None, str | None]:
-    """Current spot reserve ratio as a float (e.g. 7.01 = 701%)."""
+    """Current spot reserve ratio as a float (e.g. 7.01 = 701%, i.e. 4.0 == 400%)."""
     return _tc._get_rr()
+
+
+def reserve_ratio_ma() -> tuple[float | None, str | None]:
+    """Moving-average reserve ratio (`reserve_ratio_ma`) — same units as spot. Protocol gates
+    test BOTH spot and MA (see harness chain.reserve_ratio); the engine reads this into
+    `reserveRatioMovingAverage` (reserve.ts)."""
+    info, err = reserve_info()
+    if err or not info:
+        return None, err or "no reserve_info"
+    raw = info.get("reserve_ratio_ma")
+    try:
+        return float(raw), None  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None, f"bad reserve_ratio_ma: {raw!r}"
+
+
+def circulating() -> dict[str, float]:
+    """Circulating supply the protocol gates care about: ZSD (`num_stables`) and ZRS
+    (`num_reserves`), in whole units. Used for the MINT_RESERVE bootstrap exception
+    (circulating ZSD < 100) and reserve-empty checks."""
+    info, err = reserve_info()
+    out: dict[str, float] = {}
+    if err or not info:
+        return out
+    for key, label in (("num_stables", "ZSD"), ("num_reserves", "ZRS")):
+        try:
+            out[label] = int(info.get(key, 0)) / ATOMIC
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 # ── Zephyr wallets ───────────────────────────────────────────────────────────

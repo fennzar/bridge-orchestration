@@ -33,7 +33,13 @@ def plans() -> tuple[dict | None, str | None]:
 
 
 def runtime(op: str = "auto", frm: str = "ZEPH.n", to: str = "WZEPH.e") -> tuple[dict | None, str | None]:
-    """GET /api/runtime?op=…&from=…&to=… → {mode, reserveRatio, operations, blockedReasons}."""
+    """GET /api/runtime?op=…&from=…&to=… (apps/web/app/api/runtime/route.ts).
+
+    200 → {timestamp, selection:{requested, resolved}, runtime:{operation, enabled:bool|null, context}}.
+    `enabled` is the live gate verdict: for native mint/redeem it IS `reserve.policy.<asset>.<m|r>`
+    (runtime.zephyr.ts), so this is how a scenario reads the engine's protocol-gate decision.
+    Bad params → 400 (from/to invalid), 404 (no op for pair), 501 (op unregistered), 500 (threw);
+    those bodies carry {selection, error} and _jget surfaces the HTTP error string."""
     return _tc._jget(f"{ENGINE}/api/runtime?op={op}&from={frm}&to={to}", timeout=15.0)
 
 
@@ -74,3 +80,47 @@ def auto_executable_plans(plans_resp: dict) -> list[dict]:
         if summary.get("shouldAutoExecute") or p.get("autoExecute"):
             out.append(p)
     return out
+
+
+def runtime_enabled(runtime_resp: dict) -> bool | None:
+    """The engine's live gate verdict for the requested op (None if it couldn't decide)."""
+    return (runtime_resp or {}).get("runtime", {}).get("enabled")
+
+
+def runtime_operation(runtime_resp: dict) -> str | None:
+    """The op the engine resolved the from/to pair to (e.g. 'nativeMint')."""
+    return (runtime_resp or {}).get("runtime", {}).get("operation")
+
+
+def plan_conversions(plan: dict) -> list[tuple[str, str]]:
+    """Every (fromAsset, toAsset) hop a serialized arb plan would execute.
+
+    The plan JSON is opaque (`SerializedArbPlan = {[key]: JsonValue}`, report.ts) — its execution
+    variants live under `view.clipOptions[].option.{open,close}.execution` and carry `fromAsset` /
+    `toAsset` (view.ts). Rather than couple to that exact nesting (which drifts), walk the whole
+    object and collect any node that names a from/to pair. Deduped, order-preserving.
+    """
+    seen: list[tuple[str, str]] = []
+
+    def visit(node):
+        if isinstance(node, dict):
+            frm = node.get("fromAsset") or node.get("from")
+            to = node.get("toAsset") or node.get("to")
+            if isinstance(frm, str) and isinstance(to, str) and frm != to:
+                pair = (frm, to)
+                if pair not in seen:
+                    seen.append(pair)
+            for v in node.values():
+                visit(v)
+        elif isinstance(node, list):
+            for v in node:
+                visit(v)
+
+    visit(plan)
+    return seen
+
+
+def native_conversions(plan: dict) -> list[tuple[str, str]]:
+    """Just the native (`.n`→`.n`) hops — the ones the daemon's reserve-ratio gates apply to.
+    EVM swaps / wraps are not RR-gated, so they're irrelevant to doomed-conversion checks."""
+    return [(f, t) for (f, t) in plan_conversions(plan) if f.endswith(".n") and t.endswith(".n")]

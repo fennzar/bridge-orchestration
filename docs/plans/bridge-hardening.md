@@ -143,6 +143,10 @@ Deliverable: every INVARIANTS.md row reaches `HELD`, wired into CI.
 
 ## Phase 6 — Stress test bridge-web + testnet-v2 deployment (3★)
 
+> **Runnable procedure:** [`../security/stress-test-runbook.md`](../security/stress-test-runbook.md)
+> operationalizes this phase (Legs A–D, each mapped to an invariant + the make target / check that
+> runs it). The adversarial API leg (ZB-SEC-013..017) is already wired into `make test-edge-sec`.
+
 Grounded, not vibes (use `chrome-debug` for the browser legs):
 - ☐ **Functional E2E on a live stack:** wrap, claim, unwrap (incl. the CRIT-1 attack: prepare-large +
   burn-dust ⇒ must be blocked), swap, LP add/remove — verified in real Chrome, not just typecheck.

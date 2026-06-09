@@ -51,7 +51,7 @@ technical depth.** Read top-down if you're new; jump to a leaf if you know what 
 |---|---|
 | **Setup** | [`setup/dev.md`](./setup/dev.md) (DEVNET) · [`setup/testnet-v2.md`](./setup/testnet-v2.md) · [`setup/testnet-v3.md`](./setup/testnet-v3.md) (Sepolia) · [`setup/mainnet.md`](./setup/mainnet.md) |
 | **Operate** | [`troubleshooting.md`](./troubleshooting.md) · `zephyr-bridge/docs/recovery-runbook.md` · ⚠️ **GAP:** signer-key compromise runbook (see PLAN Phase 3) |
-| **Test** | [`testing/01-overview.md`](./testing/01-overview.md) (tier specs) · [`testing/08-edge-framework.md`](./testing/08-edge-framework.md) · **plus** the first-principles rewrite in the [hardening plan](./plans/bridge-hardening.md) |
+| **Test** | [`testing/01-overview.md`](./testing/01-overview.md) (tier specs) · [`testing/08-edge-framework.md`](./testing/08-edge-framework.md) · [`security/stress-test-runbook.md`](./security/stress-test-runbook.md) (runnable adversarial + load + deploy legs) · **plus** the first-principles rewrite in the [hardening plan](./plans/bridge-hardening.md) |
 | **Reference** | [`reference/zephyr-tips.md`](./reference/zephyr-tips.md) (wallet/RPC gotchas) · [`reference/evm-wallets.md`](./reference/evm-wallets.md) · [`reference/metamask.md`](./reference/metamask.md) · [`dashboard-api.md`](./dashboard-api.md) |
 
 ## Tier 4 — Plans & roadmap

@@ -7,6 +7,7 @@ under the `anvil_snapshot` fixture so the push is reverted after the test.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from harness import chain
 ROOT = Path(__file__).resolve().parents[3]   # .../bridge-orchestration
 ANVIL_URL = _tc.ANVIL_URL
 CTX = _tc.CTX
+TK = _tc.TK
 ZERO_HOOKS = "0x0000000000000000000000000000000000000000"
 MAX_UINT256 = str(2**256 - 1)
 SEL_GET_SLOT0 = "0xc815641c"
@@ -88,3 +90,78 @@ def push(amount_in: int, zero_for_one: bool, pool_state: dict, pk: str,
         pool_key, "0x", receiver, deadline,
         "--private-key", pk, "--rpc-url", ANVIL_URL,
     ])
+
+
+# ── the funded pusher (secrets stay in the gitignored .env) ───────────────────
+def _parse_env(path: Path, keys: tuple[str, ...]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k = k.strip()
+            if k in keys:
+                out[k] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return out
+
+
+def pusher() -> tuple[str | None, str | None]:
+    """The funded EVM account `(pk, address)` a scenario uses to shove a pool off-peg.
+
+    From the environment first (ENGINE_PK / ENGINE_ADDRESS, as the retired engine_arb harness
+    used), falling back to the gitignored root `.env`. Returns (None, None) if unavailable — the
+    caller should `pytest.skip` rather than fail, so a secret-less checkout degrades gracefully.
+    """
+    pk = os.environ.get("ENGINE_PK")
+    addr = os.environ.get("ENGINE_ADDRESS")
+    if not pk or not addr:
+        vals = _parse_env(ROOT / ".env", ("ENGINE_PK", "ENGINE_ADDRESS"))
+        pk = pk or vals.get("ENGINE_PK")
+        addr = addr or vals.get("ENGINE_ADDRESS")
+    return pk, addr
+
+
+def token_address(symbol: str) -> str | None:
+    """Resolve a token symbol (e.g. 'wZSD', 'USDT') to its EVM address from config."""
+    return TK.get(symbol)
+
+
+def token_decimals(symbol: str) -> int | None:
+    """Token decimals from config (wZ* = 12, USDT = 6, USDC = 6). None if unknown."""
+    for fname in ("config/addresses.json", "config/addresses.local.json"):
+        p = ROOT / fname
+        if p.exists():
+            tok = json.loads(p.read_text()).get("tokens", {}).get(symbol)
+            if tok and "decimals" in tok:
+                return int(tok["decimals"])
+    return None
+
+
+def move_price(pool_name: str, sell_currency0: bool, amount_atomic: int,
+               pk: str, receiver: str) -> tuple[str | None, str | None]:
+    """Push `pool_name`'s price by selling one side. `sell_currency0=True` sells currency0
+    (its price falls); False sells currency1 (currency0's price rises). Approves the input
+    token to the SwapRouter first. Returns (txhash, err)."""
+    state, err = load_pool(pool_name)
+    if err or not state:
+        return None, err or "no pool state"
+    input_token = state["currency0"] if sell_currency0 else state["currency1"]
+    _, aerr = approve(input_token, CTX.get("SwapRouter", ""), pk)
+    if aerr:
+        return None, f"approve failed: {aerr}"
+    return push(amount_atomic, sell_currency0, state, pk, receiver)
+
+
+def currency_is(pool_state: dict, symbol: str) -> str | None:
+    """Return 'currency0'/'currency1' for the slot holding `symbol`'s token, else None."""
+    addr = (token_address(symbol) or "").lower()
+    if not addr:
+        return None
+    for slot in ("currency0", "currency1"):
+        if (pool_state.get(slot) or "").lower() == addr:
+            return slot
+    return None

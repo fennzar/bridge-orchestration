@@ -337,6 +337,128 @@ def check_sec_012(row, probes):
     return _r(row, PASS, f"Claims properly scoped (A={len(c1)}, B={len(c2)})")
 
 
+# ---------------------------------------------------------------------------
+# Adversarial probes for the UNAUTHENTICATED unwrap-prepare surface (INV-19) and
+# destructive-route auth (INV-18). These attack the exact hardening added in
+# zephyr-bridge/apps/api/src/routes/unwraps.ts (amount + destination validation)
+# and the CRIT-1 binding. Unlike SEC-001..012 (which mostly assert response
+# *shape*), these send hostile input and assert *rejection* — they fail loudly
+# if the validation regresses. See docs/security/INVARIANTS.md INV-18/INV-19 and
+# docs/security/FINDINGS.md (CRIT-1, HIGH-1).
+# ---------------------------------------------------------------------------
+
+# A syntactically-valid token address is enough to reach the body validation;
+# prefer the real wZEPH if the deploy populated it, else a well-formed placeholder.
+_A_TOKEN = TK.get("wZEPH") or "0x000000000000000000000000000000000000a001"
+_PREPARE = "/unwraps/prepare"
+
+
+def _err_snippet(body):
+    """Best-effort one-line error message from a JSON error body."""
+    try:
+        d = json.loads(body or "{}")
+        return str(d.get("error") or d.get("message") or body or "")[:80]
+    except Exception:
+        return (body or "")[:80]
+
+
+def check_sec_013(row, probes):
+    """prepare rejects zero amount (INV-19: no payout draft for amount<=0)."""
+    b = _needs(row, probes, "bridge_api")
+    if b:
+        return b
+    s, body, _ = _post(f"{API}{_PREPARE}",
+                       {"token": _A_TOKEN, "destination": "ZPHSplaceholder", "amountWei": "0"})
+    if s is None:
+        return _r(row, BLOCKED, "prepare unreachable")
+    if s == 200:
+        return _r(row, FAIL, "prepare ACCEPTED amountWei=0 — must reject (potential dust-draft)")
+    if s == 400:
+        return _r(row, PASS, f"prepare rejected zero amount (400: {_err_snippet(body)})")
+    return _r(row, FAIL, f"expected 400 for zero amount, got HTTP {s} ({_err_snippet(body)})")
+
+
+def check_sec_014(row, probes):
+    """prepare rejects malformed/negative amount (INV-19)."""
+    b = _needs(row, probes, "bridge_api")
+    if b:
+        return b
+    issues = []
+    for label, amt in (("non-numeric", "not-a-number"), ("negative", "-1000000000000")):
+        s, body, _ = _post(f"{API}{_PREPARE}",
+                           {"token": _A_TOKEN, "destination": "ZPHSplaceholder", "amountWei": amt})
+        if s == 200:
+            issues.append(f"{label} amount ACCEPTED (HTTP 200)")
+        elif s != 400:
+            issues.append(f"{label} amount → HTTP {s} (expected 400: {_err_snippet(body)})")
+    if issues:
+        return _r(row, FAIL, "; ".join(issues))
+    return _r(row, PASS, "prepare rejected non-numeric and negative amounts (400)")
+
+
+def check_sec_015(row, probes):
+    """prepare must NEVER produce a signed payout draft for a malformed Zephyr
+    destination (INV-19 — the validateZephyrAddress guard). Any non-200 is
+    acceptable (validation 400, or a safe downstream failure if wallet RPC is
+    degraded); only a 200 + draftId is a violation."""
+    b = _needs(row, probes, "bridge_api")
+    if b:
+        return b
+    s, body, _ = _post(f"{API}{_PREPARE}",
+                       {"token": _A_TOKEN, "destination": "not_a_zephyr_address!!", "amountWei": "1000000000000"})
+    if s is None:
+        return _r(row, BLOCKED, "prepare unreachable")
+    if s == 200:
+        try:
+            d = json.loads(body or "{}")
+        except Exception:
+            d = {}
+        if d.get("ok") or d.get("draftId") or d.get("txHash"):
+            return _r(row, FAIL, "prepare produced a payout DRAFT for a malformed destination")
+        return _r(row, FAIL, f"prepare returned 200 for malformed destination: {_err_snippet(body)}")
+    return _r(row, PASS, f"malformed destination did not yield a draft (HTTP {s}: {_err_snippet(body)})")
+
+
+def check_sec_016(row, probes):
+    """prepare rejects missing required fields (INV-19)."""
+    b = _needs(row, probes, "bridge_api")
+    if b:
+        return b
+    issues = []
+    # missing token
+    s1, b1, _ = _post(f"{API}{_PREPARE}", {"destination": "ZPHSplaceholder", "amountWei": "1000000000000"})
+    if s1 != 400:
+        issues.append(f"missing token → HTTP {s1} (expected 400: {_err_snippet(b1)})")
+    # missing destination
+    s2, b2, _ = _post(f"{API}{_PREPARE}", {"token": _A_TOKEN, "amountWei": "1000000000000"})
+    if s2 != 400:
+        issues.append(f"missing destination → HTTP {s2} (expected 400: {_err_snippet(b2)})")
+    if issues:
+        return _r(row, FAIL, "; ".join(issues))
+    return _r(row, PASS, "prepare rejected missing token and missing destination (400)")
+
+
+def check_sec_017(row, probes):
+    """Destructive / debug routes must not be reachable unauthenticated (INV-18,
+    HIGH-1). A 200 from any of these is a finding; 401/403/404 are all fine."""
+    b = _needs(row, probes, "bridge_api")
+    if b:
+        return b
+    suspects = ["/reset/database", "/debug", "/debug/state", "/debug/claims", "/admin/reset"]
+    reachable = []
+    probed = 0
+    for path in suspects:
+        s, _body, _e = _get(f"{API}{path}")
+        if s is None:
+            continue
+        probed += 1
+        if s == 200:
+            reachable.append(path)
+    if reachable:
+        return _r(row, FAIL, f"Destructive/debug routes reachable unauthenticated: {reachable}")
+    return _r(row, PASS, f"No destructive/debug route returned 200 unauthenticated ({probed} probed)")
+
+
 CHECKS = {
     "ZB-SEC-001": check_sec_001,
     "ZB-SEC-002": check_sec_002,
@@ -350,4 +472,9 @@ CHECKS = {
     "ZB-SEC-010": check_sec_010,
     "ZB-SEC-011": check_sec_011,
     "ZB-SEC-012": check_sec_012,
+    "ZB-SEC-013": check_sec_013,
+    "ZB-SEC-014": check_sec_014,
+    "ZB-SEC-015": check_sec_015,
+    "ZB-SEC-016": check_sec_016,
+    "ZB-SEC-017": check_sec_017,
 }

@@ -107,6 +107,11 @@ See [08-edge-framework.md](./08-edge-framework.md) for the full framework.
 | `ZB-SEC-010` | Oracle signer rotation does not strand existing deposits | P0 | High | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Automated check implemented. |
 | `ZB-SEC-011` | Admin endpoints must not be callable without token (avoid accidental tampering) | P2 | Medium | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Keep as regression in current suite. |
 | `ZB-SEC-012` | Claim API must not leak signatures for other addresses | P1 | Medium | `SCOPED-EXPAND` | `docs/testing/03-bridge-scenarios.md` | Extend existing scenario with explicit edge assertions. |
+| `ZB-SEC-013` | unwraps/prepare rejects zero amount (no payout draft for amount<=0) | P0 | Critical | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Adversarial check: INV-19, asserts 400. |
+| `ZB-SEC-014` | unwraps/prepare rejects malformed/negative amount | P0 | Critical | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Adversarial check: INV-19, asserts 400. |
+| `ZB-SEC-015` | unwraps/prepare never produces a payout draft for a malformed Zephyr destination | P0 | Critical | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Adversarial check: INV-19, validateZephyrAddress guard. |
+| `ZB-SEC-016` | unwraps/prepare rejects missing token/destination | P1 | High | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Adversarial check: INV-19, asserts 400. |
+| `ZB-SEC-017` | Destructive/debug routes not reachable unauthenticated | P0 | Critical | `SCOPED-READY` | `docs/testing/03-bridge-scenarios.md` | Adversarial check: INV-18 / HIGH-1, asserts no 200. |
 
 ## 2. Smart Contract Edge Cases (12)
 

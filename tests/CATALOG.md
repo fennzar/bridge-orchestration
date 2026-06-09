@@ -72,14 +72,18 @@ tagged so the run renders the holes as a worklist.
 | LB-HASH-NORM | txid 0x/bytes32 normalization | 2 | G |
 
 ## LOGIC — engine vitest (`LE-*`) · `zephyr-bridge-engine/tests/**/*.spec.ts`
-| id | asserts | grounds | St |
-|---|---|---|---|
-| LE-SWAP | estimateSwapOutput fee/1e6, slip/1e4, never-neg, zero-in→0 | code | G |
-| LE-RR/-SPREAD/-FEE | determineRRMode; mint=MAX(spot,MA), redeem=MIN; fees 10/100/10 bps | code | G |
-| LE-PRICE/-STEP | buildPricingFromState ($1 anchor, ZEPH chaining); buildExecutionSteps | code | G |
-| LE-APPROVAL/-RISK | spread≥500bps blocks; RR gates; limits-disabled→allow; breaker FSM | code | G |
-| LE-CONFORM-GATES | engine gate-availability fn vs protocol gate table at boundary RRs (199/201/399/401/799/801%) | zephyr-ref | K |
-| LE-CONFORM-PRICING/-FEES | engine spread & fee model == protocol pricing/fees | zephyr-ref | G |
+Run: `cd $ENGINE_REPO_PATH && pnpm vitest run tests/conformance` (no stack). Known-gaps use
+`it.fails` (passes while the gap stands; fails the day it's fixed → promote). Built files in **bold**.
+| id | asserts | grounds | St | Built |
+|---|---|---|---|---|
+| LE-SWAP | estimateSwapOutput fee/1e6, slip/1e4, never-neg, zero-in→0 | code | G | — |
+| LE-RR/-SPREAD/-FEE | determineRRMode; mint=MAX(spot,MA), redeem=MIN; fees 10/100/10 bps | code | G | — |
+| LE-PRICE/-STEP | buildPricingFromState ($1 anchor, ZEPH chaining); buildExecutionSteps | code | G | — |
+| **LE-CONFORM-GATES** | `mapReserveInfo().policy` vs protocol gate table (matching cells + 3 ZRS-mint divergences) | zephyr-ref | G+K | **conformance/gates.spec.ts** (6, verified) |
+| **LE-LOSS-BREAKER** | CircuitBreaker FSM opens on cumulative loss / consecutive failures when enabled | code | G | **conformance/risk.spec.ts** (verified) |
+| **LE-RISK-DEFAULT-OFF** | `DEFAULT_RISK_LIMITS.enabled=false` ⇒ $2000 op + $1M loss not halted | code | K | **conformance/risk.spec.ts** (it.fails, verified) |
+| LE-SLIPPAGE-FLOOR / LE-PNL-REALIZED / LE-NO-PINGPONG | swap `amountOutMin ?? 0n`; expected-vs-realized PnL; offsetting wrap/unwrap loop | code | K | — (reassigned from MKT) |
+| LE-CONFORM-PRICING/-FEES | engine spread & fee model == protocol pricing/fees | zephyr-ref | G | — |
 
 ## SCENARIO — pytest · `tests/scenario/`
 ### FLOW (`flows/`) — money paths

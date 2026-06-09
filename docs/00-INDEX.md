@@ -29,7 +29,8 @@ technical depth.** Read top-down if you're new; jump to a leaf if you know what 
 
 | Doc | Depth | Topic |
 |---|---|---|
-| [`protocol/zephyr-primer.md`](./protocol/zephyr-primer.md) | concept | Zephyr (Djed stablecoin + privacy), assets V1/V2, reserve ratio, oracle — the protocol facts the bridge depends on |
+| [`protocol/zephyr-primer.md`](./protocol/zephyr-primer.md) | concept | Zephyr (Djed stablecoin + privacy), assets V1/V2, reserve ratio, oracle — the protocol facts the bridge depends on (start here) |
+| [`protocol/zephyr-reference.md`](./protocol/zephyr-reference.md) | **mega reference** | The exhaustive protocol source-of-truth: lineage, all 4 assets, the exact 400/800/200% reserve gates, conversion pricing + fees, oracle, yield, the 2024–25 audit, bridge design — **code-verified** (`file:line`) |
 | [`protocol/bridge-protocol.md`](./protocol/bridge-protocol.md) | spec | The wrap/claim/unwrap protocol: EIP-712 voucher, burn payload, decimals, state machines (code-cited) |
 | `zephyr-bridge/docs/architecture.md` | technical | Bridge monorepo layers, dependency graph (secondary; predates CRIT-1) |
 | `zephyr-bridge-engine/docs/architecture.md` | technical | Engine cycle, RR-adaptive behavior (secondary; see §Security for the disabled-controls caveat) |

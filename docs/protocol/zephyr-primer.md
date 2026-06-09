@@ -11,7 +11,9 @@ note: protocol facts grounded in zephyr/README.md; bridge-specific facts cited t
 
 You do not need to understand all of Zephyr to work on the bridge — but the bridge's correctness
 *depends* on a few protocol facts. This is the minimum mental model, with the bits that matter to
-the bridge and the engine flagged. For depth, read `zephyr/README.md` (the protocol's own doc).
+the bridge and the engine flagged. **For the exhaustive, code-verified version** (exact reserve-ratio
+gates, conversion pricing/fees, oracle internals, yield brake, the 2024–25 audit), read
+[`zephyr-reference.md`](./zephyr-reference.md). For the protocol's own doc, read `zephyr/README.md`.
 
 ---
 

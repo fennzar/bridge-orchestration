@@ -231,34 +231,31 @@ def test_flow_prepare_without_burn_pays_nothing(anvil_snapshot):
     )
 
 
-# ── FLOW-CLAIM-EXPIRY (KNOWN-GAP) — no re-sign path for an expired voucher ─────
-_RESIGN_ROUTES = ("/claims/resign", "/claims/re-sign", "/claims/refresh")
+# ── FLOW-CLAIM-EXPIRY — voucher re-sign path for an expired-but-unclaimed claim ─
 
 
 @pytest.mark.inv("INV-7")
-@pytest.mark.known_gap(
-    inv="INV-7",
-    reason="voucher TTL is 24h and lazily marks 'expired' with NO re-sign endpoint "
-    "(claims/signer.ts) — a real deposit unclaimed within 24h of signing is permanently stuck. "
-    "The safe design exposes an owner/admin re-sign path; today none exists.",
-)
 def test_flow_expired_voucher_has_resign_path():
-    """A user who made a real deposit must ALWAYS be able to eventually claim it. That requires a way
-    to re-sign a voucher whose 24h deadline lapsed. We probe for such a route; today none exists, so
-    this asserts the safe capability and fails (KNOWN-GAP INV-7). Read-only — no chain mutation.
+    """A user who made a real deposit must ALWAYS be able to eventually claim it. A voucher whose 24h
+    deadline lapses is marked 'expired' and would otherwise be permanently stuck — so the bridge now
+    exposes an admin re-sign route (POST /claims/{evm}/resign, claims/signer.ts::resignClaim) that
+    refreshes the deadline while binding the SAME to/amount/zephyrTxHash (the contract's usedZephyrTx
+    still guarantees at-most-once). Promoted from @known_gap (INV-7).
+
+    Asserts BOTH halves of the fix: the route EXISTS (not 404/405) AND it's an operator lever, not a
+    public mint surface — an unauthenticated call must be rejected (403), never an open 2xx.
+    Read-only: an unauthenticated POST is refused before it touches any claim.
     """
     _, addr = _claimer()
     addr = addr or "0x0000000000000000000000000000000000000001"
-    found = False
-    for route in (*[f"/claims/{addr}{r.rsplit('/claims', 1)[-1]}" for r in _RESIGN_ROUTES], *_RESIGN_ROUTES):
-        st, _body, _err = bridge.post_raw(route, {"evmAddress": addr})
-        # A real re-sign endpoint answers (2xx, or a 4xx validation error) — anything but "not found".
-        if st is not None and st not in (404, 405):
-            found = True
-            break
-    assert found, (
+    st, _body, _err = bridge.post_raw(f"/claims/{addr}/resign", {"evmAddress": addr})
+    assert st is not None and st not in (404, 405), (
         "no voucher re-sign endpoint exists — an expired voucher cannot be refreshed, so a real "
         "deposit unclaimed within the 24h TTL is permanently stuck (INV-7 claim non-expiry)"
+    )
+    assert st == 403, (
+        f"the re-sign route must be admin-gated (a public re-sign is a free re-mint lever); "
+        f"unauthenticated POST returned {st}, expected 403"
     )
 
 

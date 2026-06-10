@@ -100,6 +100,14 @@ def balances(port: int) -> dict[str, float]:
     return out
 
 
+def wallet_address(port: int) -> str | None:
+    """The primary Zephyr address of a wallet — a valid unwrap payout destination."""
+    res, err = wallet(port, "get_address", {"account_index": 0})
+    if err or not res:
+        return None
+    return res.get("address")
+
+
 def transfer(port: int, dest: str, amount_atomic: int, source_asset: str,
              destination_asset: str | None = None) -> tuple[Any, str | None]:
     """Wallet `transfer` — also used for native conversions (both source_asset AND

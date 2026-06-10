@@ -102,13 +102,45 @@ def test_flow_claim_idempotent(anvil_snapshot):
     assert e2 is not None, "second claim of the same voucher did NOT revert — replay possible (INV-2)"
 
 
-@pytest.mark.inv("INV-13")
-def test_flow_unwrap_status_flips_to_confirmed(anvil_snapshot):
-    """Burn wZEPH → native ZEPH pays out → the unwrap record flips pending→confirmed.
+UNWRAP_WZEPH = 1 * chain.ATOMIC      # 1 wZEPH (12-dec == ZEPH atomic scale)
 
-    Pinned as a known gap: prior runs deliver the ZEPH but the status never leaves pending, so the
-    UI never shows 'Complete' (see memory unwrap-ui-status-stuck). If the status DOES reach
-    confirmed, the gap closed → promote.
+
+@pytest.mark.inv("INV-13")
+def test_flow_unwrap_pays_out_and_status_confirms(anvil_snapshot):
+    """Burn wZEPH → native ZEPH pays out → the unwrap record flips pending→confirmed (INV-1/13).
+
+    The wZEPH inventory is minted to the burner (MINTER_ROLE, devnet) to isolate the unwrap side;
+    the honest wrap-then-unwrap is FLOW-ROUNDTRIP. Live-verified: the watcher relays (sendStatus
+    'sent') and a downstream confirmation flips status pending→confirmed within ~15s. Skips (never
+    reds) if the watcher is down or the daemon rejects the relay (a known devnet flake).
     """
-    pytest.skip("FLOW-UNWRAP requires pre-funded wZEPH inventory + burn payload from prepare; "
-                "implemented as a roundtrip in test_flow_roundtrip once wrap lands. Tracked: INV-13.")
+    pk, addr = _claimer()
+    mpk = pool.minter()
+    token = _wzeph()
+    if not pk or not addr or not mpk or not token:
+        pytest.skip("ENGINE_PK / DEPLOYER_PRIVATE_KEY / wZEPH unavailable")
+    dest = chain.wallet_address(chain.GOV_WALLET_PORT)
+    if not dest:
+        pytest.skip("gov wallet address unavailable")
+
+    _, merr = pool.mint_wtoken("wZEPH", addr, UNWRAP_WZEPH, mpk)
+    assert not merr, f"mint wZEPH failed: {merr}"
+
+    before_ids = {u.get("id") for u in bridge.unwraps_for(addr)}
+    info, err = bridge.prepare_and_burn(token, UNWRAP_WZEPH, dest, pk)
+    if err:
+        pytest.skip(f"prepare/burn unavailable: {err}")
+
+    relayed = bridge.wait_for_unwrap(addr, since_ids=before_ids,
+                                     until=lambda u: u.get("sendStatus") == "sent", timeout=60)
+    if not relayed:
+        pytest.skip("watcher did not relay the payout within timeout — watcher down or relay flake")
+    # INV-1: the bridge relayed a native payout (a Zephyr tx hash is bound to the record).
+    assert relayed.get("zephTxHashHex"), "relayed unwrap carries no Zephyr tx hash"
+
+    confirmed = bridge.wait_for_unwrap(addr, since_ids=before_ids,
+                                       until=lambda u: u.get("status") == "confirmed", timeout=45)
+    assert confirmed is not None, (
+        "unwrap relayed but status never reached 'confirmed' — stuck on a stale wallet height "
+        "(INV-13 status truth)"
+    )

@@ -204,6 +204,7 @@ def test_flow_roundtrip_conserves_value(anvil_snapshot):
 
 
 # ── FLOW-PREPARE-CANCEL — a prepare that is never burned pays nothing ─────────
+@pytest.mark.inv("INV-3")
 def test_flow_prepare_without_burn_pays_nothing(anvil_snapshot):
     """A `/unwraps/prepare` is only a pre-signed payout INTENT — the relay must be gated on an
     on-chain burn that covers it. Prepare without ever burning ⇒ no payout is relayed (INV-3/4).

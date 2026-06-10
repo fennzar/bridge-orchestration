@@ -27,13 +27,13 @@ tagged so the run renders the holes as a worklist.
 
 | INV | property | pinned by | today |
 |---|---|---|---|
-| INV-1 | no unbacked mint | CT-SUP-INV, FLOW-WRAP-*, SEC-UNBACKED-MINT | K |
-| INV-2 | no double-credit | CT-MINT-IDEM, LB-HASH-NORM, FLOW-CLAIM-IDEM | partial→G/K |
-| INV-3 | no over-payout on unwrap | LB-AMT-COVERS, SEC-PREPARE-DRAIN | G (interim) |
-| INV-4 | no double-payout | FLOW-PREPARE-CANCEL, RES-DOUBLE-PAYOUT | K |
-| INV-5 | asset-type integrity | LB-PAY-*, LB-CFG-MAP, FLOW-ASSET-INTEGRITY, CT-BYPASS-BURN | K |
-| INV-6 | decimal correctness | CT-DEC-FUZZ, LB-AMT-SCALE, FLOW-ROUNDTRIP | G |
-| INV-7 | claim non-expiry trap | FLOW-CLAIM-EXPIRY | K |
+| INV-1 | no unbacked mint | CT-SUP ✓, CT-MINT-ROLE ✓, FLOW-WRAP-* ✓, SEC-UNBACKED-MINT — but **CT-BYPASS-BURN ✓ (K)** drags the roll-up | K |
+| INV-2 | no double-credit | CT-MINT-IDEM ✓, LB-HASH-NORM ✓, FLOW-CLAIM-IDEM ✓ | G |
+| INV-3 | no over-payout on unwrap | LB-AMT-COVERS ✓, FLOW-PREPARE-CANCEL ✓, SEC-PREPARE-DRAIN | G (interim) |
+| INV-4 | no double-payout | (crash-idempotency only — **uncovered**, see RES note → task #8) | — |
+| INV-5 | asset-type integrity | CT-BYPASS-BURN ✓, CT-BURN-ZERO ✓, FLOW-WRAP-{ZSD,ZRS,ZYS} ✓ | K |
+| INV-6 | decimal correctness | CT-DEC ✓, LB-AMT-SCALE ✓, FLOW-ROUNDTRIP ✓ | G |
+| INV-7 | claim non-expiry trap | FLOW-CLAIM-EXPIRY ✓ | K |
 | INV-8 | voucher unforgeable | CT-SIG-*, CT-ROT-SIGNER, SEC-CLAIM-FORGE | G |
 | INV-9 | no signature replay | CT-SIG-XTOKEN/XCHAIN, SEC-CLAIM-REPLAY-XTOKEN | G |
 | INV-10 | burn nonce non-replay | CT-BURN-NONCE | G |
@@ -49,27 +49,33 @@ tagged so the run renders the holes as a worklist.
 
 ---
 
-## CONTRACT — forge (`CT-*`) · `zephyr-eth-foundry/test/`
+## CONTRACT — forge (`CT-*`) · `zephyr-eth-foundry/test/ZephyrWrappedToken.t.sol`
+The 24 tests self-declare their INV in NatSpec (`/// INV-N`); `invariant-report.py` reads that to roll
+them into the ledger (no fn renames). ✓ = present + ledger-mapped. The CT-* ids below are conceptual
+groupings; the live test fn names appear in the ledger pins.
 | id | asserts | INV | St |
 |---|---|---|---|
-| CT-DEC-FUZZ | wei↔atomic 1:1, rounding favors bridge (fuzz) | 6 | G |
-| CT-MINT-ROLE / -IDEM / -SHARED | role-gated mint; idempotent `usedZephyrTx`; operator+claim share replay namespace | 1,2 | G |
-| CT-SIG-FORGE/-BOUND/-EXPIRED/-XTOKEN/-XCHAIN/-MALLEABLE | EIP-712 voucher unforgeable & fully bound | 8,9 | G |
-| CT-BURN-NONCE / -ZERO | burn nonce non-replay; zero-amount burn | 10 | G / K |
-| CT-ROT-SIGNER | signer rotation invalidates old sigs | 8 | G |
-| CT-SUP-INV | invariant fuzz: `totalSupply == Σmint − Σburn`; no mint without consuming a txhash | 1 | G |
-| CT-BYPASS-BURN | inherited `burn()`/`burnFrom()` destroy supply with NO `Burned` event/destination | 1,5 | K |
-| CT-PAUSE-ABSENT | no pause/cap/multisig (single-hot-key) | 18 | A |
+| CT-MINT-ROLE / -IDEM / -SHARED ✓ | role-gated mint (ByNonMinter); idempotent `usedZephyrTx` (Replay); operator+claim share replay namespace (AfterMintFromZephyr_SameTx) | 1,2 | G |
+| CT-SIG-FORGE/-BOUND/-EXPIRED/-XTOKEN/-XCHAIN/-MALLEABLE ✓ | EIP-712 voucher unforgeable & fully bound | 8,9 | G |
+| CT-BURN-NONCE ✓ / -ZERO ✓ | burn nonce non-replay (NonceReplay, INV-10 G); zero-amount burn (KNOWNGAP, pinned INV-5 K) | 10,5 | G / K |
+| CT-DEC ✓ | `decimals()==12` (1:1 with Zephyr atomic) — Decimals_Is12 | 6 | G |
+| CT-ROT-SIGNER ✓ | signer rotation invalidates old sigs + admin-gated | 8 | G |
+| CT-SUP ✓ | `totalSupply == Σmint − Σburn` across both mint paths — Supply_TracksMintMinusBurn (unit, not fuzz) | 1 | G |
+| CT-BYPASS-BURN ✓ | inherited `burn()` destroys supply with NO `Burned` event/destination (KNOWNGAP) | 1,5 | K |
+| CT-PAUSE-ABSENT | no pause/cap/multisig (single-hot-key) — not yet pinned by a test | 18 | A |
+| ~~CT-DEC-FUZZ / CT-SUP-INV~~ | fuzz/stateful-invariant variants — **not built**: the unit CT-DEC + CT-SUP already pin INV-6/1; a stateful invariant would only re-express the CT-BYPASS-BURN gap. Future hardening. | 1,6 | — |
 
-## LOGIC — bridge node:test (`LB-*`) · `zephyr-bridge/packages/**/*.test.ts`
+## LOGIC — bridge node:test (`LB-*`) · `zephyr-bridge/packages/bridge/src/unwraps/*.test.ts`
+node 22 strips types; run via `pnpm test`. Titles carry `[INV-NN]` + an `LB-*` id; default-on in
+`invariant-report.py` (run_node, TAP parse). ✓ = present + ledger-mapped.
 | id | asserts | INV | St |
 |---|---|---|---|
-| LB-AMT-FEE/-SCALE/-COVERS | fee+net>0; decimal scale 6/8/12-dec; `burnCoversPayout` (fuzz burn<prepared⇒false) | 3,6 | G |
-| LB-PAY-ROUNDTRIP/-LEGACY/-FP | encode/decode burn payload; legacy fallback; fingerprint determinism | 5 | G |
-| LB-CONF-* | evmConfirmations/isBurnConfirmed/safeHeadBlock/nextUnwrapCursor (existing) | 11 | G |
-| LB-REC-STATUS | hydrateUnwrapFromTransfer flips confirmed only when height>0 | 13 | G |
-| LB-CFG-MAP | token↔asset map: 4 assets, no decimal mismatch | 5 | G |
-| LB-HASH-NORM | txid 0x/bytes32 normalization | 2 | G |
+| LB-AMT-COVERS/-DRAIN/-FEE ✓ | `burnCoversPayout` (legit allowed; dust<prepared BLOCKED = CRIT-1; fee headroom; non-positive rejected) | 3 | G |
+| LB-AMT-SCALE ✓ | `weiToAtomic` 12-dec 1:1; 18-dec scales down 1e6 | 6 | G |
+| LB-CONF-DEPTH/-GATE/-HEAD/-CURSOR/-REORG ✓ | evmConfirmations/isBurnConfirmed/safeHeadBlock/nextUnwrapCursor (10 tests) — the unwired reorg-safe primitives | 11 | G |
+| LB-REC-STATUS ✓ | `hydrateUnwrapFromTransfer` status=confirmed only when height>0 (truthful decision; live gap is the stale source) | 13 | G |
+| LB-HASH-NORM ✓ | txid → 0x-lowercase hash + plain id (claim/burn replay-key linking) | 2 | G |
+| ~~LB-PAY-* / LB-CFG-MAP~~ | payload encode/decode round-trip; token↔asset map — **not built**: INV-5 is already pinned K by CT-BYPASS-BURN/-ZERO; payload/cfg are happy-path encoders, low marginal coverage. Future. | 5 | — |
 
 ## LOGIC — engine vitest (`LE-*`) · `zephyr-bridge-engine/tests/**/*.spec.ts`
 Run: `cd $ENGINE_REPO_PATH && pnpm vitest run tests/conformance` (no stack). Known-gaps use
@@ -89,13 +95,14 @@ Run: `cd $ENGINE_REPO_PATH && pnpm vitest run tests/conformance` (no stack). Kno
 ### FLOW (`flows/`) — money paths
 | id | scenario | INV | St |
 |---|---|---|---|
-| FLOW-WRAP-{ZEPH,ZSD,ZRS,ZYS} | deposit→claim mints exact 1:1 | 1,6 | G |
+| FLOW-WRAP-ZEPH ✓ | deposit ZEPH→claim mints exact 1:1 | 1,6 | G |
+| FLOW-WRAP-{ZSD,ZRS,ZYS} ✓ | parametrized deposit→claim; asserts claim.token == the matching wZ* (asset routing) | 1,5,6 | G |
 | FLOW-UNWRAP ✓ | burn wZEPH→native payout relays; status flips pending→confirmed (~15s) | 1,13 | **G** (built, live-verified) |
-| FLOW-ROUNDTRIP | wrap then unwrap reconciles; no value created/destroyed | 1,6 | G |
-| FLOW-CLAIM-IDEM | claim twice → 2nd reverts | 2 | G |
-| FLOW-CLAIM-EXPIRY | unclaimed 24h → expired, no re-sign → stuck | 7 | K |
-| FLOW-ASSET-INTEGRITY | wrong/missing asset_type → correct token only (default-ZEPH wrong) | 5 | K |
-| FLOW-PREPARE-CANCEL | prepare then cancel/never-burn → no payout | 3,4 | G |
+| FLOW-CLAIM-IDEM ✓ | claim twice → 2nd reverts | 2 | G |
+| FLOW-ROUNDTRIP ✓ | wrap then unwrap same amount → wZEPH balance returns to baseline, no net mint | 1,6 | G |
+| FLOW-PREPARE-CANCEL ✓ | prepare then never burn → no payout relayed (assert-by-absence) | 3,4 | G |
+| FLOW-CLAIM-EXPIRY ✓ | no voucher re-sign endpoint exists → an expired deposit is stuck (route probe) | 7 | K |
+| FLOW-ASSET-INTEGRITY ✓ | folded into FLOW-WRAP-{ZSD,ZRS,ZYS}: a V2 deposit credits ONLY its matching token. The degenerate missing-`asset_type`→ZEPH default (watcher index.ts:190) is a watcher-unit gap, not pinnable via a real deposit (daemon always sets asset_type) | 5 | G |
 
 ### MKT (`market/`) — engine ↔ market dynamics (the heart)
 St: G green · K known-gap red · — not yet built. "Built" = file:test present and collecting.
@@ -142,10 +149,8 @@ stateless read APIs; tested as pure conformance reds instead (task #14):**
 | id | scenario | INV | St |
 |---|---|---|---|
 | RES-REORG-UNWRAP ✓ | burn relayed while only ~1-conf deep (ingest never checks isBurnConfirmed) | 11 | **K** (built, live-proven) |
-| RES-DOUBLE-PAYOUT | re-relay of a prepared payout — same pre-signed txid ⇒ daemon-idempotent | 4 | likely **G** (deterministic txid; not yet built) |
-| RES-EXACTLY-ONCE | WS reconnect/gap ⇒ every event once, none missed | 12 | K (needs watcher-crash orchestration) |
-| RES-STATUS-TRUTH | payout lands ⇒ status pending→confirmed (folded into FLOW-UNWRAP ✓) | 13 | **G** (covered, live-verified) |
-| RES-RECONCILE | reconcilePendingUnwraps sweeps stuck-sent → confirmed once mined | 13 | G (not yet built) |
+| RES-STATUS-TRUTH | payout lands ⇒ status pending→confirmed — folded into FLOW-UNWRAP ✓ (live) + LB-REC-STATUS ✓ (unit) | 13 | **G** (covered) |
+| ~~RES-DOUBLE-PAYOUT / RES-EXACTLY-ONCE / RES-RECONCILE~~ | crash-mid-`sending` re-relay (INV-4); WS-reconnect gap-fill (INV-12); reconcile sweep (INV-13) — **not built**: all need watcher process-kill / WS-fault orchestration. Deferred to **task #8** (watcher reorg-safety + crash idempotency) + **#18** (needs the crash harness decision). INV-4/12 remain UNCOVERED in the ledger by design. | 4,12,13 | — |
 
 ### OPS (`ops/`) — stack / protocol sanity gates (run first)
 `OPS-CHAIN-HEALTH`, `OPS-WALLET-BALANCES`, `OPS-CONTRACTS-DEPLOYED`, `OPS-ORACLE-CONTROL`,

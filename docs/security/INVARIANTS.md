@@ -17,9 +17,10 @@ This is the **gate list**. The bridge is releasable for real value when every in
 `HELD` — enforced in code *and* pinned by an automated test that fails loudly if the property
 breaks. "Confidence" is not a feeling; it is this table being green.
 
-Tests are largely auto-generated today and assert API *shapes*, not these *properties* (see
-`docs/testing/` and the test inventory). The remediation plan rewrites tests from these invariants
-down, not from the implementation up.
+Tests are now **invariant-driven**: each pins a row below and asserts the *property*, not an API
+shape (see [`tests/CATALOG.md`](../../tests/CATALOG.md) and [`docs/testing/README.md`](../testing/README.md)).
+`make test-report` rolls every layer into this gate. Many rows are red-by-design today (KNOWN-GAP) —
+that red is the worklist; a row goes green only when a tagged test holds it.
 
 ---
 

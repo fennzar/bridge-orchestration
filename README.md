@@ -51,7 +51,7 @@ make dev-stop
 
 UIs: [Dashboard](http://localhost:7100) | [Bridge](http://localhost:7050) | [Engine](http://localhost:7000)
 
-> **DEVNET is the only supported mode.** It provides controllable oracle prices, fast resets, and consistent state. Mainnet-fork mode is deprecated. See [05-devnet-scenarios.md](./docs/testing/05-devnet-scenarios.md).
+> **DEVNET is the only supported mode.** It provides controllable oracle prices, fast resets, and consistent state. Mainnet-fork mode is deprecated. See [docs/setup/dev.md](./docs/setup/dev.md).
 
 ## Prerequisites
 
@@ -272,12 +272,9 @@ See **[docs/troubleshooting.md](./docs/troubleshooting.md)** for common issues c
 - **[metamask.md](./docs/reference/metamask.md)** - MetaMask test wallet (seed, accounts, funding)
 
 ### Testing
-- **[Testing README](./docs/testing/README.md)** - Quick reference: commands, test levels, where to start
-- **[01-overview.md](./docs/testing/01-overview.md)** - Master test document (L1-L4 levels, test index)
-- **[02-infra-checklist.md](./docs/testing/02-infra-checklist.md)** - Quick infrastructure verification
-- **[03-bridge-scenarios.md](./docs/testing/03-bridge-scenarios.md)** - Wrap/unwrap test flows (API + UI)
-- **[04-full-stack-scenarios.md](./docs/testing/04-full-stack-scenarios.md)** - DEX, engine, admin, faucets, SSE
-- **[05-devnet-scenarios.md](./docs/testing/05-devnet-scenarios.md)** - DEVNET mode, RR transitions, oracle control
+- **[Testing README](./docs/testing/README.md)** - The framework: runner×invariant model, red/green, `make test-*`
+- **[tests/CATALOG.md](./tests/CATALOG.md)** - The single test SoT: every test → invariant → layer → status
+- **[security/INVARIANTS.md](./docs/security/INVARIANTS.md)** - The INV-1..19 release gate (`make test-report`)
 
 ### Reference
 - **[implementation-coverage.md](./docs/reference/implementation-coverage.md)** - Component implementation status

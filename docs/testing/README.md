@@ -1,151 +1,96 @@
-# Testing
+# Bridge Test Framework
 
-Quick reference for the Zephyr Bridge test suite. Every `make test-*` is self-contained — it handles its own state (resets, setup, startup). Any tier can run in isolation, in any order.
+The bridge is a custodial Zephyr↔EVM system that holds real money. This framework tests **what a
+functional bridge must guarantee** — the money-critical *properties* — not code units or API shapes.
+Every test pins a row in the release-gate ledger and is written as the *correct* behavior; where the
+system has a hole, the test is **red today** and tagged, so a run renders the holes as a worklist.
 
-## Quick Commands
+> **This repo owns the cross-stack tests.** The big-picture, money-path, and engine↔market-dynamics
+> scenarios live here. Sibling repos keep only a thin sanity tier for local iteration (forge custody
+> tests, engine/bridge unit specs); the orchestration repo's ledger harvests their results.
 
-| Command | What it does | Time |
-|---------|-------------|------|
-| `make precheck` | T1: Environment readiness (repos, binaries, .env) | instant |
-| `make test-infra` | T2: Infrastructure health (Docker, wallets, chain) | ~2 min |
-| `make test-ops` | T3: Basic operations (transfers, oracle, RR mode) | ~2 min |
-| `make test-bridge` | T4A: Bridge suite (health + wrap/unwrap flows) | ~10 min |
-| `make test-engine` | T4B: Engine strategy tests (332 tests) | ~5 min |
-| `make test-e2e` | T5: Full system tests (placeholder) | — |
-| `make test-all` | All tiers in order | ~20 min |
-| `make test-edge` | Edge-case framework (automated checks) | ~10+ min |
-| `make status` | Health check all services | instant |
+## The two sources of truth
 
-## Tier Structure
+Everything is grounded in two **code-verified** documents — treat all other testing prose as
+reference, not authority:
 
-```
-Tier   Name          When            What it proves
-─────────────────────────────────────────────────────────────────────────
-T1     precheck      pre dev-init    Environment ready (repos, bins, env)
-T2     test-infra    post dev-init   Infrastructure comes up healthy
-T3     test-ops      post dev-init   Basic operations work (funds, oracle)
-T4A    test-bridge   post dev-setup  Bridge works (wrap, unwrap, all assets)
-T4B    test-engine   post dev-setup  Engine strategies (332 unit tests)
-T5     test-e2e      post dev-setup  Full system (engine arb execution)
-```
+- **[`docs/security/INVARIANTS.md`](../security/INVARIANTS.md)** — the money-critical ledger
+  **INV-1..19**. This *is* the release gate: the bridge is releasable when every row is green.
+- **[`docs/protocol/zephyr-reference.md`](../protocol/zephyr-reference.md)** — the code-verified
+  Zephyr protocol (RR gates, mint/redeem rules, decimals, pricing). The market tests assert the
+  engine against *this*, not against re-encoded constants.
 
-## Self-Contained Tests
+The full enumerated catalog — every test id → invariant → layer → expected status — is
+**[`tests/CATALOG.md`](../../tests/CATALOG.md)** (the single test SoT).
 
-Each tier handles its own prerequisites via `scripts/test-gate.sh`:
+## Organized by runner × invariant
 
-| Tier | Gate behaviour |
-|------|---------------|
-| `precheck` | No state management — pure file/binary checks |
-| `test-infra`, `test-ops` | dev-reset-hard → start Docker infra → open wallets |
-| `test-bridge`, `test-engine`, `test-e2e` | If no addresses.json: dev-reset-hard → dev-test-setup (full deploy + seed). Otherwise: dev-reset → make dev |
+| Layer | Runner | Lives in | Stack? | Proves |
+|---|---|---|---|---|
+| **CONTRACT** | forge | `zephyr-eth-foundry/test/` | no | custody/crypto on-chain (INV-1,5,6,8,9,10) |
+| **LOGIC — engine** | vitest | `zephyr-bridge-engine/tests/` | no | decision fns + **protocol-conformance** (engine model vs Zephyr SoT) |
+| **LOGIC — bridge** | node:test | `zephyr-bridge/packages/**` | no | money-math + confirmation primitives (INV-3,6,11) |
+| **SCENARIO** | pytest | `tests/scenario/` | **yes** (`make dev`) | the heart: money-path E2E, engine↔market dynamics, security, resilience |
+| **UI** | Playwright | `tests/e2e/` | yes + browser | thin human-style wrap/unwrap/swap/LP (Phase 3, manual) |
+| **REPORT** | `scripts/invariant-report.py` | here | aggregates | renders the INV-1..19 ledger |
 
-**CI/non-interactive:** All prompts auto-accept when `CI=1` or when stdin is not a TTY.
+## Red/green — the KNOWN-GAP model
 
-### Why `dev-test-setup.sh` exists
+A test asserts the *correct* behavior. Today many of those behaviors are holes, so the test is
+**red** — and that red is the signal, not a failure of the suite:
 
-`dev-test-setup.sh` is a frozen copy of `dev-setup.sh`. It provides a stable, repeatable setup that tests depend on, regardless of how `dev-setup.sh` evolves (different pool sizes, new contracts, etc.).
+- **GREEN** — invariant held here.
+- **KNOWN-GAP** (`@known_gap` / `it.fails` / `_gap` in the name) — a real hole; red today, on the
+  worklist, **non-fatal** to the gate.
+- **ACCEPTED** (`@accepted_risk`) — an owner-accepted, documented deviation (amber); never fatal.
+- **REGRESSION** — an *untagged* failure → **fatal** (fix it or tag it).
+- **UNEXPECTED-PASS** — a known-gap that started passing → **fatal**: the fix landed, promote the
+  INVARIANTS.md row to HELD and drop the marker.
 
-Key differences from `dev-setup.sh`:
-- On **success**: leaves the stack running (tests need it)
-- On **failure**: stops everything (same as `dev-setup.sh`)
-- Writes marker `config/.test-setup-done` on completion
+So the gate is simply: **no regressions, no silent fixes.** Closing a known-gap (separate work,
+Phase 2) is how an INV row goes from red to green.
 
-Run it directly: `make dev-test-setup`
+### How a test declares its invariant
 
-## Test Counts
+The ledger is generated from the live tests, so each test self-declares — no hand-kept mapping:
 
-| Tier | Tests | Mutates | Details |
-|------|------:|---------|---------|
-| **T1 Precheck** | 5 | No | .env, repos, Docker, binaries, snapshot |
-| **T2 Infra** | 10 | No | Docker services, wallets, chain, oracle, mining |
-| **T3 Ops** | 3 | Yes (with restore) | Transfer, oracle control, RR mode |
-| **T4A Bridge** | 33 | Some | 28 health + 5 flow tests (wrap/unwrap) |
-| **T4B Engine** | 332 | No | External runner (12 modules) |
-| **T5 E2E** | 0 | — | Placeholder |
-| **Edge** | 168 | Mixed | [00-edge-case-scope.md](./00-edge-case-scope.md) |
+- **pytest**: `@pytest.mark.inv("INV-14")` (+ `@known_gap(inv=..., reason=...)` for a gap).
+- **vitest**: an `[INV-NN]` tag in the test name; known-gaps use `it.fails` **and** an `[gap]` tag.
+- **forge / node:test**: an `invNN` token in the test fn name (+ `gap` for a known-gap).
 
-## Where to Start
+`scripts/invariant-report.py` reads these, buckets each INV by the **worst** status across every
+layer that pinned it, and prints the gate.
 
-- **Fresh environment** — `make precheck` (verify repos/binaries/env)
-- **After dev-init** — `make test-infra` (verify infrastructure)
-- **After dev-setup** — `make test-bridge` (verify bridge works)
-- **After changes** — `make test-bridge` (exercises full bridge pipeline)
-- **Full validation** — `make test-all` (all tiers, each self-contained)
-- **Engine strategies** — `make test-engine` (332 unit tests)
-- **Deep edge cases** — `make test-edge-execute` (automated edge-case checks)
-
-## Running Specific Tests
+## Running it
 
 ```bash
-# By test ID
-./scripts/run-tests.py INFRA-01 WRAP-01
-
-# By tier
-./scripts/run-tests.py --tier precheck
-./scripts/run-tests.py --tier infra --tier ops     # multiple tiers
-
-# Edge by category
-./scripts/run-l5-tests.py --execute --category SEC --verbose
-
-# Edge by sublevel
-./scripts/run-l5-tests.py --execute --sublevel L5.1 --verbose
-
-# Engine by module
-python3 scripts/engine_tests/runner.py --module arb_gates
-
-# List available tests
-./scripts/run-tests.py --list
-./scripts/run-l5-tests.py --list
-python3 scripts/engine_tests/runner.py --list
-
-# Verbose output
-./scripts/run-tests.py --verbose
-make test-engine-verbose
+make test-report          # ← the north star: the INV-1..19 release-gate ledger
+make test                 # deterministic layers + ledger (no live stack): contract + logic + report
+make test-contract        # forge custody/crypto invariants
+make test-logic           # engine vitest + bridge node:test
+make test-scenario        # the live E2E suite — needs `make dev` up first
+make test-ui              # thin Playwright (needs stack + Chrome/MetaMask; manual, Phase 3)
 ```
 
-## Edge Categories
+Scenario selectors: `make test-scenario SUITE=market` · `INV=INV-14` · `ASSET=ZSD` · `ARGS="-k name"`.
 
-168 tests across 16 categories, grouped into 6 sublevels:
+`make test-report ARGS=--with-forge` also folds the forge layer into the ledger. The report consumes
+the **last** scenario run (`tests/scenario/.report/scenario.json`) and runs the engine vitest
+conformance live — so run `make test-scenario` against a live stack to refresh the live rows.
 
-| Sublevel | Make target | Categories | Tests |
-|----------|------------|------------|------:|
-| **L5.1** Security & Contracts | `make test-edge-sec` | SEC, SC | 24 |
-| **L5.2** Runtime & Consistency | `make test-edge-runtime` | CONS, RR, CONC, SEED, ARB | 58 |
-| **L5.3** Infra & Watchers | `make test-edge-infra` | WATCH, CONF, REC | 32 |
-| **L5.4** Asset & DEX | `make test-edge-asset` | ASSET, DEX | 20 |
-| **L5.5** Privacy & Load | `make test-edge-stress` | PRIV, LOAD, TIME | 22 |
-| **L5.6** Frontend | `make test-edge-fe` | FE | 12 |
+### SCENARIO isolation
 
-| Category | Count | Description |
-|----------|------:|-------------|
-| SEC | 12 | Bridge security (signatures, replay, authorization) |
-| SC | 12 | Smart contract edge cases (overflow, reentrancy) |
-| CONC | 10 | Concurrency and race conditions |
-| REC | 10 | Failure recovery (retries, partial state) |
-| CONS | 10 | Data consistency (cross-chain, DB vs chain) |
-| RR | 8 | Reserve ratio mode boundaries |
-| WATCH | 12 | Watcher reliability (missed blocks, reconnect) |
-| ASSET | 10 | Multi-asset interactions |
-| DEX | 10 | DEX edge cases (slippage, pool drain) |
-| TIME | 8 | Timeout and deadline handling |
-| CONF | 10 | Configuration errors |
-| LOAD | 8 | Load and stress testing |
-| PRIV | 6 | Privacy leak detection |
-| FE | 12 | Frontend edge cases |
-| SEED | 8 | Seeding verification (automated) |
-| ARB | 22 | Engine arbitrage integration (automated) |
+Scenario tests are markered for safe, repeatable runs against `make dev`:
 
-## Documentation Index
+- `@needs_stack` — skipped (not red) when core services are down, so a no-stack run stays clean.
+- `@needs_reset` — mutates Zephyr chain state (mining/conversions); the operator runs these isolated
+  and `make dev-reset`s between them. EVM-only tests use the `anvil_snapshot` fixture (snapshot →
+  revert) and `clean_market` (restore oracle + spread) for cheap per-test isolation.
 
-| File | Purpose |
-|------|---------|
-| [README.md](./README.md) | This file — testing quick reference |
-| [01-overview.md](./01-overview.md) | Master test doc: test specs, checkpoint state |
-| [02-infra-checklist.md](./02-infra-checklist.md) | Quick infrastructure verification checklist |
-| [03-bridge-scenarios.md](./03-bridge-scenarios.md) | Bridge wrap/unwrap test flows (API + UI) |
-| [04-full-stack-scenarios.md](./04-full-stack-scenarios.md) | DEX, engine, admin, faucets, SSE |
-| [05-devnet-scenarios.md](./05-devnet-scenarios.md) | DEVNET mode, RR transitions, oracle control |
-| [06-engine-strategies.md](./06-engine-strategies.md) | Strategy-specific evaluation tests |
-| [08-edge-framework.md](./08-edge-framework.md) | Edge execution framework and browser lane workflow |
-| [00-edge-case-scope.md](./00-edge-case-scope.md) | Full edge-case catalog (168 tests) |
-| [engine-test-scope.md](./engine-test-scope.md) | Engine test cases (332 tests, 12 modules) |
+## Adding a test
+
+1. Pick the invariant from `INVARIANTS.md` and the layer (what *runner* can prove it).
+2. Write the **negative**/correct-behavior assertion first; confirm it's red where the hole is.
+3. Tag it (above) so it rolls into the ledger. Add the row to `tests/CATALOG.md`.
+4. A green that should be red, or a red that should be green, means the catalog/ledger and reality
+   disagree — reconcile, don't paper over.

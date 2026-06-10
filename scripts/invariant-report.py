@@ -372,10 +372,18 @@ def render(all_recs: list[dict], metas: list[dict], write_json: bool) -> int:
         print(red("  FATAL — untagged failure or a closed gap still marked @known_gap:"))
         for inv in fatal:
             print(red(f"    INV-{inv} {INV_TITLES[inv]} → {rolled[inv]}"))
-    releasable = held == 19
+    accepted = counts[ACCEPTED]
+    # Owner-accepted risks (@accepted_risk) are a signed-off release posture, not a gap — they
+    # count toward releasable alongside HELD. Only a real hole (fatal / known-gap / uncovered) blocks.
+    releasable = not fatal and counts[KNOWN_GAP] == 0 and counts[UNKNOWN] == 0 and held + accepted == 19
     print()
-    print(bold("  " + (green("RELEASABLE — every invariant HELD") if releasable
-                       else yellow(f"NOT RELEASABLE — {19 - held} invariant(s) not green"))))
+    if releasable and accepted:
+        verdict = green(f"RELEASABLE — {held}/19 HELD · {accepted} owner-accepted (signed-off)")
+    elif releasable:
+        verdict = green("RELEASABLE — every invariant HELD")
+    else:
+        verdict = yellow(f"NOT RELEASABLE — {19 - held - accepted} invariant(s) not green/accepted")
+    print(bold("  " + verdict))
     print()
 
     if write_json:

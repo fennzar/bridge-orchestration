@@ -38,7 +38,7 @@ tagged so the run renders the holes as a worklist.
 | INV-9 | no signature replay | CT-SIG-XTOKEN/XCHAIN, SEC-CLAIM-REPLAY-XTOKEN | G |
 | INV-10 | burn nonce non-replay | CT-BURN-NONCE | G |
 | INV-11 | no payout before finality | LB-CONF-*, **RES-REORG-UNWRAP ✓** | K (relays at ~1-conf, live-proven) |
-| INV-12 | watcher exactly-once | (WS-reconnect gap-fill only — **uncovered**, see RES note → task #8/#18) | — |
+| INV-12 | watcher exactly-once | **LB-GAPFILL-* ✓** (node:test `backfill.test.ts`, 11 — `reconcileEventGap` bounded sweep; sweep-owned contiguity cursor; idempotent re-scan; watermark-clamp); RES-EXACTLY-ONCE live deferred → #18 | **G** |
 | INV-13 | unwrap status truthfulness | LB-REC-STATUS, **FLOW-UNWRAP ✓**, RES-STATUS-TRUTH, UI-UNWRAP-HAPPY | **G** (status flips pending→confirmed live; memory note stale) |
 | INV-14 | engine can't drain on bad price | MKT-ARB-DETECT, MKT-APPROVAL-RRMODE, MKT-PEG-DEFENSE (G); MKT-STALE-PRICE (K); LE-RISK-DEFAULT-OFF (K), LE-LOSS-BREAKER per-op (G); SLIPPAGE-FLOOR (—) | K |
 | INV-15 | realized accounting | LE-LOSS-BREAKER ✓ (G when enabled + off-by-default K); PNL-REALIZED (—) | K |
@@ -163,7 +163,7 @@ uncovered. Listed honestly so the catalog never claims coverage the ledger doesn
 | RES-RESEND-DRAFT-RECOVERY ✓ | unwrap row lost its commit hash (`zephTxId`/`*HashHex` NULL) but a linked `ZephyrPrepared`/`ZephyrOutgoing` draft still carries the pre-signed commit → resend recovers the commit from the draft (by id *and* by unwrapId) and **refuses**, never fresh-sends | 4 | **G** (built, live-proven) |
 | RES-RESEND-PAYLOAD-RECOVERY ✓ | row hashes NULL *and* linked drafts deleted, but the structured `burnPayload` still decodes to the pre-signed `txHash` → resend recovers the commit from the payload and **refuses**; only a burn with no commit in **any** persisted source (row, draft, payload) + no lineage may fresh-send | 4 | **G** (built, live-proven) |
 | RES-REINGEST ✓ | re-delivery of an already-paid burn (record looks un-relayed but pre-signed payout landed) → ingest entry reconcile converges to the original payout, never relays a second | 4 | **G** (built, live-proven) |
-| ~~RES-EXACTLY-ONCE / RES-RECONCILE~~ | WS-reconnect gap-fill (INV-12); reconcile sweep (INV-13) — **not built**: need watcher WS-fault orchestration. Deferred to **#18** (needs the fault-injection harness decision). INV-12 remains UNCOVERED in the ledger by design. | 12,13 | — |
+| RES-EXACTLY-ONCE | WS-reconnect gap-fill (INV-12) — the **logic** is now pinned by `LB-GAPFILL-*` (node:test, the sweep-owned contiguity cursor + bounded reconciliation), so INV-12 is HELD. This row is the remaining **live** WS-fault-injection scenario (kill/restore the socket mid-stream on a running stack, assert no missed/double event end-to-end) — deferred to **#18** (needs the fault-injection harness decision). Not a coverage hole in the ledger; the decision layer is green. | 12 | LB-GAPFILL G; live → #18 |
 
 Crash-state injection note: the live RES-DOUBLE-PAYOUT/REINGEST tests stage the exact post-crash DB row via `harness/db.py` (psql into `zephyrbridge_dev."Unwrap"`) rather than process-killing a watcher mid-flight — the invariant under test is "the record's zephTxId converges to the original payout; a different txid = a second payout left the hot wallet," which the injected state exercises directly. The pre-signed payout (fixed inputs → stable commit hash → mines at most once) is the idempotency anchor.
 

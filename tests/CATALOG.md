@@ -29,7 +29,7 @@ tagged so the run renders the holes as a worklist.
 |---|---|---|---|
 | INV-1 | no unbacked mint | CT-SUP ✓, CT-MINT-ROLE ✓, FLOW-WRAP-* ✓, SEC-UNBACKED-MINT — but **CT-BYPASS-BURN ✓ (K)** drags the roll-up | K |
 | INV-2 | no double-credit | CT-MINT-IDEM ✓, LB-HASH-NORM ✓, FLOW-CLAIM-IDEM ✓ | G |
-| INV-3 | no over-payout on unwrap | LB-AMT-COVERS ✓, FLOW-PREPARE-CANCEL ✓, SEC-PREPARE-DRAIN | G (interim) |
+| INV-3 | no over-payout on unwrap | LB-AMT-COVERS ✓, FLOW-PREPARE-CANCEL ✓ (payout sized *from* burn ⇒ over-payout structurally impossible, INV-19) | G |
 | INV-4 | no double-payout | LB-RECONCILE / LB-RESEND ✓ (unit, `decideResend`), RES-DOUBLE-PAYOUT ✓, RES-RESEND-FAILCLOSED ✓, RES-RESEND-DRAFT-RECOVERY ✓, RES-RESEND-PAYLOAD-RECOVERY ✓, RES-REINGEST ✓ (live) | G |
 | INV-5 | asset-type integrity | CT-BYPASS-BURN ✓, CT-BURN-ZERO ✓, FLOW-WRAP-{ZSD,ZRS,ZYS} ✓ | K |
 | INV-6 | decimal correctness | CT-DEC ✓, LB-AMT-SCALE ✓, FLOW-ROUNDTRIP ✓ | G |
@@ -45,7 +45,7 @@ tagged so the run renders the holes as a worklist.
 | INV-16 | no fund-burning loop | **LE-NO-PINGPONG ✓** (vitest `antiPingpong.spec.ts`, 9 — guard `checkAccountingOnlyCexLoop` grounded on real `buildExecutionSteps` output) | **G** |
 | INV-17 | execution-time gating | MKT-RRMODE-SWEEP, MKT-GATE-CONFORM-ZSD/ZRS-redeem, MKT-NO-DOOMED-PLAN (G); MKT-GATE-CONFORM-ZRS-mint-floor (K); MKT-ARB-EXECUTE/EXEC-TIME-GATE (—); LE-CONFORM-GATES (K) | K |
 | INV-18 | privileged routes need auth | SEC-DEBUG-RESET-OPEN, SEC-ENGINE-CTRL-UNAUTH, CT-PAUSE-ABSENT, UI-CONNECT | K / A |
-| INV-19 | /unwraps/prepare not weaponizable | SEC-PREPARE-UNAUTH (A — unauth by design, theft-bound by burnCoversPayout), SEC-PREPARE-BADADDR/ZERO/MISSING ✓ (G), -OVERMAX (skipped, no cap set) | A |
+| INV-19 | /unwraps/prepare not weaponizable | **SEC-PREPARE-PURE-QUOTE ✓** (200 + payload, NO pre-sign artifacts), **SEC-PREPARE-NO-UTXO-LOCK ✓** (N prepares don't drop bridge unlocked balance), SEC-PREPARE-BADADDR/ZERO/MISSING ✓ (G), -OVERMAX (skipped, no cap set); LB-PAY-V2 ✓ | **G** (size-from-burn + pure quote; CRIT-1 real fix) |
 
 ---
 
@@ -145,8 +145,9 @@ uncovered. Listed honestly so the catalog never claims coverage the ledger doesn
 ### SEC (`security/`) — adversarial
 | id | scenario | INV | St |
 |---|---|---|---|
-| SEC-PREPARE-DRAIN | prepare large + burn dust ⇒ burnCoversPayout blocks relay (CRIT-1) | 3 | G |
-| SEC-PREPARE-UNAUTH | /unwraps/prepare open+unauth ⇒ griefing/DoS | 19 | K |
+| SEC-PREPARE-DRAIN | prepare-large + burn-dust over-payout — vector REMOVED: payout now sized *from* the burn (prepare commits no amount). Defensive `burnCoversPayout` pinned by unit LB-AMT-DRAIN. | 3 | G (moot) |
+| SEC-PREPARE-PURE-QUOTE | /unwraps/prepare valid req ⇒ 200 + v2 payload, NO pre-sign artifacts (txHash/draftId/prepareId) — commits nothing, so unauth is safe | 19 | G |
+| SEC-PREPARE-NO-UTXO-LOCK | N valid prepares do NOT reduce bridge wallet unlocked balance (UTXO-lock DoS closed) | 19 | G |
 | SEC-PREPARE-BADADDR/-OVERMAX | invalid dest rejected; >UNWRAP_MAX rejected | 19 | G |
 | SEC-CLAIM-FORGE / -REPLAY-XTOKEN | attacker sig reverts; wZEPH voucher on wZSD reverts | 8,9 | G |
 | SEC-UNBACKED-MINT | mint with no verified deposit blocked | 1 | G |

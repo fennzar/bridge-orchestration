@@ -38,14 +38,14 @@ tagged so the run renders the holes as a worklist.
 | INV-9 | no signature replay | CT-SIG-XTOKEN/XCHAIN, SEC-CLAIM-REPLAY-XTOKEN | G |
 | INV-10 | burn nonce non-replay | CT-BURN-NONCE | G |
 | INV-11 | no payout before finality | LB-CONF-*, **RES-REORG-UNWRAP ✓** | K (relays at ~1-conf, live-proven) |
-| INV-12 | watcher exactly-once | RES-EXACTLY-ONCE | K |
+| INV-12 | watcher exactly-once | (WS-reconnect gap-fill only — **uncovered**, see RES note → task #8/#18) | — |
 | INV-13 | unwrap status truthfulness | LB-REC-STATUS, **FLOW-UNWRAP ✓**, RES-STATUS-TRUTH, UI-UNWRAP-HAPPY | **G** (status flips pending→confirmed live; memory note stale) |
-| INV-14 | engine can't drain on bad price | MKT-ARB-DETECT, MKT-APPROVAL-RRMODE, MKT-PEG-DEFENSE (G); MKT-STALE-PRICE (K); LE: SLIPPAGE-FLOOR, RISK-DEFAULT-OFF (K) | K |
-| INV-15 | realized accounting | LE: PNL-REALIZED, LOSS-BREAKER (K) | K |
-| INV-16 | no fund-burning loop | LE: NO-PINGPONG (K) | K |
+| INV-14 | engine can't drain on bad price | MKT-ARB-DETECT, MKT-APPROVAL-RRMODE, MKT-PEG-DEFENSE (G); MKT-STALE-PRICE (K); LE-RISK-DEFAULT-OFF (K), LE-LOSS-BREAKER per-op (G); SLIPPAGE-FLOOR (—) | K |
+| INV-15 | realized accounting | LE-LOSS-BREAKER ✓ (G when enabled + off-by-default K); PNL-REALIZED (—) | K |
+| INV-16 | no fund-burning loop | (NO-PINGPONG not built — **uncovered**, needs CEX-accounting grounding) | — |
 | INV-17 | execution-time gating | MKT-RRMODE-SWEEP, MKT-GATE-CONFORM-ZSD/ZRS-redeem, MKT-NO-DOOMED-PLAN (G); MKT-GATE-CONFORM-ZRS-mint-floor (K); MKT-ARB-EXECUTE/EXEC-TIME-GATE (—); LE-CONFORM-GATES (K) | K |
 | INV-18 | privileged routes need auth | SEC-DEBUG-RESET-OPEN, SEC-ENGINE-CTRL-UNAUTH, CT-PAUSE-ABSENT, UI-CONNECT | K / A |
-| INV-19 | /unwraps/prepare not weaponizable | SEC-PREPARE-UNAUTH, SEC-PREPARE-BADADDR/OVERMAX | K |
+| INV-19 | /unwraps/prepare not weaponizable | SEC-PREPARE-UNAUTH (A — unauth by design, theft-bound by burnCoversPayout), SEC-PREPARE-BADADDR/ZERO/MISSING ✓ (G), -OVERMAX (skipped, no cap set) | A |
 
 ---
 
@@ -128,11 +128,18 @@ against the protocol gate oracle (`market/protocol_gates.py`, cited to zephyr-re
 stateless read APIs; tested as pure conformance reds instead (task #14):**
 | id | scenario | INV | St | Where |
 |---|---|---|---|---|
-| MKT-RISK-DEFAULT-OFF | `DEFAULT_RISK_LIMITS.enabled === false` ⇒ breaker `canExecute()` always allows | 14 | K | LE: `risk/limits.ts`, `circuitBreaker.ts` |
-| MKT-LOSS-BREAKER | cumulative realized loss > max ⇒ breaker opens (FSM) | 15 | K | LE: `circuitBreaker.ts` |
-| MKT-PNL-REALIZED | execution records expected score (`netUsdChangeUsd`), no realized-fill reconciliation | 15 | K | LE: execution/view |
-| MKT-SLIPPAGE-FLOOR | swap uses `amountOutMin ?? 0n` (no slippage floor) ⇒ no abort on adverse fill | 14 | K | LE: execution swap step |
-| MKT-NO-PINGPONG | offsetting wrap/unwrap loop burns real fees on accounting-only CEX legs | 16 | K | LE: routing / dedupe |
+| MKT-RISK-DEFAULT-OFF | `DEFAULT_RISK_LIMITS.enabled === false` ⇒ breaker `canExecute()` always allows | 14 | K | LE: `risk.spec.ts` (`[INV-14] [gap]`) |
+| MKT-LOSS-BREAKER | breaker FSM trips on cumulative loss / consecutive failures **when enabled** (green); off-by-default (gap) | 15 | G+K | LE: `risk.spec.ts` (`[INV-15]` green + `[gap]`) |
+
+**Not yet built — distinct sub-properties whose INV row is already lit by a sibling, OR genuinely
+uncovered. Listed honestly so the catalog never claims coverage the ledger doesn't show:**
+| id | scenario | INV | St | Why not built |
+|---|---|---|---|---|
+| MKT-PNL-REALIZED | recorded score is `expectedPnl` (`netUsdChangeUsd`), never reconciled to the realized fill | 15 | — | needs executed-trade + realized-fill accounting grounding. INV-15 already RED-GAP via the breaker default-off, so the ledger already flags the row. |
+| MKT-SLIPPAGE-FLOOR | swap uses `amountOutMin ?? 0n` (no slippage floor) ⇒ no abort on adverse fill | 14 | — | needs an executed swap with a moved pool to observe the realized-vs-min gap. INV-14 already RED-GAP via price-freshness + risk-default-off. |
+| MKT-NO-PINGPONG | offsetting wrap/unwrap loop burns real fees on accounting-only CEX legs | 16 | — | a faithful test must model the CEX accounting-only price diverging from the real fee-bearing legs — needs engine-internal grounding. A flat-market proxy would duplicate `mkt_peg_quiet_when_on_peg` and **falsely green** INV-16. **INV-16 stays honestly UNCOVERED in the ledger** until grounded (sibling of #8/#18). |
+
+(MKT-ARB-EXECUTE and MKT-EXEC-TIME-GATE also not built — see the live-scenario table above; both need the runner approve→execute harness. INV-17 is already RED-GAP via gate-conformance + rrmode, INV-14 via price-freshness.)
 
 ### SEC (`security/`) — adversarial
 | id | scenario | INV | St |

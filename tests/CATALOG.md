@@ -37,9 +37,9 @@ tagged so the run renders the holes as a worklist.
 | INV-8 | voucher unforgeable | CT-SIG-*, CT-ROT-SIGNER, SEC-CLAIM-FORGE | G |
 | INV-9 | no signature replay | CT-SIG-XTOKEN/XCHAIN, SEC-CLAIM-REPLAY-XTOKEN | G |
 | INV-10 | burn nonce non-replay | CT-BURN-NONCE | G |
-| INV-11 | no payout before finality | LB-CONF-*, RES-REORG-UNWRAP | K |
+| INV-11 | no payout before finality | LB-CONF-*, **RES-REORG-UNWRAP ✓** | K (relays at ~1-conf, live-proven) |
 | INV-12 | watcher exactly-once | RES-EXACTLY-ONCE | K |
-| INV-13 | unwrap status truthfulness | LB-REC-STATUS, FLOW-UNWRAP-*, RES-STATUS-TRUTH, UI-UNWRAP-HAPPY | K |
+| INV-13 | unwrap status truthfulness | LB-REC-STATUS, **FLOW-UNWRAP ✓**, RES-STATUS-TRUTH, UI-UNWRAP-HAPPY | **G** (status flips pending→confirmed live; memory note stale) |
 | INV-14 | engine can't drain on bad price | MKT-ARB-DETECT, MKT-APPROVAL-RRMODE, MKT-PEG-DEFENSE (G); MKT-STALE-PRICE (K); LE: SLIPPAGE-FLOOR, RISK-DEFAULT-OFF (K) | K |
 | INV-15 | realized accounting | LE: PNL-REALIZED, LOSS-BREAKER (K) | K |
 | INV-16 | no fund-burning loop | LE: NO-PINGPONG (K) | K |
@@ -90,7 +90,7 @@ Run: `cd $ENGINE_REPO_PATH && pnpm vitest run tests/conformance` (no stack). Kno
 | id | scenario | INV | St |
 |---|---|---|---|
 | FLOW-WRAP-{ZEPH,ZSD,ZRS,ZYS} | deposit→claim mints exact 1:1 | 1,6 | G |
-| FLOW-UNWRAP-{×4} | burn→native payout lands; status flips to complete | 1,13 | G / K(status) |
+| FLOW-UNWRAP ✓ | burn wZEPH→native payout relays; status flips pending→confirmed (~15s) | 1,13 | **G** (built, live-verified) |
 | FLOW-ROUNDTRIP | wrap then unwrap reconciles; no value created/destroyed | 1,6 | G |
 | FLOW-CLAIM-IDEM | claim twice → 2nd reverts | 2 | G |
 | FLOW-CLAIM-EXPIRY | unclaimed 24h → expired, no re-sign → stuck | 7 | K |
@@ -141,11 +141,11 @@ stateless read APIs; tested as pure conformance reds instead (task #14):**
 ### RES (`resilience/`) — finality / consistency / watchers
 | id | scenario | INV | St |
 |---|---|---|---|
-| RES-REORG-UNWRAP | burn at head; anvil snapshot+revert erases it ⇒ no payout (relay deferred) | 11 | K |
-| RES-DOUBLE-PAYOUT | crash watcher mid-`sending`, restart ⇒ pays out exactly once | 4 | K |
-| RES-EXACTLY-ONCE | WS reconnect/gap ⇒ every event once, none missed | 12 | K |
-| RES-STATUS-TRUTH | payout lands ⇒ status pending→confirmed→complete (not stuck on stale wallet height) | 13 | K |
-| RES-RECONCILE | reconcilePendingUnwraps sweeps stuck-sent → confirmed once mined | 13 | G |
+| RES-REORG-UNWRAP ✓ | burn relayed while only ~1-conf deep (ingest never checks isBurnConfirmed) | 11 | **K** (built, live-proven) |
+| RES-DOUBLE-PAYOUT | re-relay of a prepared payout — same pre-signed txid ⇒ daemon-idempotent | 4 | likely **G** (deterministic txid; not yet built) |
+| RES-EXACTLY-ONCE | WS reconnect/gap ⇒ every event once, none missed | 12 | K (needs watcher-crash orchestration) |
+| RES-STATUS-TRUTH | payout lands ⇒ status pending→confirmed (folded into FLOW-UNWRAP ✓) | 13 | **G** (covered, live-verified) |
+| RES-RECONCILE | reconcilePendingUnwraps sweeps stuck-sent → confirmed once mined | 13 | G (not yet built) |
 
 ### OPS (`ops/`) — stack / protocol sanity gates (run first)
 `OPS-CHAIN-HEALTH`, `OPS-WALLET-BALANCES`, `OPS-CONTRACTS-DEPLOYED`, `OPS-ORACLE-CONTROL`,

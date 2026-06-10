@@ -563,8 +563,9 @@ test-logic-bridge:
 	cd $(BRIDGE_REPO_PATH) && pnpm test
 
 ## REPORT — the north star: roll every layer up into the INV-1..19 release-gate ledger.
-## Consumes the last SCENARIO run + runs the engine vitest conformance live.
-## `make test-report ARGS=--with-forge` also folds the forge layer into the ledger.
+## Consumes the last SCENARIO run + runs engine vitest, bridge node:test, and forge contract layers.
+## `make test-report ARGS=--no-forge` drops the forge layer (only where foundry is unavailable —
+## it pins INV-1/5/8/9/10, so skipping it can render those custody/crypto rows falsely-green).
 test-report:
 	@./scripts/invariant-report.py $(ARGS)
 

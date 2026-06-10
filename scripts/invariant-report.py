@@ -10,7 +10,9 @@ Sources:
   SCENARIO (pytest)        tests/scenario/.report/scenario.json — {inv, bucket} emitted by conftest.
   LOGIC-engine (vitest)    run `pnpm vitest run tests/conformance` (no stack); tags in test titles.
   LOGIC-bridge (node:test) run the bridge package's node:test (no stack); tags in test names.
-  CONTRACT (forge)         run `forge test --json` (--with-forge); NatSpec `/// INV-N` tags. [opt-in]
+  CONTRACT (forge)         run `forge test --json` (default-on; `--no-forge` to skip where foundry is
+                           absent). NatSpec `/// INV-N` tags. Pins INV-1/5/8/9/10 — skipping it can
+                           render those custody/crypto rows falsely-green.
 
 Name-tag convention (one place — the test itself, so the ledger can't drift from reality):
   [INV-NN]   the invariant this test pins (required to count toward the ledger). Forge declares it
@@ -384,7 +386,9 @@ def render(all_recs: list[dict], metas: list[dict], write_json: bool) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Render the INV-1..19 release-gate ledger from live tests.")
-    ap.add_argument("--with-forge", action="store_true", help="also run forge contract tests (slower)")
+    ap.add_argument("--no-forge", action="store_true",
+                    help="skip the forge contract layer (INV-1/5/8/9/10 custody+crypto pins live here — "
+                         "omitting it can render those falsely-green; only skip where foundry is unavailable)")
     ap.add_argument("--no-vitest", action="store_true", help="skip the engine vitest conformance layer")
     ap.add_argument("--no-node", action="store_true", help="skip the bridge node:test logic layer")
     ap.add_argument("--no-json", action="store_true", help="do not write tests/.report/ledger.json")
@@ -400,7 +404,7 @@ def main() -> int:
     if not args.no_node:
         recs, meta = run_node(Path(_env("BRIDGE_REPO_PATH", str(ROOT.parent / "zephyr-bridge"))))
         all_recs += recs; metas.append(meta)
-    if args.with_forge:
+    if not args.no_forge:
         recs, meta = run_forge(Path(_env("FOUNDRY_REPO_PATH", str(ROOT.parent / "zephyr-eth-foundry"))))
         all_recs += recs; metas.append(meta)
 

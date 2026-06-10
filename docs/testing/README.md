@@ -74,9 +74,12 @@ make test-ui              # thin Playwright (needs stack + Chrome/MetaMask; manu
 
 Scenario selectors: `make test-scenario SUITE=market` · `INV=INV-14` · `ASSET=ZSD` · `ARGS="-k name"`.
 
-`make test-report ARGS=--with-forge` also folds the forge layer into the ledger. The report consumes
-the **last** scenario run (`tests/scenario/.report/scenario.json`) and runs the engine vitest
-conformance live — so run `make test-scenario` against a live stack to refresh the live rows.
+`make test-report` rolls up every layer it can — the engine vitest conformance and bridge node:test
+and forge contract layers run live; the scenario rows come from the **last** scenario run
+(`tests/scenario/.report/scenario.json`), so run `make test-scenario` against a live stack first to
+refresh them. The forge layer is default-on because it is the only place INV-1/5/8/9/10
+(custody + crypto) are pinned — `ARGS=--no-forge` drops it (and honestly widens the UNCOVERED set)
+only where the foundry toolchain is unavailable.
 
 ### SCENARIO isolation
 

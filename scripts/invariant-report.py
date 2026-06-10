@@ -8,7 +8,7 @@ aggregator buckets each INV by the WORST status observed across all layers that 
 
 Sources:
   SCENARIO (pytest)        tests/scenario/.report/scenario.json — {inv, bucket} emitted by conftest.
-  LOGIC-engine (vitest)    run `pnpm vitest run tests/conformance` (no stack); tags in test titles.
+  LOGIC-engine (vitest)    run `pnpm vitest run tests` (no stack); [INV-NN] tags in test titles.
   LOGIC-bridge (node:test) run the bridge package's node:test (no stack); tags in test names.
   CONTRACT (forge)         run `forge test --json` (default-on; `--no-forge` to skip where foundry is
                            absent). NatSpec `/// INV-N` tags. Pins INV-1/5/8/9/10 — skipping it can
@@ -176,7 +176,10 @@ def run_vitest(engine_path: Path) -> tuple[list[dict], dict]:
     if not engine_path.is_dir():
         return [], {"layer": "vitest", "status": SKIPPED, "note": f"engine repo not found: {engine_path}"}
     tmp = Path(tempfile.gettempdir()) / "inv-vitest.json"
-    cmd = ["pnpm", "vitest", "run", "tests/conformance", "--reporter=json", f"--outputFile={tmp}"]
+    # Scan the whole engine test tree, not just tests/conformance: any [INV-NN]-tagged spec
+    # counts toward the gate wherever it lives (e.g. execution-engine risk-wiring specs).
+    # Untagged tests are ignored by the [INV-NN] filter below, so this stays focused.
+    cmd = ["pnpm", "vitest", "run", "tests", "--reporter=json", f"--outputFile={tmp}"]
     try:
         subprocess.run(cmd, cwd=engine_path, capture_output=True, text=True, timeout=300)
     except Exception as e:  # noqa: BLE001 — any failure → layer skipped, report stays honest

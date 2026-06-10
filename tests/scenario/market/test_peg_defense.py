@@ -1,11 +1,17 @@
 """MKT-PEG-DEFENSE — the peg keeper reacts when wZSD leaves its $1 peg.
 
 The PegKeeper strategy (pegkeeper.ts) monitors the wZSD/USDT pool and, once the deviation clears
-its `minDeviationBps` (30bps), emits a corrective opportunity (buy wZSD when cheap, sell when rich)
-within the prevailing RR gates. This proves the engine defends the peg in response to a market
-move — the strategy counterpart to ARB-DETECT. Expected GREEN.
+`minDeviationBps`, emits a corrective opportunity (buy wZSD when cheap) within the prevailing RR
+gates. The trigger widens by RR mode (getAdjustedThresholds: normal 30bps / defensive 100bps /
+crisis 300bps), so the "fires on a small depeg" proof is only meaningful at NORMAL RR.
 
-Pushes run under `anvil_snapshot` (reverted after); need the funded ENGINE_PK (skip if absent).
+This proves the engine defends the peg in response to a market move — the strategy counterpart to
+ARB-DETECT. Expected GREEN.
+
+Pushes run under `anvil_snapshot` (reverted after). The live engine wallet can't move the seeded
+pool past the trigger on its own, so the depeg test MINTS wZSD to it (MINTER_ROLE, reverted with
+the snapshot) and pushes a calibrated amount. Needs ENGINE_PK + DEPLOYER_PRIVATE_KEY (skip if
+absent).
 """
 from __future__ import annotations
 
@@ -15,18 +21,24 @@ from harness import engine, pool
 
 pytestmark = [pytest.mark.needs_stack, pytest.mark.inv("INV-14")]
 
-PUSH_TOKENS = 20_000  # well past the 30bps trigger on the wZSD/USDT pool
+# ≈ −43bps on the seeded wZSD/USDT depth: clears the 30bps normal trigger with margin, short of
+# the concentrated-liquidity cliff (~35K+ sweeps the in-range liquidity and drains the pool).
+PUSH_TOKENS = 32_000
+NORMAL_TRIGGER_BPS = 30  # PegKeeper minDeviationBps at normal RR (pegkeeper.ts)
 
 
-def _peg_opportunities() -> list[dict]:
+def _peg_eval() -> tuple[list[dict], float | None]:
+    """(opportunities, deviationBps) from a peg evaluation."""
     ev, err = engine.evaluate(strategies="peg")
     assert not err and ev, f"evaluate(peg) errored: {err}"
-    return engine.opportunities(ev, strategy="peg")
+    peg = (ev.get("results") or {}).get("peg") or {}
+    dev = (peg.get("metrics") or {}).get("deviationBps")
+    return peg.get("opportunities", []), dev
 
 
 def test_mkt_peg_quiet_when_on_peg(anvil_snapshot):
     """Baseline: with wZSD near $1, the peg keeper proposes nothing (or nothing urgent)."""
-    opps = _peg_opportunities()
+    opps, _ = _peg_eval()
     # Not a hard zero — tiny residual deviation is fine; assert it isn't screaming.
     assert all(o.get("severity") != "critical" for o in opps), (
         f"peg keeper flagged a critical op while on-peg: {opps}"
@@ -34,36 +46,48 @@ def test_mkt_peg_quiet_when_on_peg(anvil_snapshot):
 
 
 def test_mkt_peg_reacts_to_depeg(anvil_snapshot):
-    """Drop wZSD below peg (sell wZSD into wZSD/USDT) → the peg keeper proposes a corrective op.
+    """Push wZSD below peg → the keeper proposes a corrective (discount→buy) op.
 
-    The keeper widens its trigger by RR mode (getAdjustedThresholds: normal 30bps / defensive
-    100bps / crisis 300bps). A ~$17K push reliably clears 30bps but not the 3% crisis band — so
-    this "fires on a small depeg" proof is only meaningful at NORMAL RR. Off-normal the wide
-    tolerance is correct behaviour, not a gap → skip rather than false-fail.
+    Only meaningful at NORMAL RR (the trigger widens off-normal). We mint wZSD to the pusher and
+    push a calibrated amount; if a reseed deepens the pool so the push undershoots the 30bps
+    trigger, skip with the measured number rather than false-fail.
     """
     pk, addr = pool.pusher()
     if not pk or not addr:
         pytest.skip("ENGINE_PK/ENGINE_ADDRESS unavailable — can't fund a pool push")
+    mpk = pool.minter()
+    if not mpk:
+        pytest.skip("DEPLOYER_PRIVATE_KEY (MINTER_ROLE) unavailable — can't fund a calibrated push")
     ev, err = engine.evaluate()
     mode = engine.rr_mode(ev) if not err else None
     if mode != "normal":
-        pytest.skip(f"RR mode {mode!r} (not normal) → keeper trigger widens past a small push; "
-                    "reset to normal RR to exercise peg defense")
-    need, ferr = pool.affordable_push("wZSD", addr, PUSH_TOKENS)
-    if need is None:
-        pytest.skip(f"{ferr} — can't depeg the pool")
+        pytest.skip(f"RR mode {mode!r} (not normal) → keeper trigger widens past the calibrated "
+                    "push; reset to normal RR to exercise peg defense")
 
-    before = len(_peg_opportunities())
-    _, perr = pool.move_price("wZSD-USDT", sell_currency0=True, amount_atomic=need,
-                              pk=pk, receiver=addr)
+    _, before_dev = _peg_eval()
+    amt = PUSH_TOKENS * 10 ** (pool.token_decimals("wZSD") or 12)
+    _, merr = pool.mint_wtoken("wZSD", addr, amt, mpk)
+    assert not merr, f"mint failed: {merr}"
+    _, perr = pool.move_price("wZSD-USDT", sell_currency0=True, amount_atomic=amt, pk=pk, receiver=addr)
     assert not perr, f"pool push failed: {perr}"
 
-    after = _peg_opportunities()
-    assert len(after) > before or len(after) > 0, (
-        "peg keeper proposed no corrective op after a >0.3% wZSD depeg"
+    opps, after_dev = _peg_eval()
+    assert after_dev is not None, "peg metrics carried no deviationBps after the push"
+    # 1) Engine must SEE the depeg — the deviation moved down.
+    assert after_dev < (before_dev or 0), (
+        f"engine did not register the depeg: deviationBps {before_dev} → {after_dev}"
     )
-    # The correction should move wZSD back UP (buy wZSD / mint-side), not pile onto the drop.
-    dirs = [str(o.get("direction", "")).lower() for o in after]
-    assert not any("sell" in d and "zsd" in d for d in dirs), (
-        f"peg keeper proposed to sell into the depeg: {dirs}"
+    # 2) If the push undershot the trigger (pool deeper than calibrated), skip the action assertion.
+    if abs(after_dev) < NORMAL_TRIGGER_BPS:
+        pytest.skip(f"push achieved {after_dev}bps (< {NORMAL_TRIGGER_BPS} trigger) — pool deeper "
+                    "than calibrated; can't exercise the corrective action")
+    # 3) Past the trigger: the keeper must propose a corrective op and read it as a DISCOUNT (buy
+    #    wZSD to restore), never a premium (which would pile into the drop).
+    assert opps, f"keeper proposed no corrective op at {after_dev}bps depeg (≥ {NORMAL_TRIGGER_BPS})"
+    dirs = [str(o.get("direction", "")).lower() for o in opps]
+    assert any("discount" in d for d in dirs), (
+        f"keeper mis-read a below-peg move (expected a zsd_discount correction): {dirs}"
+    )
+    assert not any("premium" in d for d in dirs), (
+        f"keeper flagged a premium on a below-peg move: {dirs}"
     )

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 
 import test_common as _tc
@@ -123,6 +124,37 @@ def pusher() -> tuple[str | None, str | None]:
         pk = pk or vals.get("ENGINE_PK")
         addr = addr or vals.get("ENGINE_ADDRESS")
     return pk, addr
+
+
+def minter() -> str | None:
+    """Private key holding MINTER_ROLE on the wrapped tokens (the EVM deployer).
+
+    From DEPLOYER_PRIVATE_KEY (env first, then gitignored root `.env`). Lets a scenario mint a
+    deterministic amount of a wrapped token to fund a push that must clear a threshold the live
+    engine wallet's balance can't reach — always under `anvil_snapshot`, so the mint reverts.
+    Returns None if unavailable (caller should skip).
+    """
+    pk = os.environ.get("DEPLOYER_PRIVATE_KEY")
+    if not pk:
+        pk = _parse_env(ROOT / ".env", ("DEPLOYER_PRIVATE_KEY",)).get("DEPLOYER_PRIVATE_KEY")
+    return pk
+
+
+def mint_wtoken(symbol: str, to: str, amount_atomic: int, minter_pk: str) -> tuple[str | None, str | None]:
+    """Mint `amount_atomic` of a wrapped token to `to` via `mintFromZephyr` (MINTER_ROLE gated).
+
+    Uses a fresh random `zephyrTxHash` so the contract's replay guard (`usedZephyrTx`) never
+    collides. ONLY meaningful under `anvil_snapshot` — this mints unbacked supply and must revert.
+    """
+    token = token_address(symbol)
+    if not token:
+        return None, f"no address for {symbol}"
+    zephyr_tx = "0x" + uuid.uuid4().hex + uuid.uuid4().hex  # 32 bytes
+    return chain.cast([
+        "send", token, "mintFromZephyr(address,uint256,bytes32)",
+        to, str(amount_atomic), zephyr_tx,
+        "--private-key", minter_pk, "--rpc-url", ANVIL_URL,
+    ])
 
 
 def token_address(symbol: str) -> str | None:

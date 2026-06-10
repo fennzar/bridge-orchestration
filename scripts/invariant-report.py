@@ -17,7 +17,8 @@ Sources:
 Name-tag convention (one place — the test itself, so the ledger can't drift from reality):
   [INV-NN]   the invariant this test pins (required to count toward the ledger). Forge declares it
              in NatSpec (`/// INV-N`) above the fn instead, since Solidity fn names can't hold tags.
-  [gap]      a known-gap. Forge marks it with a `KNOWNGAP_` fn name / `GAP` in the NatSpec.
+  [gap]      a known-gap. Forge marks it with a `KNOWNGAP_` fn name / a `[gap]` tag in the NatSpec
+             (a deliberate tag — not any prose mention of the word "gap", so promotion notes are safe).
 
 Per-source bucketing handles the sign difference between 'red-while-open' and 'green-while-open'
 known-gaps (both render as KNOWN_GAP; a flip the other way is the UNEXPECTED_PASS promote signal):
@@ -211,8 +212,10 @@ def run_vitest(engine_path: Path) -> tuple[list[dict], dict]:
 # ── source: CONTRACT (forge) / LOGIC-bridge (node:test) — opt-in ─────────────
 def _forge_inv_map(foundry_path: Path) -> dict[str, dict]:
     """Map each forge `function test_X` to the INVs declared in its preceding NatSpec (`/// INV-N`)
-    and whether it is a known-gap (`KNOWNGAP` in the name or `GAP` in the comment). Forge tests
-    self-document their invariant in NatSpec, so the ledger reads that — no fn renames needed."""
+    and whether it is a known-gap (`KNOWNGAP` in the name or a deliberate `[gap]` tag in the NatSpec).
+    The tag must be explicit — a prose mention of "gap" (e.g. "promoted: was the bypass gap") must NOT
+    mark a promoted, green test as an open gap. Forge tests self-document their invariant in NatSpec,
+    so the ledger reads that — no fn renames needed."""
     out: dict[str, dict] = {}
     test_dir = foundry_path / "test"
     if not test_dir.is_dir():
@@ -227,7 +230,7 @@ def _forge_inv_map(foundry_path: Path) -> dict[str, dict]:
                 continue  # blank line — keep the NatSpec buffer
             if s.startswith(("//", "/*", "*")):
                 invs.update(int(m.group(1)) for m in re.finditer(r"INV-(\d+)", s))
-                if "GAP" in s.upper():
+                if _GAP_TAG.search(s):  # deliberate [gap] tag only — not prose like "was the … gap"
                     gap = True
                 continue
             m = fn_re.search(s)

@@ -31,10 +31,10 @@ Cross-referenced to `INVARIANTS.md` (INV-#).
 - **What:** `/debug/reset/database` (incl. **GET** → CSRF/prefetch-triggerable) and `/debug/bridge-accounts/backup` (dumps full EVM↔Zephyr deposit-address map) gated only by `NEXT_PUBLIC_ENABLE_DEV_CONTROLS`/`ENABLE_DEV_RESET`, no admin token.
 - **Fix:** `requireAdmin` on all `/debug/*`; remove the GET reset; never gate destructive ops on a `NEXT_PUBLIC_*` flag. Confirm these flags are OFF on the testnet host.
 
-### HIGH-2 — Burn→payout at 0 EVM confirmations  ⚠️  (INV-11)
-- **Where:** `apps/watcher-evm/src/index.ts`; `confirmations.ts:31` (`getEvmConfirmationTarget`=20, never used in burn path).
-- **What:** payout relays at chain head; a reorg dropping the burn after payout = irreversible ZEPH loss on real chains. Anvil masks this.
-- **Fix:** gate `ingestEvmBurn` relay on `headBlock - burnBlock ≥ getEvmConfirmationTarget()`.
+### HIGH-2 — Burn→payout at 0 EVM confirmations  ✅  (INV-11) — FIXED
+- **Where:** `apps/watcher-evm/src/index.ts`; `confirmations.ts` (`getUnwrapRelayConfirmations`).
+- **What:** payout relayed at chain head; a reorg dropping the burn after payout = irreversible ZEPH loss on real chains. Anvil masks this.
+- **Fix (done):** `ingestEvmBurn` parks a burn shallower than `UNWRAP_RELAY_CONFIRMATIONS` (devnet=3) as `pending`; the watcher's confirmation sweep (`relayConfirmedUnwraps`) relays only once `headBlock − burnBlock ≥ target`. Burn block persisted (`Unwrap.evmBlockNumber`). Pinned `LB-CONF-*` + `res_unwrap_relayed_only_after_reorg_safe_depth` (live). **Devnet posture:** with the gate on, standalone/engine-run unwraps need block production past the depth — interval-mining (`anvil --block-time`) is the companion; the suite mines the depth explicitly.
 
 ### HIGH-3 — Web never decodes the unwrap burn payload  ⚠️  (Boundary A)
 - **Where:** `apps/web/app/unwrap/unwrap-client.tsx:300-326`; `use-contract.ts:184`.
@@ -56,10 +56,10 @@ Cross-referenced to `INVARIANTS.md` (INV-#).
 - **What:** unbounded slippage → trivially sandwichable.
 - **Fix:** compute and enforce a real `amountOutMin` (quote − tolerance) on every swap/burn.
 
-### HIGH-7 — PnL/loss tracker uses forecast, not realized  ⚠️  (INV-15)
-- **Where:** `apps/engine/src/engine.helpers.ts:25-27`; `engine.execution.ts:114`.
-- **What:** `calculatePnlFromSteps` returns `expectedPnl`; the breaker's daily-loss trip is unreachable even when enabled.
-- **Fix:** thread real venue outputs into realized PnL; feed realized loss to the breaker.
+### HIGH-7 — PnL/loss tracker uses forecast, not realized  ✅  (INV-15) — FIXED
+- **Where:** `apps/engine/src/engine.helpers.ts`; `engine.execution.ts`.
+- **What:** `calculatePnlFromSteps` returned `expectedPnl`; the breaker's daily-loss trip was unreachable even when enabled.
+- **Fix (done):** risk controls default ON and wired into execution; realized execution outputs feed the loss tracker so the daily-loss breaker is reachable. Pinned `LE-EXEC-RISK-WIRING`, `LE-LOSS-BREAKER`, `LE-RISK-DEFAULT-ON`.
 
 ### HIGH-8 — Double-relay window on watcher crash  ⚠️  (INV-4)
 - **Where:** `packages/bridge/src/unwraps/ingest.ts:393-426`.

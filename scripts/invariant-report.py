@@ -9,17 +9,20 @@ aggregator buckets each INV by the WORST status observed across all layers that 
 Sources:
   SCENARIO (pytest)        tests/scenario/.report/scenario.json — {inv, bucket} emitted by conftest.
   LOGIC-engine (vitest)    run `pnpm vitest run tests/conformance` (no stack); tags in test titles.
-  CONTRACT (forge)         run `forge test --json` (--with-forge); tags in fn names.       [opt-in]
-  LOGIC-bridge (node:test) run `pnpm test` (--with-node); tags in test names.              [opt-in]
+  LOGIC-bridge (node:test) run the bridge package's node:test (no stack); tags in test names.
+  CONTRACT (forge)         run `forge test --json` (--with-forge); NatSpec `/// INV-N` tags. [opt-in]
 
 Name-tag convention (one place — the test itself, so the ledger can't drift from reality):
-  [INV-NN]   the invariant this test pins (required to count toward the ledger).
-  [gap]      a known-gap: the test encodes the SAFE behavior the system does not yet honor.
+  [INV-NN]   the invariant this test pins (required to count toward the ledger). Forge declares it
+             in NatSpec (`/// INV-N`) above the fn instead, since Solidity fn names can't hold tags.
+  [gap]      a known-gap. Forge marks it with a `KNOWNGAP_` fn name / `GAP` in the NatSpec.
 
-Per-source bucketing handles the one sign-convention difference:
-  - pytest/forge/node: a known-gap test ASSERTS the safe behavior and FAILS today → KNOWN_GAP.
-  - vitest: a known-gap uses `it.fails`, so it PASSES today (the inner assert fails) → KNOWN_GAP;
-    if it starts FAILING, the gap closed → UNEXPECTED_PASS (promote the INV row, drop the marker).
+Per-source bucketing handles the sign difference between 'red-while-open' and 'green-while-open'
+known-gaps (both render as KNOWN_GAP; a flip the other way is the UNEXPECTED_PASS promote signal):
+  - pytest / node:test — RED-while-open: the known-gap ASSERTS the safe behavior and FAILS today →
+    KNOWN_GAP; once the fix lands it PASSES → UNEXPECTED_PASS.
+  - vitest (`it.fails`) / forge (`KNOWNGAP_` asserts the CURRENT behavior) — GREEN-while-open: the
+    known-gap PASSES today and FAILS once fixed → KNOWN_GAP while passing, UNEXPECTED_PASS once red.
 
 Buckets mirror tests/scenario/harness/report.py. Gate: only REGRESSION / UNEXPECTED_PASS are fatal
 (exit 1). KNOWN_GAP rows are the worklist. UNKNOWN = no test pins that INV yet (a coverage hole).
@@ -201,9 +204,39 @@ def run_vitest(engine_path: Path) -> tuple[list[dict], dict]:
 
 
 # ── source: CONTRACT (forge) / LOGIC-bridge (node:test) — opt-in ─────────────
+def _forge_inv_map(foundry_path: Path) -> dict[str, dict]:
+    """Map each forge `function test_X` to the INVs declared in its preceding NatSpec (`/// INV-N`)
+    and whether it is a known-gap (`KNOWNGAP` in the name or `GAP` in the comment). Forge tests
+    self-document their invariant in NatSpec, so the ledger reads that — no fn renames needed."""
+    out: dict[str, dict] = {}
+    test_dir = foundry_path / "test"
+    if not test_dir.is_dir():
+        return out
+    fn_re = re.compile(r"function\s+(test\w+)\s*\(")
+    for sol in test_dir.rglob("*.t.sol"):
+        invs: set[int] = set()
+        gap = False
+        for raw in sol.read_text().splitlines():
+            s = raw.strip()
+            if not s:
+                continue  # blank line — keep the NatSpec buffer
+            if s.startswith(("//", "/*", "*")):
+                invs.update(int(m.group(1)) for m in re.finditer(r"INV-(\d+)", s))
+                if "GAP" in s.upper():
+                    gap = True
+                continue
+            m = fn_re.search(s)
+            if m:
+                fn = m.group(1)
+                out[fn] = {"invs": sorted(invs), "gap": gap or "KNOWNGAP" in fn.upper()}
+            invs, gap = set(), False  # any code line ends the NatSpec→function adjacency
+    return out
+
+
 def run_forge(foundry_path: Path) -> tuple[list[dict], dict]:
     if not foundry_path.is_dir():
         return [], {"layer": "forge", "status": SKIPPED, "note": f"foundry repo not found: {foundry_path}"}
+    inv_map = _forge_inv_map(foundry_path)
     try:
         p = subprocess.run(["forge", "test", "--json"], cwd=foundry_path,
                            capture_output=True, text=True, timeout=420)
@@ -219,18 +252,61 @@ def run_forge(foundry_path: Path) -> tuple[list[dict], dict]:
     recs = []
     for suite in data.values():
         for fn, res in (suite.get("test_results") or {}).items():
-            m = re.search(r"inv(\d+)", fn, re.I)
-            if not m:
+            base = fn.split("(")[0]
+            info = inv_map.get(base)
+            if not info or not info["invs"]:
                 continue
-            inv = int(m.group(1))
-            gap = "gap" in fn.lower()
             passed = res.get("status") == "Success"
-            if gap:
-                bucket = UNEXPECTED_PASS if passed else KNOWN_GAP
+            # Forge known-gaps (this repo's convention) ASSERT the current imperfect behavior, so they
+            # PASS today and FAIL once the gap is fixed — same sign as vitest it.fails.
+            if info["gap"]:
+                bucket = KNOWN_GAP if passed else UNEXPECTED_PASS
             else:
                 bucket = GREEN if passed else REGRESSION
-            recs.append({"inv": inv, "bucket": bucket, "id": fn.split("(")[0], "layer": "forge", "reason": None})
+            short = base[5:] if base.startswith("test_") else base
+            for inv in info["invs"]:
+                recs.append({"inv": inv, "bucket": bucket, "id": short, "layer": "forge", "reason": None})
     return recs, {"layer": "forge", "status": "ran", "records": len(recs)}
+
+
+def run_node(bridge_path: Path) -> tuple[list[dict], dict]:
+    """LOGIC-bridge: run the bridge package's node:test suite and parse its TAP output.
+    Pins money-math + confirmation primitives (INV-3,6,11). Node 22 strips TS types natively, so no
+    build is needed. Top-level TAP results are `ok N - <name>` / `not ok N - <name>` at column 0;
+    the `[INV-NN]` / `[gap]` tags live in <name>."""
+    pkg = bridge_path / "packages" / "bridge"
+    if not pkg.is_dir():
+        return [], {"layer": "node", "status": SKIPPED, "note": f"bridge package not found: {pkg}"}
+    try:
+        p = subprocess.run(["node", "--test", "--test-reporter=tap", "src/**/*.test.ts"],
+                           cwd=pkg, capture_output=True, text=True, timeout=180)
+    except Exception as e:  # noqa: BLE001
+        return [], {"layer": "node", "status": SKIPPED, "note": f"node --test failed: {e}"}
+    line_re = re.compile(r"^(not ok|ok)\s+\d+\s+-\s+(.*)$")  # column-0 = top-level test
+    recs = []
+    for raw in p.stdout.splitlines():
+        m = line_re.match(raw)
+        if not m:
+            continue
+        status_tok, name = m.group(1), m.group(2)
+        directive = ""
+        if " # " in name:  # strip a trailing TAP directive (# SKIP / # TODO)
+            name, _, directive = name.partition(" # ")
+            name = name.rstrip()
+        tag = _INV_TAG.search(name)
+        if not tag:
+            continue
+        inv = int(tag.group(1))
+        if directive[:4].upper() in ("SKIP", "TODO"):
+            bucket = SKIPPED
+        elif _GAP_TAG.search(name):  # node:test known-gap = assert-safe, RED-while-open (pytest sign)
+            bucket = KNOWN_GAP if status_tok == "not ok" else UNEXPECTED_PASS
+        else:
+            bucket = GREEN if status_tok == "ok" else REGRESSION
+        cid = _CAT_ID.search(name)
+        recs.append({"inv": inv, "bucket": bucket, "id": cid.group(1) if cid else "LB-?",
+                     "layer": "node", "reason": None})
+    return recs, {"layer": "node", "status": "ran", "records": len(recs)}
 
 
 # ── roll-up + render ──────────────────────────────────────────────────────────
@@ -310,6 +386,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Render the INV-1..19 release-gate ledger from live tests.")
     ap.add_argument("--with-forge", action="store_true", help="also run forge contract tests (slower)")
     ap.add_argument("--no-vitest", action="store_true", help="skip the engine vitest conformance layer")
+    ap.add_argument("--no-node", action="store_true", help="skip the bridge node:test logic layer")
     ap.add_argument("--no-json", action="store_true", help="do not write tests/.report/ledger.json")
     args = ap.parse_args()
 
@@ -319,6 +396,9 @@ def main() -> int:
     recs, meta = read_scenario(); all_recs += recs; metas.append(meta)
     if not args.no_vitest:
         recs, meta = run_vitest(Path(_env("ENGINE_REPO_PATH", str(ROOT.parent / "zephyr-bridge-engine"))))
+        all_recs += recs; metas.append(meta)
+    if not args.no_node:
+        recs, meta = run_node(Path(_env("BRIDGE_REPO_PATH", str(ROOT.parent / "zephyr-bridge"))))
         all_recs += recs; metas.append(meta)
     if args.with_forge:
         recs, meta = run_forge(Path(_env("FOUNDRY_REPO_PATH", str(ROOT.parent / "zephyr-eth-foundry"))))

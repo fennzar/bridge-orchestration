@@ -63,3 +63,4 @@ CLAUDE.md
 .playwright-mcp/
 .agent-browser-profile/
 .env.playwright
+.NOTES.md

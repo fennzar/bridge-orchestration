@@ -156,6 +156,30 @@ def move_price(pool_name: str, sell_currency0: bool, amount_atomic: int,
     return push(amount_atomic, sell_currency0, state, pk, receiver)
 
 
+def affordable_push(symbol: str, account: str, desired_tokens: int) -> tuple[int | None, str | None]:
+    """How big a push of `symbol` (atomic) `account` can fund, capped at `desired_tokens`.
+
+    The pusher is the LIVE engine wallet (ENGINE_ADDRESS), whose balance the engine itself spends,
+    so it can sit just under a fixed target (observed: 9999.99 USDT vs a 10_000 target, 18088 wZSD
+    vs 20_000). Rather than skip on a hair, push `min(desired, 95% of balance)` — but only if that's
+    at least half the desired size, so the move still clears the trigger band. Returns
+    (amount_atomic, None) to push, or (None, reason) for the caller to `pytest.skip`.
+    """
+    addr = token_address(symbol)
+    dec = token_decimals(symbol) or 12
+    if not addr:
+        return None, f"no address for {symbol}"
+    bal, err = balance_of(addr, account)
+    if err or bal is None:
+        return None, f"balanceOf {symbol} failed: {err}"
+    desired = desired_tokens * (10 ** dec)
+    amount = min(desired, (bal * 95) // 100)
+    if amount < desired // 2:
+        return None, (f"pusher holds {bal / 10 ** dec:.2f} {symbol} — too little to fund a "
+                      f"meaningful push (need ≥ {desired_tokens / 2:.0f})")
+    return amount, None
+
+
 def currency_is(pool_state: dict, symbol: str) -> str | None:
     """Return 'currency0'/'currency1' for the slot holding `symbol`'s token, else None."""
     addr = (token_address(symbol) or "").lower()

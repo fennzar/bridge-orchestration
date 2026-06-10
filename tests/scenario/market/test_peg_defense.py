@@ -34,16 +34,24 @@ def test_mkt_peg_quiet_when_on_peg(anvil_snapshot):
 
 
 def test_mkt_peg_reacts_to_depeg(anvil_snapshot):
-    """Drop wZSD below peg (sell wZSD into wZSD/USDT) → the peg keeper proposes a corrective op."""
+    """Drop wZSD below peg (sell wZSD into wZSD/USDT) → the peg keeper proposes a corrective op.
+
+    The keeper widens its trigger by RR mode (getAdjustedThresholds: normal 30bps / defensive
+    100bps / crisis 300bps). A ~$17K push reliably clears 30bps but not the 3% crisis band — so
+    this "fires on a small depeg" proof is only meaningful at NORMAL RR. Off-normal the wide
+    tolerance is correct behaviour, not a gap → skip rather than false-fail.
+    """
     pk, addr = pool.pusher()
     if not pk or not addr:
         pytest.skip("ENGINE_PK/ENGINE_ADDRESS unavailable — can't fund a pool push")
-    in_addr = pool.token_address("wZSD")
-    dec = pool.token_decimals("wZSD") or 12
-    need = PUSH_TOKENS * (10 ** dec)
-    bal, _ = pool.balance_of(in_addr, addr) if in_addr else (0, None)
-    if not bal or bal < need:
-        pytest.skip(f"pusher holds {bal} wZSD (<{need}) — can't depeg the pool")
+    ev, err = engine.evaluate()
+    mode = engine.rr_mode(ev) if not err else None
+    if mode != "normal":
+        pytest.skip(f"RR mode {mode!r} (not normal) → keeper trigger widens past a small push; "
+                    "reset to normal RR to exercise peg defense")
+    need, ferr = pool.affordable_push("wZSD", addr, PUSH_TOKENS)
+    if need is None:
+        pytest.skip(f"{ferr} — can't depeg the pool")
 
     before = len(_peg_opportunities())
     _, perr = pool.move_price("wZSD-USDT", sell_currency0=True, amount_atomic=need,

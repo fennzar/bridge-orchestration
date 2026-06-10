@@ -51,14 +51,11 @@ def test_mkt_arb_detect_zsd(anvil_snapshot, label, sell_wzsd, expected_dir, sign
     if err or not state:
         pytest.skip(f"wZSD-USDT pool not in config: {err}")
 
-    # Fundability: the input token (the one being sold) must be held by the pusher.
+    # Fundability: size the push to what the pusher (live engine wallet) actually holds.
     in_symbol = "wZSD" if sell_wzsd else "USDT"
-    in_addr = pool.token_address(in_symbol)
-    dec = pool.token_decimals(in_symbol) or 12
-    bal, _ = pool.balance_of(in_addr, addr) if in_addr else (0, None)
-    need = PUSH_TOKENS * (10 ** dec)
-    if not bal or bal < need:
-        pytest.skip(f"pusher holds {bal} {in_symbol} (<{need}) — can't fund the {label} push")
+    need, ferr = pool.affordable_push(in_symbol, addr, PUSH_TOKENS)
+    if need is None:
+        pytest.skip(f"{ferr} — can't fund the {label} push")
 
     before_gap, _ = _asset_gap("ZSD")
     _, perr = pool.move_price("wZSD-USDT", sell_currency0=sell_wzsd, amount_atomic=need,

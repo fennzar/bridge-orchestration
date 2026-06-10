@@ -118,6 +118,11 @@ NEXT_PUBLIC_USE_WZRS=1
 # === Confirmations ===
 NEXT_PUBLIC_EVM_CONFIRMATIONS=5
 NEXT_PUBLIC_ZEPH_CONFIRMATIONS=5
+# Reorg-safe depth a burn must reach before the bridge relays its native unwrap payout (INV-11).
+# Devnet Anvil auto-mines (no ambient blocks), so a standalone unwrap only relays once something
+# advances the chain UNWRAP_RELAY_CONFIRMATIONS blocks past the burn; the EVM watcher's confirmation
+# sweep then releases it. Keep >0 to exercise the reorg-safety gate on devnet.
+UNWRAP_RELAY_CONFIRMATIONS=3
 
 # === Beta Access Gate ===
 NEXT_PUBLIC_BETA_TOKEN=${NEXT_PUBLIC_BETA_TOKEN:-}

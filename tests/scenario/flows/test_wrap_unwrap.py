@@ -21,6 +21,9 @@ WRAP_ZEPH = 5.0                      # whole ZPH to wrap
 WRAP_ATOMIC = int(WRAP_ZEPH * chain.ATOMIC)
 CONFIRM_BLOCKS = 15                  # generous cover for the watcher's confirmation target
 CLAIM_TIMEOUT = 150.0
+# Devnet runs the reorg-safe relay gate (INV-11, UNWRAP_RELAY_CONFIRMATIONS): a burn isn't relayed
+# until buried this deep. Anvil auto-mines, so a standalone unwrap needs the burn buried explicitly.
+RELAY_CONFIRMATIONS = 3
 
 
 def _claimer() -> tuple[str | None, str | None]:
@@ -130,6 +133,8 @@ def test_flow_unwrap_pays_out_and_status_confirms(anvil_snapshot):
     info, err = bridge.prepare_and_burn(token, UNWRAP_WZEPH, dest, pk)
     if err:
         pytest.skip(f"prepare/burn unavailable: {err}")
+    # Bury the burn past the reorg-safe relay gate (INV-11) so the watcher relays it on devnet.
+    chain.mine_evm(RELAY_CONFIRMATIONS)
 
     relayed = bridge.wait_for_unwrap(addr, since_ids=before_ids,
                                      until=lambda u: u.get("sendStatus") == "sent", timeout=60)
@@ -189,6 +194,8 @@ def test_flow_roundtrip_conserves_value(anvil_snapshot):
     info, uerr = bridge.prepare_and_burn(token, voucher, dest, pk)
     if uerr:
         pytest.skip(f"unwrap prepare/burn unavailable: {uerr}")
+    # Bury the burn past the reorg-safe relay gate (INV-11) so the watcher relays it on devnet.
+    chain.mine_evm(RELAY_CONFIRMATIONS)
     relayed = bridge.wait_for_unwrap(addr, since_ids=before_ids,
                                      until=lambda u: u.get("sendStatus") == "sent", timeout=60)
     if not relayed:

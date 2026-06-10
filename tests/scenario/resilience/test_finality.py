@@ -1,19 +1,20 @@
-"""RES-REORG-UNWRAP — the bridge relays an unwrap payout before the burn is reorg-safe (INV-11).
+"""RES-REORG-UNWRAP — the bridge must not relay an unwrap payout before the burn is reorg-safe (INV-11).
 
-The EVM watcher's ingest path (`ingestEvmBurn`, packages/bridge/src/unwraps/ingest.ts) relays the
-native Zephyr payout the instant it sees a `Burned` event — it never consults the confirmation-depth
-primitives (`isBurnConfirmed`/`safeHeadBlock`, confirmations.ts), which exist but are unwired. On a
-chain that can reorg (Sepolia/mainnet) a burn can be relayed and then vanish in a reorg, leaving the
-bridge having paid native ZEPH against a burn that no longer exists — an unrecoverable loss.
+On a chain that can reorg (Sepolia/mainnet) a burn relayed at 0/1 confirmation can vanish in a reorg,
+leaving the bridge having paid native ZEPH against a burn that no longer exists — an unrecoverable
+loss. The fix wires the confirmation-depth primitives (`isBurnConfirmed`, confirmations.ts) into the
+ingest path: `ingestEvmBurn` now PARKS a burn that isn't yet `UNWRAP_RELAY_CONFIRMATIONS` deep as
+`pending`/`idle` and the EVM watcher's confirmation sweep (`relayConfirmedUnwraps`) relays it only
+once it's buried deep enough.
 
-Live-verified on devnet: the payout reaches sendStatus='sent' while the burn is only ~1 confirmation
-deep. Anvil can't reorg and the gate is intentionally off on devnet (confirmTarget<=0), so this can't
-be shown as an actual fund loss here — the faithful red is the BEHAVIOUR: the payout is relayed
-before the burn is buried a reorg-safe depth. KNOWN-GAP(INV-11): the test asserts the safe behaviour
-(no relay until ≥ REORG_SAFE_DEPTH confirmations) and fails today because the bridge relays at ~1.
-The day the confirmation gate is wired into the watcher, this flips to UNEXPECTED_PASS → promote.
+Anvil can't reorg, but the gate is run live on devnet (`UNWRAP_RELAY_CONFIRMATIONS=3`) so the
+BEHAVIOUR is provable both ways: (1) while the burn is shallower than the gate, no payout is relayed;
+(2) once we bury it reorg-safe deep, the sweep relays it — and never before. Promoted from
+@known_gap(INV-11).
 """
 from __future__ import annotations
+
+import time
 
 import pytest
 
@@ -22,22 +23,17 @@ from harness import bridge, chain, pool
 pytestmark = [pytest.mark.needs_stack, pytest.mark.needs_reset, pytest.mark.inv("INV-11")]
 
 UNWRAP_WZEPH = 1 * chain.ATOMIC
-# A modest reorg-safety target. Devnet relays at ~1 conf; even a stray engine-mined block or two
-# stays well under this, so the known-gap reds deterministically (and won't flap to unexpected-pass).
+# Must match the deployed gate (UNWRAP_RELAY_CONFIRMATIONS on devnet). Anvil auto-mines, so the chain
+# only advances when we mine — a stray block can't prematurely satisfy the gate.
 REORG_SAFE_DEPTH = 3
 
 
-@pytest.mark.known_gap(
-    inv="INV-11",
-    reason="the EVM watcher relays the unwrap payout at ~1 confirmation — ingestEvmBurn never "
-    "consults isBurnConfirmed/safeHeadBlock (confirmations.ts is unwired). A reorg of the burn "
-    "after relay loses native ZEPH against a burn that no longer exists.",
-)
-def test_res_unwrap_relayed_before_reorg_safe_depth():
-    """A burn must not be relayed until it is buried REORG_SAFE_DEPTH confirmations deep.
+def test_res_unwrap_relayed_only_after_reorg_safe_depth():
+    """A burn is relayed ONLY once it is buried >= REORG_SAFE_DEPTH confirmations deep (INV-11).
 
-    We mint wZEPH, burn it, and — WITHOUT mining further EVM blocks — wait for the relay, then
-    measure how deep the burn was when paid. Today it's ~1 (unsafe) → red.
+    Phase 1: burn and, while it is still shallower than the gate, assert it is NOT relayed (the gate
+    parks it pending). Phase 2: mine until the burn is reorg-safe deep and assert the watcher's
+    confirmation sweep then relays it — at a depth >= REORG_SAFE_DEPTH.
     """
     pk, addr = pool.pusher()
     mpk = pool.minter()
@@ -57,15 +53,36 @@ def test_res_unwrap_relayed_before_reorg_safe_depth():
         pytest.skip(f"prepare/burn unavailable: {err}")
     burn_block = info["burnBlock"]
 
-    # Do NOT mine extra EVM blocks — leave the burn shallow and see if the bridge relays anyway.
+    # ── Phase 1 — while the burn is shallower than the gate, it must NOT be relayed ──
+    # Robust against ambient EVM block production (engine-run swaps): we only FAIL on a genuine
+    # shallow relay. If the chain advances to the safe depth on its own, we can't demonstrate
+    # deferral here — that's fine, Phase 2 still proves "relayed only at safe depth".
+    def _new_unwrap():
+        return next((u for u in bridge.unwraps_for(addr) if u.get("id") not in before_ids), None)
+
+    deadline = time.time() + 12
+    while time.time() < deadline:
+        head = chain.block_number() or burn_block
+        confs = head - burn_block + 1
+        if confs >= REORG_SAFE_DEPTH:
+            break  # chain advanced on its own — deferral window passed, move on to Phase 2
+        rec = _new_unwrap()
+        assert not (rec and rec.get("sendStatus") == "sent"), (
+            f"payout relayed at {confs} confirmation(s) (< reorg-safe {REORG_SAFE_DEPTH}) — a reorg of "
+            "the burn after relay would lose native ZEPH against a burn that no longer exists (INV-11)"
+        )
+        time.sleep(1.5)
+
+    # ── Phase 2 — bury the burn reorg-safe deep; the confirmation sweep now relays it ──
+    chain.mine_evm(REORG_SAFE_DEPTH)
     relayed = bridge.wait_for_unwrap(addr, since_ids=before_ids,
                                      until=lambda u: u.get("sendStatus") == "sent", timeout=60)
     if not relayed:
-        pytest.skip("watcher did not relay within timeout — watcher down or relay flake")
+        pytest.skip("watcher did not relay even after burying the burn — watcher down or relay flake")
 
     head = chain.block_number() or burn_block
-    confs_at_relay = max(1, head - (burn_block or head) + 1)
+    confs_at_relay = head - burn_block + 1
     assert confs_at_relay >= REORG_SAFE_DEPTH, (
-        f"payout relayed at {confs_at_relay} confirmation(s) (< reorg-safe {REORG_SAFE_DEPTH}) — "
-        "a reorg of the burn after relay would lose native ZEPH (INV-11; confirmation gate unwired)"
+        f"payout relayed at {confs_at_relay} confirmation(s) (< reorg-safe {REORG_SAFE_DEPTH}) — INV-11"
     )
+    assert relayed.get("zephTxHashHex"), "relayed unwrap carries no Zephyr tx hash"

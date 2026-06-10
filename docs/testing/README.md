@@ -55,8 +55,9 @@ Phase 2) is how an INV row goes from red to green.
 The ledger is generated from the live tests, so each test self-declares — no hand-kept mapping:
 
 - **pytest**: `@pytest.mark.inv("INV-14")` (+ `@known_gap(inv=..., reason=...)` for a gap).
-- **vitest**: an `[INV-NN]` tag in the test name; known-gaps use `it.fails` **and** an `[gap]` tag.
-- **forge / node:test**: an `invNN` token in the test fn name (+ `gap` for a known-gap).
+- **vitest**: an `[INV-NN]` tag in the test title; known-gaps use `it.fails` **and** an `[gap]` tag (an `it.fails` *without* `[gap]` silently reads GREEN-while-open — always pair them).
+- **node:test**: an `[INV-NN]` tag in the test **title** string (+ `[gap]` in the title for a known-gap).
+- **forge**: a `/// INV-N` NatSpec comment above the test fn (Solidity fn names can't hold tags); known-gaps use a `KNOWNGAP_` fn name or a `[gap]` NatSpec tag.
 
 `scripts/invariant-report.py` reads these, buckets each INV by the **worst** status across every
 layer that pinned it, and prints the gate.
@@ -80,6 +81,13 @@ and forge contract layers run live; the scenario rows come from the **last** sce
 refresh them. The forge layer is default-on because it is the only place INV-1/5/8/9/10
 (custody + crypto) are pinned — `ARGS=--no-forge` drops it (and honestly widens the UNCOVERED set)
 only where the foundry toolchain is unavailable.
+
+> **⚠ Footgun — never run `make test-report` after a _filtered_ scenario run.** Each `pytest`
+> invocation **overwrites** `tests/scenario/.report/scenario.json` (it does not merge), and the
+> report does **not** re-run scenario. So `make test-scenario SUITE=flows` followed by
+> `make test-report` leaves the scenario-only pins (INV-7, INV-18) reading **UNKNOWN** in the
+> ledger — a false gap, not a real one. Always run the **full** `make test-scenario` (no `SUITE=` /
+> `INV=` filter) immediately before `make test-report`.
 
 ### SCENARIO isolation
 

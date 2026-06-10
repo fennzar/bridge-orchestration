@@ -27,25 +27,29 @@ tagged so the run renders the holes as a worklist.
 
 | INV | property | pinned by | today |
 |---|---|---|---|
-| INV-1 | no unbacked mint | CT-SUP ✓, CT-MINT-ROLE ✓, FLOW-WRAP-* ✓, SEC-UNBACKED-MINT — but **CT-BYPASS-BURN ✓ (K)** drags the roll-up | K |
+| INV-1 | no unbacked mint | CT-SUP ✓, CT-MINT-ROLE ✓, FLOW-WRAP-* ✓, SEC-UNBACKED-MINT (forge-only), **CT-BYPASS-BURN ✓** (burn-bypass closed, promoted G) | G |
 | INV-2 | no double-credit | CT-MINT-IDEM ✓, LB-HASH-NORM ✓, FLOW-CLAIM-IDEM ✓ | G |
 | INV-3 | no over-payout on unwrap | LB-AMT-COVERS ✓, FLOW-PREPARE-CANCEL ✓ (payout sized *from* burn ⇒ over-payout structurally impossible, INV-19) | G |
 | INV-4 | no double-payout | LB-RECONCILE / LB-RESEND ✓ (unit, `decideResend`), RES-DOUBLE-PAYOUT ✓, RES-RESEND-FAILCLOSED ✓, RES-RESEND-DRAFT-RECOVERY ✓, RES-RESEND-PAYLOAD-RECOVERY ✓, RES-REINGEST ✓ (live) | G |
-| INV-5 | asset-type integrity | CT-BYPASS-BURN ✓, CT-BURN-ZERO ✓, FLOW-WRAP-{ZSD,ZRS,ZYS} ✓ | K |
+| INV-5 | asset-type integrity | CT-BYPASS-BURN ✓, CT-BURN-ZERO ✓, FLOW-WRAP-{ZSD,ZRS,ZYS} ✓ | G |
 | INV-6 | decimal correctness | CT-DEC ✓, LB-AMT-SCALE ✓, FLOW-ROUNDTRIP ✓ | G |
-| INV-7 | claim non-expiry trap | FLOW-CLAIM-EXPIRY ✓ | K |
+| INV-7 | claim non-expiry trap | FLOW-CLAIM-EXPIRY ✓ | G |
 | INV-8 | voucher unforgeable | CT-SIG-*, CT-ROT-SIGNER, SEC-CLAIM-FORGE | G |
 | INV-9 | no signature replay | CT-SIG-XTOKEN/XCHAIN, SEC-CLAIM-REPLAY-XTOKEN | G |
 | INV-10 | burn nonce non-replay | CT-BURN-NONCE | G |
-| INV-11 | no payout before finality | LB-CONF-*, **RES-REORG-UNWRAP ✓** | K (relays at ~1-conf, live-proven) |
+| INV-11 | no payout before finality | LB-CONF-*, **RES-REORG-UNWRAP ✓** | G (defers relay until reorg-safe depth, live-proven) |
 | INV-12 | watcher exactly-once | **LB-GAPFILL-* ✓** (node:test `backfill.test.ts`, 11 — `reconcileEventGap` bounded sweep; sweep-owned contiguity cursor; idempotent re-scan; watermark-clamp); RES-EXACTLY-ONCE live deferred → #18 | **G** |
 | INV-13 | unwrap status truthfulness | LB-REC-STATUS, **FLOW-UNWRAP ✓**, RES-STATUS-TRUTH, UI-UNWRAP-HAPPY | **G** (status flips pending→confirmed live; memory note stale) |
-| INV-14 | engine can't drain on bad price | MKT-ARB-DETECT, MKT-APPROVAL-RRMODE, MKT-PEG-DEFENSE (G); MKT-STALE-PRICE (K); LE-RISK-DEFAULT-OFF (K), LE-LOSS-BREAKER per-op (G); SLIPPAGE-FLOOR (—) | K |
-| INV-15 | realized accounting | LE-LOSS-BREAKER ✓ (G when enabled + off-by-default K); PNL-REALIZED (—) | K |
+| INV-14 | engine can't drain on bad price | MKT-ARB-DETECT, MKT-APPROVAL-RRMODE, MKT-PEG-DEFENSE (G); MKT-NATIVE-PRICE-FRESHNESS ✓ (G); LE-RISK-DEFAULT-ON ✓ (G), LE-LOSS-BREAKER per-op (G); SLIPPAGE-FLOOR (—) | G |
+| INV-15 | realized accounting | LE-LOSS-BREAKER ✓ (G; risk controls default-on + execution-wired); PNL-REALIZED (—) | G |
 | INV-16 | no fund-burning loop | **LE-NO-PINGPONG ✓** (vitest `antiPingpong.spec.ts`, 9 — guard `checkAccountingOnlyCexLoop` grounded on real `buildExecutionSteps` output) | **G** |
-| INV-17 | execution-time gating | MKT-RRMODE-SWEEP, MKT-GATE-CONFORM-ZSD/ZRS-redeem, MKT-NO-DOOMED-PLAN (G); MKT-GATE-CONFORM-ZRS-mint-floor (K); MKT-ARB-EXECUTE/EXEC-TIME-GATE (—); LE-CONFORM-GATES (K) | K |
-| INV-18 | privileged routes need auth | SEC-DEBUG-RESET-OPEN, SEC-ENGINE-CTRL-UNAUTH, CT-PAUSE-ABSENT, UI-CONNECT | K / A |
+| INV-17 | execution-time gating | MKT-RRMODE-SWEEP, MKT-GATE-CONFORM-ZSD/ZRS-redeem, MKT-NO-DOOMED-PLAN (G); MKT-GATE-CONFORM-ZRS-mint-floor ✓ (G); MKT-ARB-EXECUTE/EXEC-TIME-GATE (—); LE-CONFORM-GATES ✓ (G) | G |
+| INV-18 | privileged routes need auth | SEC-DEBUG-BACKUP-REQUIRES-AUTH ✓ (debug half G), SEC-ENGINE-CTRL-UNAUTH (engine ctrl = accepted-risk, network isolation), CT-PAUSE-ABSENT, UI-CONNECT | A (debug half G; engine ctrl owner-accepted, ratified) |
 | INV-19 | /unwraps/prepare not weaponizable | **SEC-PREPARE-PURE-QUOTE ✓** (200 + payload, NO pre-sign artifacts), **SEC-PREPARE-NO-UTXO-LOCK ✓** (N prepares don't drop bridge unlocked balance), SEC-PREPARE-BADADDR/ZERO/MISSING ✓ (G), -OVERMAX (skipped, no cap set); LB-PAY-V2 ✓ | **G** (size-from-burn + pure quote; CRIT-1 real fix) |
+
+> The **`today`** column tracks the live ledger (`make test-report` — currently **18 G · INV-18 A · 0 fatal**).
+> Inline per-check `(K)`/`(G)` tags and historical check IDs in the `pinned by` cells can lag a promotion;
+> the rendered ledger is authoritative, not this table.
 
 ---
 

@@ -74,12 +74,11 @@ beyond the dust's worth (or nothing at all). **Fail** = any payout larger than t
 ## Leg B — Adversarial API (automated)
 
 **Proves:** the unauthenticated surface rejects hostile input (INV-18/19). These are the
-`ZB-SEC-013..017` checks added to the edge framework.
+`ZB-SEC-013..017` adversarial probes, which now live in the scenario security suite
+(`tests/scenario/security/test_unwrap_prepare.py`, `test_privileged_routes.py`).
 
 ```bash
-make test-edge-sec                                   # L5.1 — runs ZB-SEC-* incl. the new adversarial probes
-# or scope to just the new probes:
-./scripts/run-l5-tests.py --execute ZB-SEC-013 ZB-SEC-014 ZB-SEC-015 ZB-SEC-016 ZB-SEC-017 --verbose
+make test-scenario SUITE=security                    # runs the adversarial /prepare + route-auth probes
 ```
 
 | Check | Attack | Pass |

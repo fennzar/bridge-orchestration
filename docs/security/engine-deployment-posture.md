@@ -1,6 +1,6 @@
 # Engine Deployment Posture (INV-18 — privileged engine routes)
 
-**Status:** ACCEPTED (network isolation). Owner decision 2026-06-10.
+**Status:** ACCEPTED (network isolation). Owner decision 2026-06-10; **ratified 2026-06-11 — option A (network isolation) confirmed; option B (in-app cookie/session operator auth) declined as disproportionate for a single-operator panel.** This is a sign-off, not an open gap: INV-18's release criterion is met.
 **Scope:** the engine execution-control API — `GET/POST /api/engine/runner` (toggle auto-exec,
 manual-approval) and `/api/engine/queue` (approve / reject / cancel queued ops), served by
 engine-web on **port 7000**, plus its browser panel at `/engine`.

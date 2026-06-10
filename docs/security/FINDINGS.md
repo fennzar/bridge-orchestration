@@ -74,7 +74,7 @@ Cross-referenced to `INVARIANTS.md` (INV-#).
 ## MEDIUM (selected — full list in sub-audit reports)
 
 - **MED-1** ❓ Engine manual-approval path deserializes plans with string bigints (`engine.queue.ts:43`, `op.plan as unknown`) → type-broken amounts in the *default* prod path. (INV-15)
-- **MED-2** ⚠️ Unwrap "stuck pending" root cause: confirm reads stale **wallet** height, not daemon (`recovery.ts:4`). (INV-13)
+- **MED-2** ✅ Unwrap "stuck pending" — FIXED. The scheduled `reconcilePendingUnwraps` sweep reads the payout transfer's own mined height via `getTransferByTxid` and flips `pending→confirmed` once `height>0` (`reconcile.ts:81-108`); no longer gated on the wallet's stale internal height. Pinned by live `test_flow_unwrap_pays_out_and_status_confirms` (status reaches `confirmed` ~24s, no skip). INV-13 → HELD. (INV-13)
 - **MED-3** ✅ Missing `asset_type` defaults to `"ZEPH"` in deposit ingest (`watcher-zephyr index.ts:190`) — asset-confusion seam. (INV-5)
 - **MED-4** ⚠️ No rate limiting anywhere; CORS `*` on unauthenticated mutating routes. (INV-19)
 - **MED-5** ⚠️ Web has no wrong-network guard on wrap/unwrap/swap/lp (only `/testnet`); swap/LP approvals not `simulateContract`-checked. (Boundary D)

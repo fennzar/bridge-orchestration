@@ -89,18 +89,14 @@ def test_mkt_gate_conform_zrs_mint_normal(clean_market):
     assert _engine_allows("ZEPH.n", "ZRS.n") == proto
 
 
-# ── ZEPH → ZRS below the 400% floor — the DIVERGENCE (expected RED, KNOWN-GAP) ──
-@pytest.mark.known_gap(
-    inv="INV-17",
-    reason="engine zrs.mintable adds a 400% lower floor the protocol's MINT_RESERVE lacks "
-    "(reserve.ts:155-158 vs zephyr-reference.md): below 400% the protocol allows ZRS mint, "
-    "engine blocks it — conservative today but a faithless model of the gate.",
-)
+# ── ZEPH → ZRS below the 400% floor — DIVERGENCE CLOSED (promoted to GREEN, INV-17) ──
 def test_mkt_gate_conform_zrs_mint_below_floor(clean_market):
-    """Between 200% and 400%: protocol allows ZEPH→ZRS (rr<800, no floor); engine blocks (rr<4).
+    """Between 200% and 400%: protocol allows ZEPH→ZRS (rr<800, no floor) and the engine now agrees.
 
-    Robust to MA lag: as long as MA hasn't risen above 800%, protocol stays True; engine stays
-    False the instant spot < 400%. The equality assertion therefore FAILS → KNOWN-GAP.
+    MINT_RESERVE has no 400% lower floor — only the 800% cap plus the bootstrap exception. The engine
+    previously added a spurious `rr≥4` floor; reserve.ts (`mintReserveOk`) drops it, so below 400%
+    the engine returns True, matching the protocol. Robust to MA lag: as long as MA stays under 800%,
+    both stay True. (Promoted from @known_gap once reserve.ts was fixed — INV-17.)
     """
     control.settle_price(control.PRICE_DEFENSIVE)
     m = _measure()
@@ -109,7 +105,7 @@ def test_mkt_gate_conform_zrs_mint_below_floor(clean_market):
         pytest.skip(f"MA {m['ma']} ≥ 800% — protocol would also block; can't isolate the floor gap")
     proto = G.mint_reserve_allowed(m["rr"], m["ma"], m["zsd_circ"] or 0.0)
     assert proto is True, "protocol should allow ZRS mint below 400% (no floor)"
-    assert _engine_allows("ZEPH.n", "ZRS.n") == proto  # engine returns False → red
+    assert _engine_allows("ZEPH.n", "ZRS.n") == proto  # engine now returns True → green
 
 
 # ── ZRS → ZEPH (REDEEM_RESERVE) — engine model MATCHES protocol (expected GREEN) ─

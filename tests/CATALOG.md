@@ -42,7 +42,7 @@ tagged so the run renders the holes as a worklist.
 | INV-13 | unwrap status truthfulness | LB-REC-STATUS, **FLOW-UNWRAP ✓**, RES-STATUS-TRUTH, UI-UNWRAP-HAPPY | **G** (status flips pending→confirmed live; memory note stale) |
 | INV-14 | engine can't drain on bad price | MKT-ARB-DETECT, MKT-APPROVAL-RRMODE, MKT-PEG-DEFENSE (G); MKT-STALE-PRICE (K); LE-RISK-DEFAULT-OFF (K), LE-LOSS-BREAKER per-op (G); SLIPPAGE-FLOOR (—) | K |
 | INV-15 | realized accounting | LE-LOSS-BREAKER ✓ (G when enabled + off-by-default K); PNL-REALIZED (—) | K |
-| INV-16 | no fund-burning loop | (NO-PINGPONG not built — **uncovered**, needs CEX-accounting grounding) | — |
+| INV-16 | no fund-burning loop | **LE-NO-PINGPONG ✓** (vitest `antiPingpong.spec.ts`, 9 — guard `checkAccountingOnlyCexLoop` grounded on real `buildExecutionSteps` output) | **G** |
 | INV-17 | execution-time gating | MKT-RRMODE-SWEEP, MKT-GATE-CONFORM-ZSD/ZRS-redeem, MKT-NO-DOOMED-PLAN (G); MKT-GATE-CONFORM-ZRS-mint-floor (K); MKT-ARB-EXECUTE/EXEC-TIME-GATE (—); LE-CONFORM-GATES (K) | K |
 | INV-18 | privileged routes need auth | SEC-DEBUG-RESET-OPEN, SEC-ENGINE-CTRL-UNAUTH, CT-PAUSE-ABSENT, UI-CONNECT | K / A |
 | INV-19 | /unwraps/prepare not weaponizable | SEC-PREPARE-UNAUTH (A — unauth by design, theft-bound by burnCoversPayout), SEC-PREPARE-BADADDR/ZERO/MISSING ✓ (G), -OVERMAX (skipped, no cap set) | A |
@@ -88,7 +88,8 @@ Run: `cd $ENGINE_REPO_PATH && pnpm vitest run tests/conformance` (no stack). Kno
 | **LE-CONFORM-GATES** | `mapReserveInfo().policy` vs protocol gate table (matching cells + 3 ZRS-mint divergences) | zephyr-ref | G+K | **conformance/gates.spec.ts** (6, verified) |
 | **LE-LOSS-BREAKER** | CircuitBreaker FSM opens on cumulative loss / consecutive failures when enabled | code | G | **conformance/risk.spec.ts** (verified) |
 | **LE-RISK-DEFAULT-OFF** | `DEFAULT_RISK_LIMITS.enabled=false` ⇒ $2000 op + $1M loss not halted | code | K | **conformance/risk.spec.ts** (it.fails, verified) |
-| LE-SLIPPAGE-FLOOR / LE-PNL-REALIZED / LE-NO-PINGPONG | swap `amountOutMin ?? 0n`; expected-vs-realized PnL; offsetting wrap/unwrap loop | code | K | — (reassigned from MKT) |
+| LE-SLIPPAGE-FLOOR / LE-PNL-REALIZED | swap `amountOutMin ?? 0n`; expected-vs-realized PnL | code | K | — (reassigned from MKT) |
+| LE-NO-PINGPONG | `checkAccountingOnlyCexLoop`: real fund-moving leg + `tradeCEX` leg + accounting-only CEX ⇒ refuse auto-exec (covers devnet AND live+MEXC_PAPER); grounded on real `buildExecutionSteps` output | 16 | **G** | — |
 | LE-CONFORM-PRICING/-FEES | engine spread & fee model == protocol pricing/fees | zephyr-ref | G | — |
 
 ## SCENARIO — pytest · `tests/scenario/`
@@ -137,7 +138,7 @@ uncovered. Listed honestly so the catalog never claims coverage the ledger doesn
 |---|---|---|---|---|
 | MKT-PNL-REALIZED | recorded score is `expectedPnl` (`netUsdChangeUsd`), never reconciled to the realized fill | 15 | — | needs executed-trade + realized-fill accounting grounding. INV-15 already RED-GAP via the breaker default-off, so the ledger already flags the row. |
 | MKT-SLIPPAGE-FLOOR | swap uses `amountOutMin ?? 0n` (no slippage floor) ⇒ no abort on adverse fill | 14 | — | needs an executed swap with a moved pool to observe the realized-vs-min gap. INV-14 already RED-GAP via price-freshness + risk-default-off. |
-| MKT-NO-PINGPONG | offsetting wrap/unwrap loop burns real fees on accounting-only CEX legs | 16 | — | a faithful test must model the CEX accounting-only price diverging from the real fee-bearing legs — needs engine-internal grounding. A flat-market proxy would duplicate `mkt_peg_quiet_when_on_peg` and **falsely green** INV-16. **INV-16 stays honestly UNCOVERED in the ledger** until grounded (sibling of #8/#18). |
+| MKT-NO-PINGPONG | offsetting wrap/unwrap loop burns real fees on accounting-only CEX legs | 16 | — | **Superseded by LE-NO-PINGPONG (vitest, G).** The faithful test is engine-internal: a live MKT proxy on a flat market would duplicate `mkt_peg_quiet_when_on_peg` and falsely-green it. Instead the guard `checkAccountingOnlyCexLoop` is pinned at the decision layer, grounded on the actual `buildExecutionSteps` plan shape (`[swapEVM, tradeCEX]`) — no live scenario needed. INV-16 → HELD. |
 
 (MKT-ARB-EXECUTE and MKT-EXEC-TIME-GATE also not built — see the live-scenario table above; both need the runner approve→execute harness. INV-17 is already RED-GAP via gate-conformance + rrmode, INV-14 via price-freshness.)
 

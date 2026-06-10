@@ -158,8 +158,10 @@ hard conceptual part and it's done. But:
   don't wait for the ~10-block unlock; the next step fires against funds that don't exist yet. Works
   only because devnet mines instantly. ⚠️
 - The **CEX layer is accounting-only** (`marketOrder` moves nothing, returns a fake price) while the
-  wrap/unwrap legs of the same plan move **real** funds and pay the **real** bridge fee → a
-  fee-burning ping-pong braked only by a 60s cooldown. ⚠️
+  real legs of the same plan move **real** funds and pay **real** fees → a fee-burning ping-pong.
+  **Now gated (INV-16, 2026-06-11):** `checkAccountingOnlyCexLoop` in `shouldAutoExecute` refuses any
+  auto-exec plan that pairs a real fund-moving leg with a `tradeCEX` leg while the CEX is
+  accounting-only (devnet, and live + `MEXC_PAPER`) — the 60s cooldown is no longer the only brake. ✅
 - **Stale Zephyr oracle never blocks** — freshness is checked for EVM/CEX but `STALE_THRESHOLDS.zephyr`
   is defined and never used. A frozen oracle yields confident stale prices for every decision. ⚠️
 

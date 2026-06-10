@@ -65,18 +65,15 @@ def _native_nodes() -> list:
     return [(ev or {}).get("state"), (inner or {}).get("zephyr")]
 
 
-@pytest.mark.known_gap(
-    inv="INV-14",
-    reason="engine exposes no freshness/age signal on the NATIVE pricing record — it cannot "
-    "detect or refuse a stale Zephyr oracle feed. Only EVM/CEX watcher staleness is tracked, which "
-    "does not gate the reserve-ratio conversions the native price drives.",
-)
 def test_mkt_engine_tracks_native_price_freshness():
-    """The engine should surface how fresh the NATIVE price is so execution can gate on it.
+    """The engine surfaces how fresh the NATIVE price is so execution can gate on it (INV-14).
 
-    Scoped to the native subtree (NOT the watcher flags). The native price IS present but carries
-    no age/staleness field → red. (Sanity: assert the native price is actually there, so the red
-    means "no freshness signal", not "no price at all".)
+    Scoped to the native subtree (NOT the watcher flags). `state.zephyr` now carries
+    `priceTimestamp`/`priceAgeSeconds`/`priceStale` derived from the pricing record's own timestamp
+    (domain/zephyr/freshness.ts), and the arb auto-exec gate refuses a stale feed
+    (checkPriceFreshness; proven deterministically in tests/domain/zephyr/freshness.spec.ts since the
+    stale path can't be reached on devnet). Promoted from @known_gap. (Sanity: assert the native
+    price is actually there, so a green means "freshness signal present", not "no price at all".)
     """
     natives = _native_nodes()
     es = natives[0] or {}

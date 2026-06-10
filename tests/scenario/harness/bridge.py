@@ -32,6 +32,14 @@ def create_address(evm_addr: str) -> tuple[str | None, str | None]:
     return parsed.get("zephyrAddress"), None
 
 
+def post_raw(path: str, body: dict, headers: dict | None = None) -> tuple[int | None, str | None, str | None]:
+    """Raw POST against an arbitrary bridge-API path → (http_status, body, err).
+
+    For probing whether a route EXISTS (e.g. a voucher re-sign endpoint) in lifecycle/adversarial
+    scenarios — a 404/405 means the capability is absent."""
+    return _tc._post(f"{API}{path}", body, headers=headers, timeout=10.0)
+
+
 def claims_for(evm_addr: str, status: str | None = None) -> list[dict]:
     url = f"{API}/claims/{evm_addr}"
     if status:

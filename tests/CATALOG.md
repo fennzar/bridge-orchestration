@@ -30,7 +30,7 @@ tagged so the run renders the holes as a worklist.
 | INV-1 | no unbacked mint | CT-SUP ✓, CT-MINT-ROLE ✓, FLOW-WRAP-* ✓, SEC-UNBACKED-MINT — but **CT-BYPASS-BURN ✓ (K)** drags the roll-up | K |
 | INV-2 | no double-credit | CT-MINT-IDEM ✓, LB-HASH-NORM ✓, FLOW-CLAIM-IDEM ✓ | G |
 | INV-3 | no over-payout on unwrap | LB-AMT-COVERS ✓, FLOW-PREPARE-CANCEL ✓, SEC-PREPARE-DRAIN | G (interim) |
-| INV-4 | no double-payout | (crash-idempotency only — **uncovered**, see RES note → task #8) | — |
+| INV-4 | no double-payout | LB-RECONCILE / LB-RESEND ✓ (unit, `decideResend`), RES-DOUBLE-PAYOUT ✓, RES-RESEND-FAILCLOSED ✓, RES-RESEND-DRAFT-RECOVERY ✓, RES-RESEND-PAYLOAD-RECOVERY ✓, RES-REINGEST ✓ (live) | G |
 | INV-5 | asset-type integrity | CT-BYPASS-BURN ✓, CT-BURN-ZERO ✓, FLOW-WRAP-{ZSD,ZRS,ZYS} ✓ | K |
 | INV-6 | decimal correctness | CT-DEC ✓, LB-AMT-SCALE ✓, FLOW-ROUNDTRIP ✓ | G |
 | INV-7 | claim non-expiry trap | FLOW-CLAIM-EXPIRY ✓ | K |
@@ -157,7 +157,14 @@ uncovered. Listed honestly so the catalog never claims coverage the ledger doesn
 |---|---|---|---|
 | RES-REORG-UNWRAP ✓ | burn relayed while only ~1-conf deep (ingest never checks isBurnConfirmed) | 11 | **K** (built, live-proven) |
 | RES-STATUS-TRUTH | payout lands ⇒ status pending→confirmed — folded into FLOW-UNWRAP ✓ (live) + LB-REC-STATUS ✓ (unit) | 13 | **G** (covered) |
-| ~~RES-DOUBLE-PAYOUT / RES-EXACTLY-ONCE / RES-RECONCILE~~ | crash-mid-`sending` re-relay (INV-4); WS-reconnect gap-fill (INV-12); reconcile sweep (INV-13) — **not built**: all need watcher process-kill / WS-fault orchestration. Deferred to **task #8** (watcher reorg-safety + crash idempotency) + **#18** (needs the crash harness decision). INV-4/12 remain UNCOVERED in the ledger by design. | 4,12,13 | — |
+| RES-DOUBLE-PAYOUT ✓ | broadcast landed but the record was marked `failed` (post-broadcast write threw); `POST /admin/unwraps/:id/resend` would build a fresh-input second payout → guard probes by commit hash, sees it on-chain, **heals to sent, refuses (409)** — never re-pays | 4 | **G** (built, live-proven) |
+| RES-RESEND-FAILCLOSED ✓ | `failed` record carries a commit hash the daemon can't resolve (mempool/rescan-lag → `get_transfer_by_txid` -8, *or* lookup faults) → resend **refuses fail-closed (409/503)**, writes no fresh `zephTxId`. A pre-signed payout that may still mine is never double-paid on an unverifiable absence | 4 | **G** (built, live-proven) |
+| RES-RESEND-DRAFT-RECOVERY ✓ | unwrap row lost its commit hash (`zephTxId`/`*HashHex` NULL) but a linked `ZephyrPrepared`/`ZephyrOutgoing` draft still carries the pre-signed commit → resend recovers the commit from the draft (by id *and* by unwrapId) and **refuses**, never fresh-sends | 4 | **G** (built, live-proven) |
+| RES-RESEND-PAYLOAD-RECOVERY ✓ | row hashes NULL *and* linked drafts deleted, but the structured `burnPayload` still decodes to the pre-signed `txHash` → resend recovers the commit from the payload and **refuses**; only a burn with no commit in **any** persisted source (row, draft, payload) + no lineage may fresh-send | 4 | **G** (built, live-proven) |
+| RES-REINGEST ✓ | re-delivery of an already-paid burn (record looks un-relayed but pre-signed payout landed) → ingest entry reconcile converges to the original payout, never relays a second | 4 | **G** (built, live-proven) |
+| ~~RES-EXACTLY-ONCE / RES-RECONCILE~~ | WS-reconnect gap-fill (INV-12); reconcile sweep (INV-13) — **not built**: need watcher WS-fault orchestration. Deferred to **#18** (needs the fault-injection harness decision). INV-12 remains UNCOVERED in the ledger by design. | 12,13 | — |
+
+Crash-state injection note: the live RES-DOUBLE-PAYOUT/REINGEST tests stage the exact post-crash DB row via `harness/db.py` (psql into `zephyrbridge_dev."Unwrap"`) rather than process-killing a watcher mid-flight — the invariant under test is "the record's zephTxId converges to the original payout; a different txid = a second payout left the hot wallet," which the injected state exercises directly. The pre-signed payout (fixed inputs → stable commit hash → mines at most once) is the idempotency anchor.
 
 ### OPS (`ops/`) — stack / protocol sanity gates (run first)
 `OPS-CHAIN-HEALTH`, `OPS-WALLET-BALANCES`, `OPS-CONTRACTS-DEPLOYED`, `OPS-ORACLE-CONTROL`,

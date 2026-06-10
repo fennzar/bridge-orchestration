@@ -61,10 +61,13 @@ Cross-referenced to `INVARIANTS.md` (INV-#).
 - **What:** `calculatePnlFromSteps` returned `expectedPnl`; the breaker's daily-loss trip was unreachable even when enabled.
 - **Fix (done):** risk controls default ON and wired into execution; realized execution outputs feed the loss tracker so the daily-loss breaker is reachable. Pinned `LE-EXEC-RISK-WIRING`, `LE-LOSS-BREAKER`, `LE-RISK-DEFAULT-ON`.
 
-### HIGH-8 — Double-relay window on watcher crash  ⚠️  (INV-4)
-- **Where:** `packages/bridge/src/unwraps/ingest.ts:393-426`.
-- **What:** crash between broadcast and persistence re-ingests the burn; `sending`-state guard falls through → re-relay → `error::tx_rejected` double-spend. (This is the documented "unwrap flake.")
-- **Fix:** persist a durable "broadcast-attempted" marker *before* relay; on restart, reconcile via **daemon** (not stale wallet) before any re-relay.
+### HIGH-8 — Double-relay window on watcher crash  ✅  (INV-4)
+- **Where:** `packages/bridge/src/unwraps/ingest.ts:393-426`; `apps/api/src/routes/admin/unwraps.ts` (`/retry`, `/resend`); `packages/bridge/src/unwraps/recovery.ts` (`decideResend`).
+- **What:** crash between broadcast and persistence re-ingests the burn; `sending`-state guard falls through → re-relay → `error::tx_rejected` double-spend. (This was the documented "unwrap flake.")
+- **Fix (shipped):** the recovery model is now anchored on the **pre-signed payout** (fixed inputs → stable commit hash → mines at most once), so re-relaying is *idempotent* by construction, not a double-spend.
+  - **Idempotent recovery** (`/retry`, ingest entry-reconcile) re-relays / converges to the *same* pre-signed tx — safe to repeat across crash/restart/redelivery.
+  - **Fresh-input** payout exists only on `POST /admin/unwraps/:id/resend` (`zephyrTransferSimple`, new UTXOs → breaks idempotency). `decideResend` gates it structurally: fresh-send *only* when **no pre-signed commit exists in any persisted source** — row `zephTxId`/`zephTxHashHex`/`preparedZephTxId`/`preparedZephTxHashHex`, a linked `ZephyrPrepared`/`ZephyrOutgoing` draft (looked up by id **and** by unwrapId, failing **closed** on lookup error), or the structured `burnPayload.txHash` — **and** no payout lineage. Any commit → heal (visibly on-chain) or refuse (409). Lookup uncertainty (`get_transfer_by_txid` -8 is ambiguous: mempool ≡ never-existed) → refuse fail-closed (503, retryable). Safety is therefore **structural**, independent of probe accuracy.
+- **Verification:** `LB-RESEND` (`decideResend` unit table) + live `RES-DOUBLE-PAYOUT` / `RES-RESEND-FAILCLOSED` / `RES-RESEND-DRAFT-RECOVERY` / `RES-RESEND-PAYLOAD-RECOVERY` / `RES-REINGEST`. Peer-reviewed through source-enumeration convergence (no second `zephyrTransferSimple` path; no separate persisted EVM-burn store carrying another commit). INV-4 → **HELD**.
 
 ---
 
@@ -81,7 +84,7 @@ Cross-referenced to `INVARIANTS.md` (INV-#).
 - **MED-9** ⚠️ Engine wrap leg returns success without a claim ever happening → strands wZEPH unclaimed (`bridge/executor.ts:161-169`).
 - **MED-10** ⚠️ No security headers / CSP on the wallet-signing web app (`next.config.mjs`) → clickjacking surface.
 - **MED-11** ⚠️ Unwrap `destination` not validated as a real Zephyr address before pre-signing (`unwraps.ts:86-132`).
-- **MED-12** ⚠️ Engine control plane (`/api/engine/queue`, `/runner`) unauthenticated; DB `manualApproval` silently overrides CLI flag. (INV-18)
+- **MED-12** ✅ ACCEPTED (network isolation) — Engine control plane (`/api/engine/queue`, `/runner`) is unauthenticated but same-origin/browser-driven with no external caller. Owner decision 2026-06-10: engine runs operator-only behind an authenticated reverse proxy / private network (the documented testnet deployment firewalls 7000 and does not proxy it; reach via SSH tunnel). An in-bundle token would be forgeable theater, so not added. Marked `@accepted_risk(INV-18)`. See [engine-deployment-posture.md](./engine-deployment-posture.md). (DB `manualApproval` overriding the CLI flag is a separate INV-15/correctness note, not an auth gap.)
 
 ## LOW (selected)
 

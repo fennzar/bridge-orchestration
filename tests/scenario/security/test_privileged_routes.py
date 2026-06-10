@@ -7,11 +7,14 @@ INV-18: privileged routes must require authentication. Two surfaces:
     the `ADMIN_TOKEN` bearer in addition to the dev-controls flag, and the destructive GET variant of
     the reset was REMOVED (a wipe must never be an idempotent, crawler-/CSRF-triggerable GET). Probed
     non-destructively below: the backup GET with no auth must 401.
-  * engine `/api/engine/{runner,queue}` (execution control) — OPEN, design fork. These are
-    same-origin, browser-driven (engine-web's own /engine panel, no external caller). Closing them
-    forces either exposing a shared secret in the client bundle (theater vs the "anyone on the port"
-    threat) or cookie/session operator auth (real, but needs browser QA). Left @known_gap pending
-    that decision rather than green-washed with a forgeable same-origin check. See FINDINGS.md.
+  * engine `/api/engine/{runner,queue}` (execution control) — ACCEPTED posture (network isolation).
+    These are same-origin, browser-driven (engine-web's own /engine panel, no external caller). An
+    in-bundle shared secret would be theater (forgeable); cookie/session auth is real but needs
+    browser QA. Owner decision (2026-06-10): the engine runs operator-only behind an authenticated
+    reverse proxy / private network — the NETWORK is the auth boundary, so engine-web is never
+    publicly reachable. On this shared-origin dev/testnet stack the routes answer 200 (expected);
+    prod isolates at the proxy. Documented in docs/security/engine-deployment-posture.md +
+    FINDINGS.md. Marked @accepted_risk (AMBER), not green-washed with a forgeable same-origin check.
 
 If the dev flag is off (so /debug 4xx's) the debug case skips rather than green-washing.
 """
@@ -46,28 +49,39 @@ def test_sec_debug_backup_requires_auth():
     )
 
 
-@pytest.mark.known_gap(
+@pytest.mark.accepted_risk(
     inv="INV-18",
-    reason="DESIGN FORK: engine /api/engine/runner (execution-control settings) is same-origin "
-    "browser-driven with no external caller. Real auth needs an operator-auth decision (cookie/"
-    "session vs bundle-exposed shared secret vs network isolation); not closing it with a forgeable "
-    "same-origin check, which would be a false green. Awaiting the mechanism decision.",
+    reason="ACCEPTED (network isolation): engine /api/engine/runner (execution-control settings) is "
+    "same-origin browser-driven with no external caller. Owner decision (2026-06-10) — the engine is "
+    "operator-only behind an authenticated reverse proxy / private network; the network is the auth "
+    "boundary, so engine-web is never publicly reachable. An in-bundle token would be forgeable "
+    "theater. On the shared-origin dev/testnet stack this answers 200 (expected). See "
+    "docs/security/engine-deployment-posture.md.",
 )
 def test_sec_engine_runner_unauth():
     """`GET /api/engine/runner` returns the live execution-control settings (autoExecute,
-    manualApproval) with no auth — the write side (POST) is equally open."""
+    manualApproval). On this shared-origin dev/testnet deployment it is reachable same-origin (200) —
+    the accepted posture; prod isolates engine-web at the proxy/network layer (INV-18)."""
     st = _status(f"{ENGINE}/api/engine/runner")
-    assert st != 200, "engine runner control reachable with no auth (INV-18)"
+    assert st == 200, (
+        f"expected the same-origin engine panel to answer 200 here (got {st}); the INV-18 control is "
+        "network isolation in prod, not a per-request gate — see engine-deployment-posture.md"
+    )
 
 
-@pytest.mark.known_gap(
+@pytest.mark.accepted_risk(
     inv="INV-18",
-    reason="DESIGN FORK: engine /api/engine/queue (approve/reject/cancel ops) is same-origin "
-    "browser-driven with no external caller — same operator-auth decision as the runner route. "
-    "Awaiting the mechanism decision (see FINDINGS.md / key-ops-and-contract-posture.md).",
+    reason="ACCEPTED (network isolation): engine /api/engine/queue (approve/reject/cancel ops) is "
+    "same-origin browser-driven with no external caller — same posture as the runner route. Engine "
+    "runs operator-only behind an authenticated reverse proxy / private network (owner decision "
+    "2026-06-10). See docs/security/engine-deployment-posture.md / key-ops-and-contract-posture.md.",
 )
 def test_sec_engine_queue_unauth():
-    """`GET /api/engine/queue` lists the operation queue (and POST approves/rejects ops) with no
-    auth — anyone who can reach the port can drive execution."""
+    """`GET /api/engine/queue` lists the operation queue (POST approves/rejects ops). Reachable
+    same-origin (200) on this dev/testnet stack — the accepted posture; prod isolates engine-web at
+    the proxy/network layer rather than gating per-request (INV-18)."""
     st = _status(f"{ENGINE}/api/engine/queue")
-    assert st != 200, "engine operation queue reachable with no auth (INV-18)"
+    assert st == 200, (
+        f"expected the same-origin engine panel to answer 200 here (got {st}); the INV-18 control is "
+        "network isolation in prod, not a per-request gate — see engine-deployment-posture.md"
+    )

@@ -6,14 +6,78 @@ mine to confirmations, poll /claims, then claimWithSignature on the token. Unwra
 """
 from __future__ import annotations
 
+import json
+import os
 import time
 import uuid
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import test_common as _tc
 
 from harness import chain
 
 API = _tc.BRIDGE_API_URL
+
+
+# ── admin (privileged) routes ──────────────────────────────────────────────────
+def admin_token() -> str | None:
+    """The bridge `ADMIN_TOKEN` (loaded into os.environ from root .env by test_common)."""
+    return os.environ.get("ADMIN_TOKEN") or None
+
+
+def _admin_req(method: str, path: str, body: dict | None = None,
+               timeout: float = 25.0) -> tuple[int | None, dict | None, str | None]:
+    """Authenticated request to an /admin route. Returns (http_status, parsed_json, err).
+
+    `path` is relative to the `/admin` mount (e.g. "/unwraps/:id/resend") — the prefix is added here.
+    The token rides in `x-admin-token` (requireAdmin accepts that header). A 403 means the token
+    didn't match the API's; None status means the request never reached the server."""
+    tok = admin_token()
+    if not tok:
+        return None, None, "ADMIN_TOKEN unset (cannot exercise privileged routes)"
+    hdrs = {"x-admin-token": tok}
+    data = None
+    if body is not None:
+        hdrs["Content-Type"] = "application/json"
+        data = json.dumps(body).encode()
+    req = Request(f"{API}/admin{path}", method=method, headers=hdrs, data=data)
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", errors="replace")
+            status = r.status
+    except HTTPError as e:
+        status = e.code
+        try:
+            raw = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            raw = ""
+    except Exception as e:
+        return None, None, str(e)
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except Exception:
+        parsed = None
+    return status, parsed, None
+
+
+def refresh_bridge_wallet() -> bool:
+    """Force the bridge wallet to rescan. A relayed unwrap payout is a daemon-relayed pre-signed tx,
+    so the bridge wallet does NOT track it as pending — get_transfer_by_txid only surfaces it once the
+    tx is mined AND the wallet has scanned that block. Call after mining to make discovery prompt."""
+    parsed, err = _tc._jpost(
+        f"http://127.0.0.1:{_tc.BRIDGE_WALLET_PORT}/json_rpc",
+        {"jsonrpc": "2.0", "id": "0", "method": "refresh"}, timeout=20.0,
+    )
+    return err is None and bool(parsed) and "result" in parsed
+
+
+def admin_get(path: str) -> tuple[int | None, dict | None, str | None]:
+    return _admin_req("GET", path)
+
+
+def admin_post(path: str, body: dict | None = None) -> tuple[int | None, dict | None, str | None]:
+    return _admin_req("POST", path, body)
 
 
 # ── wrap side ────────────────────────────────────────────────────────────────

@@ -117,7 +117,7 @@ liveness), never *authorize* an over-payout.
 | **HIGH-5** | engine: `src/domain/risk/limits.ts:26`; `circuitBreaker.ts:59-61` | **All risk controls are `enabled: false` by default** ("DISABLED by default for testnet v2"). Circuit breaker `canExecute()` always allows; threshold checks no-op. Only `RISK_CONTROLS_ENABLED=true` arms them — and it is **not set** in the dev/prod Procfiles. | ✅ |
 | **HIGH-6** | engine: `execution.dispatch.ts:108`; `pegkeeper.ts`/`rebalancer.ts` | Peg-keeper and rebalancer EVM swaps dispatch with `amountOutMin: step.expectedAmountOut ?? 0n` — and **neither strategy ever sets `expectedAmountOut`** → effective **slippage minimum of 0** → trivially sandwichable; LP burns pass `amount0Min/amount1Min: 0`. | ✅ (peg/rebalance set nothing: grep empty) |
 | **HIGH-7** | engine: `engine.helpers.ts:25-27`; `engine.execution.ts:114` | Recorded PnL is the **expected** PnL, never the realized PnL. The loss tracker is fed forecasts, so `maxDailyLossUsd` can never trip on real losses **even if risk controls were enabled.** The engine cannot detect it is losing money. | ⚠️ |
-| **HIGH-8** | watcher-evm: `ingest.ts:393-426` | **Double-relay window**: a crash between broadcast and persistence re-ingests the burn; the `sending`-state guard falls through and **re-relays**, producing the known `error::tx_rejected` double-spend. The only protection depends on the *stale* wallet seeing the mempool tx. | ⚠️ |
+| **HIGH-8** | watcher-evm: `ingest.ts:393-426`; admin `unwraps.ts` (`/retry`,`/resend`); `recovery.ts` `decideResend` | **Double-relay window** (FIXED): recovery is now anchored on the pre-signed payout (fixed inputs → stable hash → mines at most once), so re-relay (`/retry`, ingest reconcile) is **idempotent**. The one fresh-input path (`/resend`) is structurally gated — it fresh-sends only with **no pre-signed commit in any persisted source** (row hashes, linked prepared/outgoing draft, structured `burnPayload`) and no lineage; else heals or refuses fail-closed (409/503). INV-4 → HELD; reviewed to convergence. | ✅ |
 
 **Engine framing (important):** the engine's CRIT/HIGH items are **"devnet-fine, live-dangerous."**
 They do not threaten the bridge's custody directly on devnet/testnet-v2 with fake markets, but they
@@ -197,7 +197,7 @@ invariant test* (see INVARIANTS.md). This is the answer to "how do I get confide
 - [ ] **HIGH-2** burn→payout waits for `getEvmConfirmationTarget()` confirmations (reorg safety).
 - [ ] **HIGH-3** web decodes burn payload and blocks on destination mismatch.
 - [ ] **HIGH-4** web pins swap/LP spenders against config; prefers exact-amount approvals.
-- [ ] **HIGH-8** burn→payout idempotency proven against crash-after-broadcast (no double-relay).
+- [x] **HIGH-8** burn→payout idempotency proven against crash-after-broadcast (no double-relay) — pre-signed-tx anchor + structurally-gated fresh-input `/resend`; pinned by `LB-RESEND` + live `RES-RESEND-*`/`RES-REINGEST`. INV-4 HELD.
 - [ ] Contract: a **pause / mint-cap / multisig-admin** story for the single-hot-key risk (or an
       explicit, written acceptance that the keys are single points of failure).
 - [ ] Engine: either **disabled for launch**, or HIGH-5/6/7 closed (risk controls armed, real
